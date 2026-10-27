@@ -86,6 +86,16 @@ std::vector<RawDet> non_max_suppression(const float* output, int num_preds, int 
     d.y2 = cy + h / 2.0f;
     d.conf = max_score;
     d.cls = max_cls;
+    // Keypoints follow the box + class scores: 5 x (x, y, conf).
+    if (pred_dim >= 4 + nc + 15) {
+      d.has_kps = true;
+      for (int k = 0; k < 5; ++k) {
+        const int base = 4 + nc + k * 3;
+        d.kps[k * 2] = output[(base + 0) * num_preds + i];
+        d.kps[k * 2 + 1] = output[(base + 1) * num_preds + i];
+        d.kps_conf[k] = output[(base + 2) * num_preds + i];
+      }
+    }
     candidates.push_back(d);
   }
 
@@ -109,6 +119,12 @@ void scale_boxes(const std::vector<int>& img1_shape, std::vector<RawDet>& dets,
     d.y1 = (d.y1 - pad1) / gain;
     d.x2 = (d.x2 - pad0) / gain;
     d.y2 = (d.y2 - pad1) / gain;
+    if (d.has_kps) {
+      for (int k = 0; k < 5; ++k) {
+        d.kps[k * 2] = (d.kps[k * 2] - pad0) / gain;
+        d.kps[k * 2 + 1] = (d.kps[k * 2 + 1] - pad1) / gain;
+      }
+    }
   }
 }
 

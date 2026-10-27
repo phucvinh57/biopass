@@ -1,5 +1,6 @@
 #include "face_auth.h"
 
+#include <algorithm>
 #include <spdlog/spdlog.h>
 
 #include <fstream>
@@ -16,13 +17,37 @@ namespace biopass {
 
 bool FaceAuth::isAvailable() const { return checkCameraAvailability(face_config_.camera); }
 
+// IR capture tuned by the user's anti-spoofing settings (UI: IR warm-up delay).
+CaptureProfile FaceAuth::irCaptureProfile() const {
+  CaptureProfile profile = kIrCaptureProfile;
+  profile.max_warmup_ms = std::max(0, face_config_.anti_spoofing.ir_warmup_delay_ms);
+  return profile;
+}
+
+bool FaceAuth::irIsMainCamera() const {
+  return face_config_.anti_spoofing.ir_camera.has_value() && face_config_.camera.has_value() &&
+         !face_config_.anti_spoofing.ir_camera->empty() &&
+         *face_config_.anti_spoofing.ir_camera == *face_config_.camera;
+}
+
+// The main camera is whatever the user picked as "Camera Device". If that is
+// the IR sensor (Windows-Hello style: enrol and recognise on IR), open it as a
+// grey stream with the IR profile; otherwise let the session pick the colour
+// profile from the negotiated format.
+std::unique_ptr<ICameraCaptureSession> FaceAuth::openMainSession() const {
+  if (irIsMainCamera()) {
+    return openCameraSession(face_config_.camera, CameraCaptureFormat::V4L2Grey,
+                             irCaptureProfile());
+  }
+  return openCameraSession(face_config_.camera);
+}
+
 void FaceAuth::ensureIrSession() {
   if (face_config_.anti_spoofing.ir_camera.has_value() &&
       !face_config_.anti_spoofing.ir_camera->empty() &&
       (!ir_camera_session_ || !ir_camera_session_->isOpen())) {
-    ir_camera_session_ =
-        openCameraSession(*face_config_.anti_spoofing.ir_camera, CameraCaptureFormat::V4L2Grey,
-                          kIrCaptureWarmupFrames, kIrCaptureTimeoutMs);
+    ir_camera_session_ = openCameraSession(*face_config_.anti_spoofing.ir_camera,
+                                           CameraCaptureFormat::V4L2Grey, irCaptureProfile());
   }
 }
 
@@ -74,9 +99,10 @@ bool FaceAuth::ensureModelsLoaded() {
 
 void FaceAuth::beginAuthenticationSession() {
   if (!camera_session_) {
-    camera_session_ = openCameraSession(face_config_.camera);
+    camera_session_ = openMainSession();
   }
-  ensureIrSession();
+  // IR session is opened lazily in authenticate(), right before the anti-spoof
+  // check, so the colour capture never shares USB bandwidth with the IR stream.
   ensureModelsLoaded();
 }
 
@@ -88,7 +114,7 @@ void FaceAuth::endAuthenticationSession() {
 AuthResult FaceAuth::authenticate(const std::string& username, const AuthConfig& config,
                                   std::atomic<bool>* cancel_signal) {
   if (!camera_session_) {
-    camera_session_ = openCameraSession(face_config_.camera);
+    camera_session_ = openMainSession();
   }
   if (!camera_session_ || !camera_session_->isOpen()) {
     spdlog::error("FaceAuth: Could not open camera");
@@ -98,11 +124,32 @@ AuthResult FaceAuth::authenticate(const std::string& username, const AuthConfig&
     return AuthResult::Retry;
   }
 
-  std::vector<std::string> enrolledFaces = biopass::listFaces(username);
-  if (enrolledFaces.empty()) {
+  std::vector<std::string> allEnrolled = biopass::listFaces(username);
+  if (allEnrolled.empty()) {
     spdlog::error("FaceAuth: No face enrolled for user {}, skipping", username);
     return AuthResult::Unavailable;
   }
+  // RGB and IR images of the same face do not match reliably, so only compare
+  // against enrolments captured by the same kind of sensor as the active
+  // camera. Untagged (older) enrolments are kept for backwards compatibility.
+  const SensorKind activeSensor =
+      camera_session_->isGrey() ? SensorKind::Ir : SensorKind::Rgb;
+  std::vector<std::string> enrolledFaces;
+  for (const auto& path : allEnrolled) {
+    const SensorKind kind = sensorKindOfEnrolment(path);
+    if (kind == SensorKind::Unknown || kind == activeSensor) {
+      enrolledFaces.push_back(path);
+    }
+  }
+  if (enrolledFaces.empty()) {
+    spdlog::warn(
+        "FaceAuth: {} enrolment(s) exist for user {} but none captured with an {} camera; "
+        "re-enrol with the currently selected camera, skipping",
+        allEnrolled.size(), username, sensorTag(activeSensor));
+    return AuthResult::Unavailable;
+  }
+  spdlog::debug("FaceAuth: Active sensor '{}' -> {} of {} enrolment(s) eligible",
+                sensorTag(activeSensor), enrolledFaces.size(), allEnrolled.size());
 
   if (!ensureModelsLoaded()) {
     spdlog::error("FaceAuth: Models not available for user {}, skipping", username);
@@ -127,15 +174,31 @@ AuthResult FaceAuth::authenticate(const std::string& username, const AuthConfig&
   }
 
   ImageRGB face = detectedImages[0].image;
+  const ImageRGB& recogFace = detectedImages[0].recognitionFace();
+  spdlog::debug("FaceAuth: Recognition input {}", detectedImages[0].aligned.empty()
+                                                     ? "= raw crop (no landmarks)"
+                                                     : "= 5-point aligned 112x112");
 
-  ensureIrSession();
+  // When the IR sensor is also the main camera (Windows-Hello style: enrol and
+  // recognise on IR), libcamera cannot acquire the same device twice, so the
+  // presence check reuses the already-open main session.
+  const bool ir_is_main_camera = irIsMainCamera();
+  ICameraCaptureSession* ir_session = nullptr;
+  if (ir_is_main_camera) {
+    spdlog::debug("FaceAuth: IR camera is the main camera; reusing main session for presence check");
+    ir_session = camera_session_.get();
+  } else {
+    ensureIrSession();
+    ir_session = ir_camera_session_.get();
+  }
 
   if (!checkAntiSpoof(face_config_, username, face, config, model_registry_, detector_.get(),
-                      ir_camera_session_.get())) {
+                      ir_session)) {
     spdlog::warn("FaceAuth: Anti-spoofing failed — returning Failure (no retry allowed)");
     // Always tear down the IR session so a subsequent call cannot reuse a
     // partially-warmed camera to bypass the check.
     ir_camera_session_.reset();
+    if (ir_is_main_camera) camera_session_.reset();
     return AuthResult::Failure;
   }
 
@@ -149,7 +212,7 @@ AuthResult FaceAuth::authenticate(const std::string& username, const AuthConfig&
       continue;
     }
 
-    MatchResult match = recognizer_->match(preparedFace, face);
+    MatchResult match = recognizer_->match(preparedFace, recogFace);
     spdlog::debug("FaceAuth: Recognition | face='{}' score={:.4f} threshold={:.3f} similar={}",
                   facePath, match.dist, face_config_.recognition.threshold, match.similar);
     if (match.similar) {

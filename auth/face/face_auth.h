@@ -35,6 +35,9 @@ class FaceAuth : public IAuthMethod {
 
  private:
   void ensureIrSession();
+  CaptureProfile irCaptureProfile() const;
+  bool irIsMainCamera() const;
+  std::unique_ptr<ICameraCaptureSession> openMainSession() const;
   // Loads the detection + recognition models once; returns false if either
   // model file is missing or fails to load.
   bool ensureModelsLoaded();

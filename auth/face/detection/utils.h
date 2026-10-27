@@ -9,6 +9,11 @@ namespace biopass {
 struct RawDet {
   float x1, y1, x2, y2, conf;
   int cls;
+  // 5 facial landmarks (x,y) in the same coordinate space as the box, plus
+  // per-point confidence. has_kps is false for models without keypoints.
+  float kps[10] = {0};
+  float kps_conf[5] = {0};
+  bool has_kps = false;
 };
 
 std::vector<RawDet> non_max_suppression(const float* output, int num_preds, int pred_dim,

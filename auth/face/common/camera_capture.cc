@@ -2,6 +2,7 @@
 
 #include <dirent.h>
 #include <libcamera/libcamera.h>
+#include <spdlog/fmt/fmt.h>
 #include <spdlog/spdlog.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -27,8 +28,6 @@ namespace biopass {
 
 namespace {
 
-constexpr int kDefaultWarmupFrames = 5;
-constexpr int kDefaultCaptureTimeoutMs = 10000;
 
 std::string device_label(const std::optional<std::string>& linux_video_device_path) {
   return linux_video_device_path.has_value() ? *linux_video_device_path : std::string("<default>");
@@ -172,6 +171,33 @@ std::vector<std::string> videoPathsForCamera(const libcamera::Camera& camera) {
   return paths;
 }
 
+// Mean brightness in [0,255]. Subsamples every 4th pixel; plenty for AE
+// convergence and strobe-phase decisions and cheap on 720p frames.
+double meanLuma(const ImageRGB& img) {
+  const size_t n = static_cast<size_t>(img.width) * static_cast<size_t>(img.height);
+  if (n == 0) return 0.0;
+  const uint8_t* p = img.ptr();
+  uint64_t sum = 0;
+  size_t count = 0;
+  for (size_t i = 0; i < n; i += 4, ++count) {
+    sum += p[i * 3] + p[i * 3 + 1] + p[i * 3 + 2];
+  }
+  return static_cast<double>(sum) / (3.0 * static_cast<double>(count));
+}
+
+// Auto-exposure is considered converged when the last kAeWindow warm-up
+// frames differ by no more than kAeSettleTolerance brightness levels.
+// Slow USB 2.0 cameras ramp exposure ~1-2 levels per frame at 10 fps, so the
+// window must be wide enough that a ramp cannot hide inside the tolerance.
+constexpr int kAeWindow = 4;
+constexpr double kAeSettleTolerance = 2.0;
+// Cameras start at minimum exposure and sit on a flat near-black plateau for
+// a few frames before AE starts ramping, which looks "stable". Do not trust
+// stability before this much time has passed or while the image is unusably
+// dark; in both cases keep warming up to the cap.
+constexpr int kAeMinWarmupMs = 600;
+constexpr double kAeMinUsableMean = 10.0;
+
 bool isSupportedPixelFormat(const libcamera::PixelFormat& format) {
   return format == libcamera::formats::YUYV || format == libcamera::formats::MJPEG ||
          format == libcamera::formats::R8;
@@ -204,7 +230,10 @@ bool negotiate(libcamera::CameraConfiguration& config, CameraCaptureFormat reque
     // instead of failing outright.
     preference = {libcamera::formats::R8, libcamera::formats::YUYV, libcamera::formats::MJPEG};
   } else {
-    preference = {libcamera::formats::YUYV, libcamera::formats::MJPEG, libcamera::formats::R8};
+    // Prefer MJPEG for the colour stream: on USB 2.0 cameras an uncompressed
+    // 720p YUYV stream plus a concurrently-open IR stream exceeds the isochronous
+    // bandwidth budget and the RGB frames arrive truncated (bytesused << expected).
+    preference = {libcamera::formats::MJPEG, libcamera::formats::YUYV, libcamera::formats::R8};
   }
 
   const auto available = formats.pixelformats();
@@ -266,11 +295,11 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
  public:
   static std::unique_ptr<LibcameraCaptureSession> open(
       std::shared_ptr<libcamera::CameraManager> manager, std::shared_ptr<libcamera::Camera> camera,
-      CameraCaptureFormat requested_format, std::string camera_label, int warmup_frames,
-      int capture_timeout_ms) {
+      CameraCaptureFormat requested_format, std::string camera_label,
+      std::optional<CaptureProfile> profile) {
     auto session = std::unique_ptr<LibcameraCaptureSession>(
         new LibcameraCaptureSession(std::move(manager), std::move(camera), requested_format,
-                                    std::move(camera_label), warmup_frames, capture_timeout_ms));
+                                    std::move(camera_label), std::move(profile)));
     if (!session->setup()) {
       return nullptr;
     }
@@ -280,59 +309,122 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
   ~LibcameraCaptureSession() override { close(); }
 
   bool isOpen() const override { return started_; }
+  bool isGrey() const override { return is_grey_; }
 
   ImageRGB capture() override {
     if (!isOpen()) {
       return {};
     }
 
-    const bool has_timeout = capture_timeout_ms_ > 0;
+    const bool has_timeout = profile_.capture_timeout_ms > 0;
     const auto deadline = std::chrono::steady_clock::now() +
-                          std::chrono::milliseconds(std::max(0, capture_timeout_ms_));
+                          std::chrono::milliseconds(std::max(0, profile_.capture_timeout_ms));
 
     // Drop any frames that completed before this call so a long-idle session
     // never returns a stale frame.
     drainPending();
 
-    // Color sessions warm up once per session (mirrors the always-running
-    // openpnp stream); grey/IR sessions warm up on every capture to let the
-    // IR emitter/AE settle (mirrors the old V4L2 GREY fallback).
-    const int discard_count = (is_grey_ || !warmed_up_) ? warmup_frames_ : 0;
+    // Colour sessions warm up once per session (auto-exposure settles and
+    // stays settled while streaming); grey/IR sessions warm up on every
+    // capture to let the emitter settle. Warm-up is time-based with a frame
+    // floor so 10 fps and 30 fps cameras behave the same.
+    if (is_grey_ || !warmed_up_) {
+      const auto warm_start = std::chrono::steady_clock::now();
+      const auto warm_until =
+          warm_start + std::chrono::milliseconds(std::max(0, profile_.max_warmup_ms));
+      // Colour: stop as soon as auto-exposure has converged. Grey/IR: the
+      // emitter strobe makes brightness useless as a signal, so run to the cap.
+      const bool watch_ae = !is_grey_;
+      std::deque<double> recent_means;
+      std::string ae_trace;  // per-frame means for the debug log
+      int discarded = 0;
+      bool converged = false;
+      for (;;) {
+        libcamera::Request* request = waitForRequest(deadline, has_timeout);
+        if (!request) {
+          return {};
+        }
+        if (watch_ae) {
+          ImageRGB probe;
+          if (extractFrame(request, probe)) {
+            recent_means.push_back(meanLuma(probe));
+            if (ae_trace.size() < 120) {
+              ae_trace += fmt::format("{}{:.0f}", ae_trace.empty() ? "" : ",", recent_means.back());
+            }
+            if (static_cast<int>(recent_means.size()) > kAeWindow) {
+              recent_means.pop_front();
+            }
+          }
+        }
+        requeue(request);
+        ++discarded;
+
+        if (watch_ae && static_cast<int>(recent_means.size()) == kAeWindow) {
+          const auto [lo, hi] = std::minmax_element(recent_means.begin(), recent_means.end());
+          const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                   std::chrono::steady_clock::now() - warm_start)
+                                   .count();
+          converged = (*hi - *lo) <= kAeSettleTolerance && elapsed >= kAeMinWarmupMs &&
+                      *lo >= kAeMinUsableMean;
+        }
+        const bool time_up = std::chrono::steady_clock::now() >= warm_until;
+        if (discarded >= profile_.min_warmup_frames && (converged || time_up)) {
+          break;
+        }
+      }
+      const auto warm_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                               std::chrono::steady_clock::now() - warm_start)
+                               .count();
+      spdlog::debug("FaceAuth: Camera '{}' warmed up in {} ms / {} frames ({}{})", camera_label_,
+                    warm_ms, discarded,
+                    watch_ae ? (converged ? "AE converged" : "AE cap reached") : "IR settle",
+                    watch_ae ? fmt::format(", means=[{}]", ae_trace) : "");
+    }
     warmed_up_ = true;
-    for (int i = 0; i < discard_count; ++i) {
+
+    // Strobed IR emitters: any single frame may land in a dark phase, so
+    // sample a few and keep the brightest.
+    const int samples = std::max(1, profile_.brightest_of);
+    ImageRGB best;
+    double best_mean = -1.0;
+    for (int i = 0; i < samples; ++i) {
       libcamera::Request* request = waitForRequest(deadline, has_timeout);
       if (!request) {
-        return {};
+        break;
       }
+      ImageRGB image;
+      const bool ok = extractFrame(request, image);
       requeue(request);
+      if (!ok) {
+        spdlog::error("FaceAuth: Failed to convert frame from '{}'", camera_label_);
+        continue;
+      }
+      const double mean = samples > 1 ? meanLuma(image) : 0.0;
+      if (mean > best_mean) {
+        best_mean = mean;
+        best = std::move(image);
+      }
     }
-
-    libcamera::Request* request = waitForRequest(deadline, has_timeout);
-    if (!request) {
+    if (best.empty()) {
       return {};
     }
-
-    ImageRGB image;
-    const bool ok = extractFrame(request, image);
-    requeue(request);
-    if (!ok) {
-      spdlog::error("FaceAuth: Failed to convert frame from '{}'", camera_label_);
-      return {};
+    if (samples > 1) {
+      spdlog::debug("FaceAuth: Grey capture from '{}' kept brightest of {} frames (mean={:.1f})",
+                    camera_label_, samples, best_mean);
     }
-    return image;
+    return best;
   }
 
  private:
   LibcameraCaptureSession(std::shared_ptr<libcamera::CameraManager> manager,
                           std::shared_ptr<libcamera::Camera> camera,
                           CameraCaptureFormat requested_format, std::string camera_label,
-                          int warmup_frames, int capture_timeout_ms)
+                          std::optional<CaptureProfile> profile)
       : manager_(std::move(manager)),
         camera_(std::move(camera)),
         camera_label_(std::move(camera_label)),
         is_grey_(requested_format == CameraCaptureFormat::V4L2Grey),
-        warmup_frames_(std::max(0, warmup_frames)),
-        capture_timeout_ms_(capture_timeout_ms) {}
+        requested_profile_(std::move(profile)) {}
 
   bool setup() {
     config_ = camera_->generateConfiguration({libcamera::StreamRole::StillCapture});
@@ -360,6 +452,16 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
 
     libcamera::StreamConfiguration& stream_config = config_->at(0);
     pixel_format_ = stream_config.pixelFormat;
+    // An IR sensor chosen as the *main* camera is requested as colour but
+    // negotiates R8; treat it as grey so strobe handling/warm-up apply.
+    if (pixel_format_ == libcamera::formats::R8) {
+      is_grey_ = true;
+    }
+    profile_ = requested_profile_.value_or(is_grey_ ? kIrCaptureProfile : kColourCaptureProfile);
+    spdlog::debug(
+        "FaceAuth: Camera '{}' capture profile: {} (warm-up ≤{} ms/≥{} frames, brightest of {})",
+        camera_label_, is_grey_ ? "IR/grey" : "colour", profile_.max_warmup_ms,
+        profile_.min_warmup_frames, profile_.brightest_of);
     width_ = static_cast<int>(stream_config.size.width);
     height_ = static_cast<int>(stream_config.size.height);
     stride_ = static_cast<int>(stream_config.stride);
@@ -515,8 +617,8 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
   std::shared_ptr<libcamera::Camera> camera_;
   std::string camera_label_;
   bool is_grey_ = false;
-  int warmup_frames_ = 0;
-  int capture_timeout_ms_ = 0;
+  std::optional<CaptureProfile> requested_profile_;
+  CaptureProfile profile_ = kColourCaptureProfile;
   bool warmed_up_ = false;
 
   std::unique_ptr<libcamera::CameraConfiguration> config_;
@@ -541,6 +643,37 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
 
 }  // namespace
 
+const char* sensorTag(SensorKind kind) {
+  switch (kind) {
+    case SensorKind::Rgb:
+      return "rgb";
+    case SensorKind::Ir:
+      return "ir";
+    default:
+      return "";
+  }
+}
+
+SensorKind sensorKindOfEnrolment(const std::string& path) {
+  const auto slash = path.find_last_of('/');
+  const std::string name = slash == std::string::npos ? path : path.substr(slash + 1);
+  if (name.find(".ir.") != std::string::npos) return SensorKind::Ir;
+  if (name.find(".rgb.") != std::string::npos) return SensorKind::Rgb;
+  return SensorKind::Unknown;
+}
+
+std::string tagEnrolmentPath(const std::string& path, SensorKind kind) {
+  if (kind == SensorKind::Unknown || sensorKindOfEnrolment(path) != SensorKind::Unknown) {
+    return path;
+  }
+  const auto slash = path.find_last_of('/');
+  const auto dot = path.find_last_of('.');
+  if (dot == std::string::npos || (slash != std::string::npos && dot < slash)) {
+    return path + "." + sensorTag(kind);
+  }
+  return path.substr(0, dot) + "." + sensorTag(kind) + path.substr(dot);
+}
+
 bool checkCameraAvailability(const std::optional<std::string>& linux_video_device_path) {
   auto session = openCameraSession(linux_video_device_path);
   return session && session->isOpen();
@@ -548,7 +681,7 @@ bool checkCameraAvailability(const std::optional<std::string>& linux_video_devic
 
 std::unique_ptr<ICameraCaptureSession> openCameraSession(
     const std::optional<std::string>& linux_video_device_path, CameraCaptureFormat format,
-    int warmup_frames, int capture_timeout_ms) {
+    std::optional<CaptureProfile> profile) {
   auto manager = cameraManager();
   if (!manager) {
     return nullptr;
@@ -560,14 +693,12 @@ std::unique_ptr<ICameraCaptureSession> openCameraSession(
   }
 
   return LibcameraCaptureSession::open(manager, camera, format,
-                                       device_label(linux_video_device_path), warmup_frames,
-                                       capture_timeout_ms);
+                                       device_label(linux_video_device_path), std::move(profile));
 }
 
 ImageRGB captureImage(const std::optional<std::string>& linux_video_device_path,
                       CameraCaptureFormat format) {
-  auto session = openCameraSession(linux_video_device_path, format, kDefaultWarmupFrames,
-                                   kDefaultCaptureTimeoutMs);
+  auto session = openCameraSession(linux_video_device_path, format);
   if (!session) {
     return {};
   }
@@ -575,15 +706,13 @@ ImageRGB captureImage(const std::optional<std::string>& linux_video_device_path,
   return session->capture();
 }
 
-ImageRGB captureImageByIRCamera(const std::string& device_path, int warmup_frames,
-                                int capture_timeout_ms) {
+ImageRGB captureImageByIRCamera(const std::string& device_path, const CaptureProfile& profile) {
   if (device_path.empty()) {
     spdlog::error("FaceAuth: IR camera capture requires a /dev/video* path");
     return {};
   }
 
-  auto session = openCameraSession(device_path, CameraCaptureFormat::V4L2Grey, warmup_frames,
-                                   capture_timeout_ms);
+  auto session = openCameraSession(device_path, CameraCaptureFormat::V4L2Grey, profile);
   if (!session) {
     return {};
   }

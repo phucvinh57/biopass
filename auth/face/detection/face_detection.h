@@ -6,6 +6,8 @@
 #include <vector>
 
 // Image utilities (replaces OpenCV)
+#include <array>
+
 #include "image_utils.h"
 #include "onnx_session.h"
 
@@ -19,9 +21,15 @@ struct Box {
 struct Detection {
   int class_id{-1};
   Box box;
-  ImageRGB image;
+  ImageRGB image;    // raw bounding-box crop (anti-spoofing, debug images)
+  ImageRGB aligned;  // 112x112 landmark-aligned face for recognition; empty if unavailable
+  std::array<float, 10> landmarks{};  // 5 x (x,y) in full-image coords
+  bool has_landmarks{false};
   float conf{0.0};
   std::string class_name;
+
+  // Face image to feed the recognizer / store at enrolment.
+  const ImageRGB& recognitionFace() const { return aligned.empty() ? image : aligned; }
 
   Detection(int class_id, std::string class_name, float conf, Box box, const ImageRGB& image)
       : class_id(class_id), class_name(class_name), conf(conf), box(box), image(image) {}

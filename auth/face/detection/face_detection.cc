@@ -2,7 +2,12 @@
 
 #include <algorithm>
 
+#include "face_align.h"
 #include "utils.h"
+
+namespace {
+constexpr float kMinLandmarkConf = 0.5f;
+}
 
 namespace biopass {
 
@@ -40,6 +45,15 @@ std::vector<Detection> FaceDetection::inference(const ImageRGB& image) {
     Box xyxy_box(x1, y1, x2, y2);
     ImageRGB crop_face = image.crop(x1, y1, x2, y2);
     Detection det(d.cls, std::string("face"), d.conf, xyxy_box, crop_face);
+    if (d.has_kps) {
+      bool confident = true;
+      for (int k = 0; k < 5; ++k) confident = confident && d.kps_conf[k] >= kMinLandmarkConf;
+      if (confident) {
+        for (int k = 0; k < 10; ++k) det.landmarks[k] = d.kps[k];
+        det.has_landmarks = true;
+        det.aligned = alignFace(image, det.landmarks);
+      }
+    }
     results.push_back(det);
   }
 

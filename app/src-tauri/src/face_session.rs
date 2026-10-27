@@ -206,7 +206,12 @@ pub fn capture_face_in_session(app: AppHandle) -> Result<String, String> {
     let response = response.trim();
 
     match response {
-        "OK" => Ok(file_path.to_string_lossy().to_string()),
+        // "OK" or "OK <path>": the helper may add a sensor tag to the file name.
+        s if s == "OK" || s.starts_with("OK ") => Ok(s
+            .strip_prefix("OK ")
+            .filter(|p| !p.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| file_path.to_string_lossy().to_string())),
         "NO_FACE" => {
             Err("No face detected. Please position your face in front of the camera.".into())
         }

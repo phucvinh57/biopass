@@ -102,7 +102,7 @@ int cropFace(const std::string& inputPath, const std::string& outputPath,
     return 2;  // Special exit code for "no face detected"
   }
 
-  ImageRGB faceCrop = detectedFaces[0].image;
+  ImageRGB faceCrop = detectedFaces[0].recognitionFace();
   if (!saveImage(outputPath, faceCrop)) {
     spdlog::error("Could not save cropped image to: {}", outputPath);
     return 1;
@@ -193,11 +193,14 @@ int previewSession(const std::string& cameraPath, const std::string& modelPath, 
         std::cout << "NO_FACE\n" << std::flush;
         continue;
       }
-      if (!saveImage(outPath, faces[0].image)) {
+      const std::string savedPath = biopass::tagEnrolmentPath(
+          outPath, session->isGrey() ? biopass::SensorKind::Ir : biopass::SensorKind::Rgb);
+      if (!saveImage(savedPath, faces[0].recognitionFace())) {
         std::cout << "ERR save failed\n" << std::flush;
         continue;
       }
-      std::cout << "OK\n" << std::flush;
+      // "OK <path>": the path may differ from the request by the sensor tag.
+      std::cout << "OK " << savedPath << "\n" << std::flush;
       continue;
     }
 
@@ -217,13 +220,16 @@ int captureAndCropFace(const std::string& cameraPath, const std::string& outputP
   // Silence libcamera's info-level setup noise during enumeration; errors
   // still propagate.
   spdlog::set_level(spdlog::level::err);
-  ImageRGB image = biopass::captureImage(deviceOpt);
+  auto session = biopass::openCameraSession(deviceOpt);
+  ImageRGB image = session ? session->capture() : ImageRGB{};
   spdlog::set_level(spdlog::level::info);
   if (image.empty()) {
     spdlog::error("Failed to capture image from camera: {}",
                   cameraPath.empty() ? "<auto>" : cameraPath);
     return 1;
   }
+  const biopass::SensorKind sensor =
+      session->isGrey() ? biopass::SensorKind::Ir : biopass::SensorKind::Rgb;
 
   std::unique_ptr<FaceDetection> faceDetector;
   try {
@@ -239,13 +245,16 @@ int captureAndCropFace(const std::string& cameraPath, const std::string& outputP
     return 2;
   }
 
-  ImageRGB faceCrop = detectedFaces[0].image;
-  if (!saveImage(outputPath, faceCrop)) {
-    spdlog::error("Could not save cropped image to: {}", outputPath);
+  ImageRGB faceCrop = detectedFaces[0].recognitionFace();
+  const std::string savedPath = biopass::tagEnrolmentPath(outputPath, sensor);
+  if (!saveImage(savedPath, faceCrop)) {
+    spdlog::error("Could not save cropped image to: {}", savedPath);
     return 1;
   }
 
-  spdlog::info("Successfully captured + cropped face and saved to: {}", outputPath);
+  spdlog::info("Successfully captured + cropped face and saved to: {}", savedPath);
+  // Machine-readable line for the desktop app (the path may carry a sensor tag).
+  std::cout << "SAVED " << savedPath << "\n" << std::flush;
   return 0;
 }
 

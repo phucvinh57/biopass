@@ -40,7 +40,26 @@ In the anti-spoofing section:
 
 If you only want IR-based anti-spoofing, selecting the `IR Camera` device is enough.
 
-## 3. If The IR Emitter Stays Off On Linux
+## 3. Optional: Use The IR Sensor As The Main Camera
+
+You can also select the IR device as the main **Camera Device** (the same
+`/dev/video*` path you set for `IR Camera`), not just for anti-spoofing. Biopass
+then enrols and recognises on the IR image, the way Windows Hello does. The main
+advantage is that face login no longer depends on room lighting — it works in the
+dark, since the scene is lit by the IR emitter.
+
+To do this, in the face settings set **Camera Device** and **IR Camera** to the
+same IR `/dev/video*` device, then save.
+
+Notes:
+
+- **Re-enrol after switching.** Enrolments are captured with, and tagged by, the
+  sensor they came from. RGB and IR images of the same face do not match reliably,
+  so after selecting the IR device as the main camera you should capture new faces;
+  enrolments made with a different camera are ignored at login.
+- The IR emitter must actually turn on — see the next section.
+
+## 4. If The IR Emitter Stays Off On Linux
 
 On some Linux systems, the IR camera is detected but the IR light emitter does not turn on automatically. In that case, use [`linux-enable-ir-emitter`](https://github.com/EmixamPP/linux-enable-ir-emitter).
 
@@ -65,7 +84,7 @@ After successfully triggering your IR emitter, run:
 sudo systemctl enable --now linux-enable-ir-emitter
 ```
 
-## 4. If The IR Presence Check Fails Intermittently
+## 5. If The IR Presence Check Fails Intermittently
 
 Some IR emitters blink rapidly, so an individual captured frame can be over-exposed
 (all-white) or under-exposed (all-dark) and yield no detectable face. Biopass retries

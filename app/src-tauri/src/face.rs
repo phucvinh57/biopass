@@ -52,7 +52,17 @@ pub fn capture_face(app: AppHandle, camera: Option<String>) -> Result<String, St
         .map_err(|e| format!("Failed to execute helper: {}", e))?;
 
     if output.status.success() {
-        Ok(file_path.to_string_lossy().to_string())
+        // The helper reports the final path ("SAVED <path>"), which may carry a
+        // sensor tag (.ir/.rgb) the app did not know about.
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let saved = stdout
+            .lines()
+            .rev()
+            .find_map(|l| l.strip_prefix("SAVED "))
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .map(str::to_string);
+        Ok(saved.unwrap_or_else(|| file_path.to_string_lossy().to_string()))
     } else if output.status.code() == Some(2) {
         Err("No face detected. Please position your face in front of the camera.".to_string())
     } else {

@@ -1,5 +1,6 @@
 #include "ir_camera_as.h"
 
+#include <algorithm>
 #include <spdlog/spdlog.h>
 
 #include <chrono>
@@ -53,7 +54,9 @@ bool checkAntispoofByIRCamera(const std::string& device_path, FaceDetection* det
     } else {
       spdlog::debug("FaceAuth: IR presence check — attempt {} opening new session on '{}'", attempt,
                     device_path);
-      frame = captureImageByIRCamera(device_path);
+      CaptureProfile profile = kIrCaptureProfile;
+      profile.max_warmup_ms = std::max(0, warmup_delay_ms);
+      frame = captureImageByIRCamera(device_path, profile);
     }
 
     if (frame.empty()) {
