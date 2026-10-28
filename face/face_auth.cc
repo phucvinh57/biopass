@@ -10,9 +10,7 @@
 #include "antispoof_check.h"
 #include "camera_capture.h"
 #include "debug_image_io.h"
-#include "frame_darkness.h"
 #include "image_utils.h"
-#include "status_reporter.h"
 
 namespace biopass {
 
@@ -82,23 +80,7 @@ void FaceAuth::beginAuthenticationSession() {
   ensureModelsLoaded();
 }
 
-void FaceAuth::finishSessionFeedback() {
-  // Every captured frame was dark and faceless: almost certainly a closed
-  // privacy shutter or a covered lens, not a stranger. Skip it if another
-  // method already succeeded (parallel mode) -- the login went through.
-  const bool cancelled = cancel_signal_ && cancel_signal_->load();
-  if (!cancelled && frames_captured_ > 0 && covered_frames_ == frames_captured_) {
-    spdlog::warn("FaceAuth: All {} frames were dark, camera appears covered", frames_captured_);
-    reportError("Biopass: camera appears covered or the shutter is closed");
-  }
-  scan_announced_ = false;
-  frames_captured_ = 0;
-  covered_frames_ = 0;
-  cancel_signal_ = nullptr;
-}
-
 void FaceAuth::endAuthenticationSession() {
-  finishSessionFeedback();
   ir_camera_session_.reset();
   camera_session_.reset();
 }
@@ -127,16 +109,8 @@ AuthResult FaceAuth::authenticate(const std::string& username, const AuthConfig&
     return AuthResult::Unavailable;
   }
 
-  cancel_signal_ = cancel_signal;
   if (cancel_signal && cancel_signal->load()) {
     return AuthResult::Failure;
-  }
-
-  // Announce once per session, only now that scanning will really happen
-  // (camera open, faces enrolled, models loaded).
-  if (!scan_announced_) {
-    scan_announced_ = true;
-    reportInfo("Biopass: looking for your face...");
   }
 
   ImageRGB loginFace = camera_session_->capture();
@@ -145,18 +119,10 @@ AuthResult FaceAuth::authenticate(const std::string& username, const AuthConfig&
     camera_session_.reset();
     return AuthResult::Retry;
   }
-  frames_captured_++;
 
   std::vector<Detection> detectedImages = detector_->inference(loginFace);
   if (detectedImages.empty()) {
-    // Detection always runs first, so the darkness check can only change the
-    // failure message, never reject a frame that has a usable face.
-    const LumaStats luma = measureLuma(loginFace);
-    if (looksCovered(luma)) {
-      covered_frames_++;
-    }
-    spdlog::error("FaceAuth: No face detected | luma mean={:.1f} stddev={:.1f}", luma.mean,
-                  luma.stddev);
+    spdlog::error("FaceAuth: No face detected");
     return AuthResult::Retry;
   }
 
