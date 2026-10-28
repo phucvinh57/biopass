@@ -22,6 +22,7 @@ class FingerprintAuth : public IAuthMethod {
   bool isAvailable() const override;
   uint32_t getRetries() const override { return config_.retries; }
   uint32_t getRetryDelayMs() const override { return 0; }
+  void beginAuthenticationSession() override { scan_announced_ = false; }
   AuthResult authenticate(const std::string &username, const AuthConfig &config,
                           std::atomic<bool> *cancel_signal = nullptr) override;
   std::vector<std::string> listEnrolledFingers(const std::string &username);
@@ -32,6 +33,7 @@ class FingerprintAuth : public IAuthMethod {
 
  private:
   FingerprintMethodConfig config_;
+  bool scan_announced_ = false;
 };
 
 }  // namespace biopass
