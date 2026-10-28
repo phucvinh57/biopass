@@ -31,10 +31,10 @@ bool FaceAuth::ensureModelsLoaded() {
     return true;
   }
 
-  const std::string detectModelPath =
-      model_registry_.resolveModelPath(face_config_.detection.model_id).value_or("");
-  const std::string recogModelPath =
-      model_registry_.resolveModelPath(face_config_.recognition.model_id).value_or("");
+  const auto detectModel = model_registry_.resolveModel(face_config_.detection.model_id);
+  const auto recogModel = model_registry_.resolveModel(face_config_.recognition.model_id);
+  const std::string detectModelPath = detectModel ? detectModel->path : "";
+  const std::string recogModelPath = recogModel ? recogModel->path : "";
   if (!std::ifstream(recogModelPath).good() || !std::ifstream(detectModelPath).good()) {
     spdlog::error("FaceAuth: Model files not found");
     return false;

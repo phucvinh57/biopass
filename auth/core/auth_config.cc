@@ -51,7 +51,7 @@ BiopassConfig readConfig(const std::string& username) {
     // writes it), so an absent/mismatched schema_version is treated exactly
     // like a missing/corrupt file -- fall back to defaults. A defaulted
     // config's model_ids won't resolve against biopass.db either, so
-    // ModelRegistry::resolveModelPath() returns nullopt and
+    // ModelRegistry::resolveModel() returns nullopt and
     // ensureModelsLoaded() safely reports Unavailable, letting PAM fall
     // through to normal system auth instead of locking anyone out.
     int schema_version = yaml["schema_version"] ? yaml["schema_version"].as<int>() : 0;

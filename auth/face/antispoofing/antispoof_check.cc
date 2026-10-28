@@ -27,33 +27,26 @@ AntiSpoofTask make_task(const std::string& name, std::future<bool> future) {
   return task;
 }
 
-// The registry only gives us a file path, but MobileNetV3 and MiniFASv2 need
-// different preprocessing and output decoding. Map the built-in ids (see
-// KNOWN_MODELS in app/src-tauri/src/db.rs); for anything else return "" so
-// FaceAntiSpoofing picks the type from the checkpoint filename.
-std::string antiSpoofModelType(const std::string& model_id) {
-  if (model_id == "minifas-v2") {
-    return "minifasv2";
-  }
-  if (model_id == "mobilenetv3-antispoof") {
-    return "mobilenetv3";
-  }
-  return "";
-}
-
 bool checkAntiSpoofByAIModel(const FaceMethodConfig& faceCfg, const std::string& username,
                              const ImageRGB& face, const AuthConfig& authCfg,
                              const ModelRegistry& model_registry) {
-  const std::string modelPath =
-      model_registry.resolveModelPath(faceCfg.anti_spoofing.model.model_id).value_or("");
+  const std::string& modelId = faceCfg.anti_spoofing.model.model_id;
+  const auto model = model_registry.resolveModel(modelId);
+  const std::string modelPath = model ? model->path : "";
   if (modelPath.empty() || !std::ifstream(modelPath).good()) {
     spdlog::error("FaceAuth: Anti-spoofing model file not found: {}", modelPath);
     return false;
   }
 
+  const auto architecture = parseAntiSpoofArchitecture(model->architecture);
+  if (!architecture) {
+    spdlog::error("FaceAuth: Anti-spoofing model '{}' has unknown architecture '{}'", modelId,
+                  model->architecture);
+    return false;
+  }
+
   try {
-    FaceAntiSpoofing face_as(modelPath, 128, faceCfg.anti_spoofing.model.threshold,
-                             antiSpoofModelType(faceCfg.anti_spoofing.model.model_id));
+    FaceAntiSpoofing face_as(modelPath, *architecture, 128, faceCfg.anti_spoofing.model.threshold);
     const SpoofResult result = face_as.inference(face);
     if (result.spoof) {
       spdlog::warn("FaceAuth: AI anti-spoofing detected spoof, score: {}", result.score);

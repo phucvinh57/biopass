@@ -10,7 +10,8 @@ use crate::paths::{get_config_dir, get_data_dir, get_db_path};
 pub struct Model {
     pub id: String,
     pub name: String,
-    pub model_type: String,
+    pub task: String,
+    pub architecture: Option<String>,
     pub path: String,
     pub version: Option<String>,
     pub checksum: Option<String>,
@@ -22,7 +23,8 @@ pub struct KnownModel {
     pub slug: &'static str,
     pub filename: &'static str,
     pub display_name: &'static str,
-    pub model_type: &'static str,
+    pub task: &'static str,
+    pub architecture: Option<&'static str>,
 }
 
 /// Built-in models. The app downloads any that are missing on startup
@@ -32,31 +34,36 @@ pub const KNOWN_MODELS: &[KnownModel] = &[
         slug: "yolov8n-face",
         filename: "yolov8n-face.onnx",
         display_name: "YOLOv8n Face",
-        model_type: "detection",
+        task: "detection",
+        architecture: None,
     },
     KnownModel {
         slug: "edgeface-s-gamma-05",
         filename: "edgeface_s_gamma_05.onnx",
         display_name: "EdgeFace S (gamma 0.5)",
-        model_type: "recognition",
+        task: "recognition",
+        architecture: None,
     },
     KnownModel {
         slug: "edgeface-xs-gamma-06",
         filename: "edgeface_xs_gamma_06.onnx",
         display_name: "EdgeFace XS (gamma 0.6)",
-        model_type: "recognition",
+        task: "recognition",
+        architecture: None,
     },
     KnownModel {
         slug: "mobilenetv3-antispoof",
         filename: "mobilenetv3_antispoof.onnx",
         display_name: "MobileNetV3 Anti-Spoof",
-        model_type: "anti_spoofing",
+        task: "anti_spoofing",
+        architecture: Some("mobilenetv3"),
     },
     KnownModel {
         slug: "minifas-v2",
         filename: "minifas_v2.onnx",
         display_name: "MiniFASNet V2",
-        model_type: "anti_spoofing",
+        task: "anti_spoofing",
+        architecture: Some("minifasv2"),
     },
 ];
 
@@ -68,7 +75,10 @@ fn now_unix() -> i64 {
 }
 
 fn migrations() -> Migrations<'static> {
-    Migrations::new(vec![M::up(include_str!("../migrations/001_initial.sql"))])
+    Migrations::new(vec![
+        M::up(include_str!("../migrations/001_initial.sql")),
+        M::up(include_str!("../migrations/002_task_and_architecture.sql")),
+    ])
 }
 
 /// Opens (creating if necessary) the biopass.db sqlite database, applies any
@@ -106,12 +116,13 @@ fn seed_default_models(conn: &Connection, app: &AppHandle) -> Result<(), String>
             continue;
         }
         conn.execute(
-            "INSERT OR IGNORE INTO models (id, name, model_type, path, version, checksum, source, installed_at) \
-             VALUES (?1, ?2, ?3, ?4, NULL, NULL, 'builtin', ?5)",
+            "INSERT OR IGNORE INTO models (id, name, task, architecture, path, version, checksum, source, installed_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL, 'builtin', ?6)",
             params![
                 known.slug,
                 known.display_name,
-                known.model_type,
+                known.task,
+                known.architecture,
                 path.to_string_lossy(),
                 now
             ],
@@ -126,27 +137,29 @@ fn row_to_model(row: &rusqlite::Row) -> rusqlite::Result<Model> {
     Ok(Model {
         id: row.get(0)?,
         name: row.get(1)?,
-        model_type: row.get(2)?,
-        path: row.get(3)?,
-        version: row.get(4)?,
-        checksum: row.get(5)?,
-        source: row.get(6)?,
-        installed_at: row.get(7)?,
+        task: row.get(2)?,
+        architecture: row.get(3)?,
+        path: row.get(4)?,
+        version: row.get(5)?,
+        checksum: row.get(6)?,
+        source: row.get(7)?,
+        installed_at: row.get(8)?,
     })
 }
 
-const MODEL_COLUMNS: &str = "id, name, model_type, path, version, checksum, source, installed_at";
+const MODEL_COLUMNS: &str =
+    "id, name, task, architecture, path, version, checksum, source, installed_at";
 
-pub fn list_models(conn: &Connection, model_type: Option<&str>) -> Result<Vec<Model>, String> {
+pub fn list_models(conn: &Connection, task: Option<&str>) -> Result<Vec<Model>, String> {
     let query = format!(
-        "SELECT {} FROM models WHERE (?1 IS NULL OR model_type = ?1) ORDER BY installed_at",
+        "SELECT {} FROM models WHERE (?1 IS NULL OR task = ?1) ORDER BY installed_at",
         MODEL_COLUMNS
     );
     let mut stmt = conn
         .prepare(&query)
         .map_err(|e| format!("Failed to prepare models query: {}", e))?;
     let rows = stmt
-        .query_map(params![model_type], row_to_model)
+        .query_map(params![task], row_to_model)
         .map_err(|e| format!("Failed to query models: {}", e))?;
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|e| format!("Failed to read models: {}", e))
@@ -193,23 +206,26 @@ pub fn upsert_model(
     conn: &Connection,
     id: &str,
     name: &str,
-    model_type: &str,
+    task: &str,
+    architecture: Option<&str>,
     path: &str,
     version: Option<&str>,
     checksum: Option<&str>,
     source: &str,
 ) -> Result<(), String> {
     conn.execute(
-        "INSERT INTO models (id, name, model_type, path, version, checksum, source, installed_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
+        "INSERT INTO models (id, name, task, architecture, path, version, checksum, source, installed_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
          ON CONFLICT(id) DO UPDATE SET \
-             name = excluded.name, model_type = excluded.model_type, path = excluded.path, \
+             name = excluded.name, task = excluded.task, architecture = excluded.architecture, \
+             path = excluded.path, \
              version = excluded.version, checksum = excluded.checksum, source = excluded.source, \
              installed_at = excluded.installed_at",
         params![
             id,
             name,
-            model_type,
+            task,
+            architecture,
             path,
             version,
             checksum,
@@ -219,4 +235,45 @@ pub fn upsert_model(
     )
     .map_err(|e| format!("Failed to upsert model '{}': {}", id, e))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migration_002_backfills_architecture() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrations().to_version(&mut conn, 1).unwrap();
+        conn.execute_batch(
+            "INSERT INTO models (id, name, model_type, path, installed_at) VALUES \
+                 ('yolov8n-face', 'YOLO', 'detection', '/m/yolo.onnx', 0), \
+                 ('minifas-v2', 'MiniFAS', 'anti_spoofing', '/m/minifas_v2.onnx', 0), \
+                 ('my-minifas', 'Custom', 'anti_spoofing', '/m/my-minifas.onnx', 0);",
+        )
+        .unwrap();
+
+        migrations().to_latest(&mut conn).unwrap();
+
+        let arch = |id: &str| get_model(&conn, id).unwrap().unwrap().architecture;
+        assert_eq!(arch("yolov8n-face"), None);
+        assert_eq!(arch("minifas-v2").as_deref(), Some("minifasv2"));
+        // Custom rows keep the behaviour they had before: MobileNetV3.
+        assert_eq!(arch("my-minifas").as_deref(), Some("mobilenetv3"));
+    }
+
+    #[test]
+    fn anti_spoofing_rows_require_architecture() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrations().to_latest(&mut conn).unwrap();
+
+        let insert = |task: &str, arch: Option<&str>| {
+            upsert_model(&conn, "m", "m", task, arch, "/m.onnx", None, None, "user")
+        };
+        assert!(insert("anti_spoofing", None).is_err());
+        assert!(insert("anti_spoofing", Some("resnet")).is_err());
+        assert!(insert("detection", Some("minifasv2")).is_err());
+        assert!(insert("anti_spoofing", Some("minifasv2")).is_ok());
+        assert!(insert("detection", None).is_ok());
+    }
 }

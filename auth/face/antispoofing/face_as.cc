@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <filesystem>
 
 namespace biopass {
 
@@ -22,19 +21,22 @@ int argmax(const float* data, int size) {
 
 }  // namespace
 
-FaceAntiSpoofing::FaceAntiSpoofing(const std::string& ckpt, int imgsz, const float threshold,
-                                   const std::string& model_type)
+std::optional<AntiSpoofArchitecture> parseAntiSpoofArchitecture(const std::string& name) {
+  if (name == "mobilenetv3") {
+    return AntiSpoofArchitecture::MobileNetV3;
+  }
+  if (name == "minifasv2") {
+    return AntiSpoofArchitecture::MiniFASv2;
+  }
+  return std::nullopt;
+}
+
+FaceAntiSpoofing::FaceAntiSpoofing(const std::string& ckpt, AntiSpoofArchitecture architecture,
+                                   int imgsz, const float threshold)
     : threshold(threshold),
       imgsz(imgsz),
-      model_type(model_type),
-      session(ckpt, "FaceAntiSpoofing") {
-  // Unrecognized model_type: infer from the checkpoint filename.
-  if (this->model_type != "minifasv2" && this->model_type != "mobilenetv3") {
-    const std::string filename = std::filesystem::path(ckpt).filename().string();
-    this->model_type =
-        (filename.find("minifas") != std::string::npos) ? "minifasv2" : "mobilenetv3";
-  }
-}
+      architecture(architecture),
+      session(ckpt, "FaceAntiSpoofing") {}
 
 std::vector<float> FaceAntiSpoofing::preprocessMobileNetV3(const ImageRGB& image) {
   const float mean[3] = {0.5931f, 0.4690f, 0.4229f};
@@ -50,7 +52,7 @@ std::vector<float> FaceAntiSpoofing::preprocessMiniFASv2(const ImageRGB& image) 
 }
 
 std::vector<float> FaceAntiSpoofing::preprocess(const ImageRGB& image) {
-  if (this->model_type == "mobilenetv3") {
+  if (this->architecture == AntiSpoofArchitecture::MobileNetV3) {
     return this->preprocessMobileNetV3(image);
   }
   return this->preprocessMiniFASv2(image);
@@ -64,7 +66,7 @@ SpoofResult FaceAntiSpoofing::inference(const ImageRGB& image) {
 
   const float* logits = output_tensors[0].GetTensorData<float>();
 
-  if (this->model_type == "mobilenetv3") {
+  if (this->architecture == AntiSpoofArchitecture::MobileNetV3) {
     // Index 0: Spoof, Index 1: Real
     int spoof_cls = argmax(logits, 2);
     float score = logits[spoof_cls];

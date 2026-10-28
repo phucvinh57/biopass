@@ -13,7 +13,8 @@ use crate::config::load_config;
 use crate::db::{self, Model};
 use crate::paths::get_data_dir;
 
-const VALID_MODEL_TYPES: [&str; 3] = ["detection", "recognition", "anti_spoofing"];
+const VALID_TASKS: [&str; 3] = ["detection", "recognition", "anti_spoofing"];
+const ANTI_SPOOFING_ARCHITECTURES: [&str; 2] = ["mobilenetv3", "minifasv2"];
 const PROGRESS_EVENT: &str = "model-download-progress";
 const DEFAULT_MODELS_EVENT: &str = "default-models-updated";
 const DEFAULT_MODELS_URL: &str = "https://github.com/phucvinh57/biopass/releases/latest/download";
@@ -21,9 +22,9 @@ const PROGRESS_THROTTLE_MS: u128 = 150;
 const MAX_NAME_LEN: usize = 200;
 
 #[tauri::command]
-pub fn list_models(app: AppHandle, model_type: Option<String>) -> Result<Vec<Model>, String> {
+pub fn list_models(app: AppHandle, task: Option<String>) -> Result<Vec<Model>, String> {
     let conn = db::open(&app)?;
-    db::list_models(&conn, model_type.as_deref())
+    db::list_models(&conn, task.as_deref())
 }
 
 #[derive(Clone, Serialize)]
@@ -40,14 +41,24 @@ fn models_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-fn validate_model_type(model_type: &str) -> Result<(), String> {
-    if VALID_MODEL_TYPES.contains(&model_type) {
-        Ok(())
-    } else {
-        Err(format!(
-            "Invalid model type '{}'; expected one of {:?}",
-            model_type, VALID_MODEL_TYPES
-        ))
+/// Anti-spoofing models need an architecture: the auth side picks
+/// preprocessing and output decoding from it. Other tasks have a single
+/// implementation and take none.
+fn validate_task(task: &str, architecture: Option<&str>) -> Result<(), String> {
+    if !VALID_TASKS.contains(&task) {
+        return Err(format!(
+            "Invalid model task '{}'; expected one of {:?}",
+            task, VALID_TASKS
+        ));
+    }
+    match (task, architecture) {
+        ("anti_spoofing", Some(arch)) if ANTI_SPOOFING_ARCHITECTURES.contains(&arch) => Ok(()),
+        ("anti_spoofing", _) => Err(format!(
+            "Anti-spoofing models need an architecture; expected one of {:?}",
+            ANTI_SPOOFING_ARCHITECTURES
+        )),
+        (_, None) => Ok(()),
+        (_, Some(_)) => Err(format!("{} models do not take an architecture", task)),
     }
 }
 
@@ -149,10 +160,11 @@ fn sha256_file(path: &Path) -> Result<String, String> {
 pub async fn add_model_from_url(
     app: AppHandle,
     name: String,
-    model_type: String,
+    task: String,
+    architecture: Option<String>,
     url: String,
 ) -> Result<Model, String> {
-    validate_model_type(&model_type)?;
+    validate_task(&task, architecture.as_deref())?;
     let name = validate_name(&name)?;
     if !(url.starts_with("http://") || url.starts_with("https://")) {
         return Err("URL must start with http:// or https://".to_string());
@@ -231,7 +243,8 @@ pub async fn add_model_from_url(
         &conn,
         &id,
         &name,
-        &model_type,
+        &task,
+        architecture.as_deref(),
         &final_path.to_string_lossy(),
         None,
         Some(&checksum),
@@ -279,10 +292,11 @@ pub async fn ensure_default_models(app: AppHandle) -> Result<Vec<String>, String
 pub fn add_model_from_file(
     app: AppHandle,
     name: String,
-    model_type: String,
+    task: String,
+    architecture: Option<String>,
     src_path: String,
 ) -> Result<Model, String> {
-    validate_model_type(&model_type)?;
+    validate_task(&task, architecture.as_deref())?;
     let name = validate_name(&name)?;
 
     let src = PathBuf::from(&src_path);
@@ -311,7 +325,8 @@ pub fn add_model_from_file(
         &conn,
         &id,
         &name,
-        &model_type,
+        &task,
+        architecture.as_deref(),
         &final_path.to_string_lossy(),
         None,
         Some(&checksum),

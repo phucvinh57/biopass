@@ -72,9 +72,7 @@ export function FaceSetting() {
     ? (videoDevices.find((device) => device.path === irCameraPath) ?? null)
     : null;
 
-  const antiSpoofModels = models.filter(
-    (m) => m.model_type === "anti_spoofing",
-  );
+  const antiSpoofModels = models.filter((m) => m.task === "anti_spoofing");
 
   useEffect(() => {
     const checkAntiSpoofModels = async () => {
@@ -245,7 +243,7 @@ export function FaceSetting() {
             <ModelSelect
               label="Model"
               value={config.detection.model_id}
-              models={models.filter((m) => m.model_type === "detection")}
+              models={models.filter((m) => m.task === "detection")}
               error={
                 config.enable || !!errors.methods?.face?.detection?.model_id
               }
@@ -277,7 +275,7 @@ export function FaceSetting() {
             <ModelSelect
               label="Model"
               value={config.recognition.model_id}
-              models={models.filter((m) => m.model_type === "recognition")}
+              models={models.filter((m) => m.task === "recognition")}
               error={
                 config.enable || !!errors.methods?.face?.recognition?.model_id
               }

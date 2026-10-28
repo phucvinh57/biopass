@@ -24,13 +24,19 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import type { Model, ModelType } from "@/types/config";
+import type { AntiSpoofArchitecture, Model, ModelTask } from "@/types/config";
 
-const MODEL_TYPE_OPTIONS: { value: ModelType; label: string }[] = [
+const TASK_OPTIONS: { value: ModelTask; label: string }[] = [
   { value: "detection", label: "Detection" },
   { value: "recognition", label: "Recognition" },
   { value: "anti_spoofing", label: "Anti-Spoofing" },
 ];
+
+const ARCHITECTURE_OPTIONS: { value: AntiSpoofArchitecture; label: string }[] =
+  [
+    { value: "mobilenetv3", label: "MobileNetV3" },
+    { value: "minifasv2", label: "MiniFASNet V2" },
+  ];
 
 interface AddModelDialogProps {
   onAdded: (model: Model) => void;
@@ -40,7 +46,9 @@ export function AddModelDialog({ onAdded }: AddModelDialogProps) {
   const [open, setOpen] = useState(false);
   const [source, setSource] = useState<"url" | "file">("url");
   const [name, setName] = useState("");
-  const [modelType, setModelType] = useState<ModelType>("detection");
+  const [task, setTask] = useState<ModelTask>("detection");
+  const [architecture, setArchitecture] =
+    useState<AntiSpoofArchitecture>("mobilenetv3");
   const [url, setUrl] = useState("");
   const [filePath, setFilePath] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -48,7 +56,8 @@ export function AddModelDialog({ onAdded }: AddModelDialogProps) {
 
   function reset() {
     setName("");
-    setModelType("detection");
+    setTask("detection");
+    setArchitecture("mobilenetv3");
     setUrl("");
     setFilePath("");
     setSubmitting(false);
@@ -83,6 +92,7 @@ export function AddModelDialog({ onAdded }: AddModelDialogProps) {
       return;
     }
 
+    const arch = task === "anti_spoofing" ? architecture : null;
     setSubmitting(true);
     let unlisten: (() => void) | undefined;
     try {
@@ -90,7 +100,8 @@ export function AddModelDialog({ onAdded }: AddModelDialogProps) {
         unlisten = await cmd.models.onDownloadProgress((p) => setProgress(p));
         const model = await cmd.models.addFromUrl(
           name.trim(),
-          modelType,
+          task,
+          arch,
           url.trim(),
         );
         toast.success("Model added");
@@ -98,7 +109,8 @@ export function AddModelDialog({ onAdded }: AddModelDialogProps) {
       } else {
         const model = await cmd.models.addFromFile(
           name.trim(),
-          modelType,
+          task,
+          arch,
           filePath,
         );
         toast.success("Model added");
@@ -159,15 +171,15 @@ export function AddModelDialog({ onAdded }: AddModelDialogProps) {
           <div className="flex flex-col gap-2">
             <Label>Type</Label>
             <Select
-              value={modelType}
-              onValueChange={(v) => setModelType(v as ModelType)}
+              value={task}
+              onValueChange={(v) => setTask(v as ModelTask)}
               disabled={submitting}
             >
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {MODEL_TYPE_OPTIONS.map((opt) => (
+                {TASK_OPTIONS.map((opt) => (
                   <SelectItem key={opt.value} value={opt.value}>
                     {opt.label}
                   </SelectItem>
@@ -175,6 +187,30 @@ export function AddModelDialog({ onAdded }: AddModelDialogProps) {
               </SelectContent>
             </Select>
           </div>
+
+          {task === "anti_spoofing" && (
+            <div className="flex flex-col gap-2">
+              <Label>Architecture</Label>
+              <Select
+                value={architecture}
+                onValueChange={(v) =>
+                  setArchitecture(v as AntiSpoofArchitecture)
+                }
+                disabled={submitting}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ARCHITECTURE_OPTIONS.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
           <Tabs
             value={source}
