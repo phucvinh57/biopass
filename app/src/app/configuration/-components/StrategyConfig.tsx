@@ -32,7 +32,7 @@ import { Switch } from "@/components/ui/switch";
 import type { BiopassConfig } from "@/types/config";
 
 const PAM_MANUAL_SETUP_GUIDE_URL =
-  "https://github.com/TickLabVN/biopass/blob/main/docs/PAM.md";
+  "https://github.com/phucvinh57/biopass/blob/main/docs/PAM.md";
 
 function parseIgnoredServicesInput(raw: string): string[] {
   return raw

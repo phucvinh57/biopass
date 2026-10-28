@@ -5,14 +5,14 @@
 </p>
 
 <p align="center">
-    <a href="https://github.com/TickLabVN/biopass/releases/latest">
-        <img src="https://img.shields.io/github/v/release/TickLabVN/biopass?label=Last%20Release&style=flat-square" alt="Latest release" />
+    <a href="https://github.com/phucvinh57/biopass/releases/latest">
+        <img src="https://img.shields.io/github/v/release/phucvinh57/biopass?label=Last%20Release&style=flat-square" alt="Latest release" />
     </a>
-    <a href="https://github.com/TickLabVN/biopass/stargazers">
-        <img src="https://img.shields.io/github/stars/TickLabVN/biopass?style=flat-square" alt="GitHub stars" />
+    <a href="https://github.com/phucvinh57/biopass/stargazers">
+        <img src="https://img.shields.io/github/stars/phucvinh57/biopass?style=flat-square" alt="GitHub stars" />
     </a>
-    <a href="https://github.com/TickLabVN/biopass/issues">
-        <img src="https://img.shields.io/github/issues/TickLabVN/biopass?style=flat-square" alt="Open Issues" />
+    <a href="https://github.com/phucvinh57/biopass/issues">
+        <img src="https://img.shields.io/github/issues/phucvinh57/biopass?style=flat-square" alt="Open Issues" />
     </a>
 </p>
 
@@ -26,7 +26,7 @@ While Windows Hello provides a seamless multi-modal biometric experience (Face, 
 
 ## Comparison
 
-| Feature | [**Biopass**](https://github.com/TickLabVN/biopass) | [**Howdy**](https://github.com/boltgolt/howdy) |
+| Feature | [**Biopass**](https://github.com/phucvinh57/biopass) | [**Howdy**](https://github.com/boltgolt/howdy) |
 | :--- | :--- | :--- |
 | **Authentication methods** | Face + Fingerprint | Face only |
 | **User Interface** | Modern GUI for management | Command-line interface only |
@@ -35,7 +35,7 @@ While Windows Hello provides a seamless multi-modal biometric experience (Face, 
 
 ## Installation
 
-- Debian and RPM package: https://github.com/TickLabVN/biopass/releases
+- Debian and RPM package: https://github.com/phucvinh57/biopass/releases
 - AUR package: https://aur.archlinux.org/packages/biopass-bin
 - System sign-in setup uses distro-managed PAM configuration when available (for example `pam-auth-update` on Debian/Ubuntu): [docs/PAM.md](docs/PAM.md)
 - Interactive `polkit` authentication setup: [docs/Polkit.md](docs/Polkit.md)

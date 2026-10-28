@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
-// Renders static star-history SVGs (light + dark) for TickLabVN/biopass by
+// Renders static star-history SVGs (light + dark) for phucvinh57/biopass by
 // pulling stargazer timestamps directly from the GitHub REST API. This
 // replaces the api.star-history.com embed, which now requires the viewer's
 // own token to resolve stargazer timestamps for this repo (and whose shared
 // token pool is frequently rate-limited anyway).
 
-const OWNER = "TickLabVN";
+const OWNER = "phucvinh57";
 const REPO = "biopass";
 const TOKEN = process.env.STAR_HISTORY_TOKEN || process.env.GITHUB_TOKEN;
 
