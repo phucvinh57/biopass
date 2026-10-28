@@ -46,15 +46,9 @@ function onDownloadProgress(
   });
 }
 
-export interface DefaultModelsReport {
-  downloaded: string[];
-  failed: string[];
-}
-
-// Downloads any missing built-in model into the user's data dir and registers
-// it. Safe to call repeatedly; it's a no-op once all files are present.
+// Downloads any missing built-in model. Returns the names it downloaded.
 function ensureDefaults() {
-  return invokeCommand<DefaultModelsReport>("ensure_default_models");
+  return invokeCommand<string[]>("ensure_default_models");
 }
 
 function onDefaultsUpdated(cb: () => void): Promise<UnlistenFn> {

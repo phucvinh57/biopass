@@ -25,10 +25,8 @@ pub struct KnownModel {
     pub model_type: &'static str,
 }
 
-/// Mirrors the model list downloaded by app/src-tauri/scripts/download_models.sh.
-/// The app downloads any of these that are missing on startup (see
-/// models::ensure_default_models), so installs whose postinst couldn't reach
-/// the user's home still get them.
+/// Built-in models. The app downloads any that are missing on startup
+/// (see models::ensure_default_models).
 pub const KNOWN_MODELS: &[KnownModel] = &[
     KnownModel {
         slug: "yolov8n-face",

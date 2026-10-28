@@ -53,9 +53,6 @@ clean-auth:
 build-app: build-auth
 	@echo "==> [app] Installing JS dependencies…"
 	cd $(APP_DIR) && bun install --frozen-lockfile
-	@echo "==> [app] Pinning model downloader to release $(VERSION)…"
-	sed -i -E 's#^BASE_URL="https://github.com/TickLabVN/biopass/releases/(latest/download|download/[^"]+)"#BASE_URL="https://github.com/TickLabVN/biopass/releases/download/$(VERSION)"#' \
-	    $(APP_DIR)/src-tauri/scripts/download_models.sh
 	@echo "==> [app] Pinning app version to $(VERSION)…"
 	sed -i -E 's/^version = "[^"]*"/version = "$(VERSION)"/' \
 	    $(APP_DIR)/src-tauri/Cargo.toml
