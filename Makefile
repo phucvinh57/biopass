@@ -54,8 +54,8 @@ build-app: build-auth
 	@echo "==> [app] Installing JS dependencies…"
 	cd $(APP_DIR) && bun install --frozen-lockfile
 	@echo "==> [app] Pinning model downloader to release $(VERSION)…"
-	sed -i -E 's#^BASE_URL="https://github.com/phucvinh57/biopass/releases/(latest/download|download/[^"]+)"#BASE_URL="https://github.com/phucvinh57/biopass/releases/download/$(VERSION)"#' \
-	    $(APP_DIR)/src-tauri/scripts/download_models.sh
+	sed -i -E 's#^const DEFAULT_MODELS_URL: &str = "https://github.com/phucvinh57/biopass/releases/(latest/download|download/[^"]+)";#const DEFAULT_MODELS_URL: \&str = "https://github.com/phucvinh57/biopass/releases/download/$(VERSION)";#' \
+	    $(APP_DIR)/src-tauri/src/models.rs
 	@echo "==> [app] Pinning app version to $(VERSION)…"
 	sed -i -E 's/^version = "[^"]*"/version = "$(VERSION)"/' \
 	    $(APP_DIR)/src-tauri/Cargo.toml
