@@ -11,7 +11,7 @@ import { Cpu, Laptop, Moon, Settings, Sun, User } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import logo from "@/assets/logo.png";
+import logo from "@/assets/logo.svg";
 import { cmd } from "@/commands";
 import { Button } from "@/components/ui/button";
 import {
