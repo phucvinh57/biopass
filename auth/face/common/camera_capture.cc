@@ -202,6 +202,22 @@ std::string listAvailableFormats(const libcamera::StreamFormats& formats) {
   return oss.str();
 }
 
+// Mean brightness in [0, 255], sampling every 4th pixel; enough to tell a
+// lit IR frame from a dark one.
+double meanLuma(const ImageRGB& image) {
+  const size_t pixels = static_cast<size_t>(image.width) * static_cast<size_t>(image.height);
+  if (pixels == 0 || image.data.size() < pixels * 3) {
+    return 0.0;
+  }
+  const uint8_t* data = image.data.data();
+  uint64_t sum = 0;
+  size_t count = 0;
+  for (size_t i = 0; i < pixels; i += 4, ++count) {
+    sum += data[i * 3] + data[i * 3 + 1] + data[i * 3 + 2];
+  }
+  return static_cast<double>(sum) / (3.0 * static_cast<double>(count));
+}
+
 uint64_t area(const libcamera::Size& size) {
   return static_cast<uint64_t>(size.width) * static_cast<uint64_t>(size.height);
 }
@@ -373,19 +389,35 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
       requeue(request);
     }
 
-    libcamera::Request* request = waitForRequest(deadline, has_timeout);
-    if (!request) {
-      return {};
+    // Many IR emitters strobe, alternating lit and dark frames. A fixed
+    // warmup count lands on the same phase every time, so grey sessions
+    // sample several consecutive frames and keep the brightest one.
+    const int samples = is_grey_ ? kIrCaptureSampleFrames : 1;
+    ImageRGB best;
+    double best_mean = -1.0;
+    for (int i = 0; i < samples; ++i) {
+      libcamera::Request* request = waitForRequest(deadline, has_timeout);
+      if (!request) {
+        break;
+      }
+      ImageRGB image;
+      const bool ok = extractFrame(request, image);
+      requeue(request);
+      if (!ok) {
+        spdlog::error("FaceAuth: Failed to convert frame from '{}'", camera_label_);
+        continue;
+      }
+      const double mean = samples > 1 ? meanLuma(image) : 0.0;
+      if (mean > best_mean) {
+        best_mean = mean;
+        best = std::move(image);
+      }
     }
-
-    ImageRGB image;
-    const bool ok = extractFrame(request, image);
-    requeue(request);
-    if (!ok) {
-      spdlog::error("FaceAuth: Failed to convert frame from '{}'", camera_label_);
-      return {};
+    if (samples > 1 && !best.empty()) {
+      spdlog::debug("FaceAuth: Kept brightest of {} frames from '{}' (mean={:.1f})", samples,
+                    camera_label_, best_mean);
     }
-    return image;
+    return best;
   }
 
  private:
