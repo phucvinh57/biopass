@@ -57,6 +57,10 @@ export function FaceSetting() {
     };
 
     fetchModels();
+    const unlisten = cmd.models.onDefaultsUpdated(fetchModels);
+    return () => {
+      unlisten.then((fn) => fn());
+    };
   }, []);
 
   const selectedCamera = config.camera

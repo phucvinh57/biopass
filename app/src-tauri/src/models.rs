@@ -15,6 +15,8 @@ use crate::paths::get_data_dir;
 
 const VALID_MODEL_TYPES: [&str; 3] = ["detection", "recognition", "anti_spoofing"];
 const PROGRESS_EVENT: &str = "model-download-progress";
+const DEFAULT_MODELS_EVENT: &str = "default-models-updated";
+const DEFAULT_MODELS_URL: &str = "https://github.com/phucvinh57/biopass/releases/latest/download";
 const PROGRESS_THROTTLE_MS: u128 = 150;
 const MAX_NAME_LEN: usize = 200;
 
@@ -236,6 +238,41 @@ pub async fn add_model_from_url(
         "user",
     )?;
     db::get_model(&conn, &id)?.ok_or_else(|| "Model vanished after insert".to_string())
+}
+
+/// Downloads any built-in model missing from the user's models directory.
+/// db::open registers them on the next read. Returns the downloaded names.
+#[tauri::command]
+pub async fn ensure_default_models(app: AppHandle) -> Result<Vec<String>, String> {
+    let dir = models_dir(&app)?;
+    let mut downloaded = Vec::new();
+
+    for known in db::KNOWN_MODELS {
+        let dest = dir.join(known.filename);
+        if dest.exists() {
+            continue;
+        }
+        let url = format!("{DEFAULT_MODELS_URL}/{}", known.filename);
+        let bytes = reqwest::get(&url)
+            .await
+            .and_then(|r| r.error_for_status())
+            .map_err(|e| format!("Failed to download {}: {}", known.display_name, e))?
+            .bytes()
+            .await
+            .map_err(|e| format!("Failed to download {}: {}", known.display_name, e))?;
+
+        let mut tmp = tempfile::NamedTempFile::new_in(&dir)
+            .map_err(|e| format!("Failed to create temp file: {}", e))?;
+        tmp.write_all(&bytes)
+            .map_err(|e| format!("Failed to write model file: {}", e))?;
+        tmp.persist(&dest)
+            .map_err(|e| format!("Failed to save model file: {}", e))?;
+
+        downloaded.push(known.display_name.to_string());
+        let _ = app.emit(DEFAULT_MODELS_EVENT, ());
+    }
+
+    Ok(downloaded)
 }
 
 #[tauri::command]

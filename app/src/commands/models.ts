@@ -46,6 +46,15 @@ function onDownloadProgress(
   });
 }
 
+// Downloads any missing built-in model. Returns the names it downloaded.
+function ensureDefaults() {
+  return invokeCommand<string[]>("ensure_default_models");
+}
+
+function onDefaultsUpdated(cb: () => void): Promise<UnlistenFn> {
+  return listen("default-models-updated", () => cb());
+}
+
 export const models = {
   list,
   addFromUrl,
@@ -53,4 +62,6 @@ export const models = {
   remove,
   rename,
   onDownloadProgress,
+  ensureDefaults,
+  onDefaultsUpdated,
 };

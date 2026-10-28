@@ -10,6 +10,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Cpu, Laptop, Moon, Settings, Sun, User } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import logo from "@/assets/logo.png";
 import { cmd } from "@/commands";
 import { Button } from "@/components/ui/button";
@@ -94,6 +95,18 @@ function App() {
     loadInitialTheme();
     loadVersion();
   }, [setTheme]);
+
+  useEffect(() => {
+    cmd.models
+      .ensureDefaults()
+      .then((downloaded) => {
+        if (downloaded.length > 0)
+          toast.success("Downloaded default AI models");
+      })
+      .catch((err) =>
+        toast.error(`${err}. Check your network and restart Biopass.`),
+      );
+  }, []);
 
   // Update theme in config when it changes manually via toggle
   useEffect(() => {

@@ -7,11 +7,4 @@ set -e
 # Refresh linker cache after installing the private Biopass library path.
 ldconfig
 
-# Run the model downloader for the installing user.
-SCRIPT="/usr/share/com.ticklab.biopass/download_models.sh"
-if [ -f "$SCRIPT" ]; then
-    echo "Biopass: Running model downloader..."
-    bash "$SCRIPT" || true
-fi
-
 exit 0

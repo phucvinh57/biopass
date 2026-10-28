@@ -18,15 +18,16 @@ pub struct Model {
     pub installed_at: i64,
 }
 
-struct KnownModel {
-    slug: &'static str,
-    filename: &'static str,
-    display_name: &'static str,
-    model_type: &'static str,
+pub struct KnownModel {
+    pub slug: &'static str,
+    pub filename: &'static str,
+    pub display_name: &'static str,
+    pub model_type: &'static str,
 }
 
-/// Mirrors the model list downloaded by app/src-tauri/scripts/download_models.sh.
-const KNOWN_MODELS: &[KnownModel] = &[
+/// Built-in models. The app downloads any that are missing on startup
+/// (see models::ensure_default_models).
+pub const KNOWN_MODELS: &[KnownModel] = &[
     KnownModel {
         slug: "yolov8n-face",
         filename: "yolov8n-face.onnx",

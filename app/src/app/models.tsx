@@ -190,6 +190,10 @@ function ModelsRouteComponent() {
 
   useEffect(() => {
     loadModels();
+    const unlisten = cmd.models.onDefaultsUpdated(loadModels);
+    return () => {
+      unlisten.then((fn) => fn());
+    };
   }, [loadModels]);
 
   function handleModelUpdated(updated: Model) {

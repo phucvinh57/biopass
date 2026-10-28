@@ -36,11 +36,14 @@
     ],
     "linux": {
       "deb": {
-        "depends": ["curl", "fprintd", "libwebkit2gtk-4.1-0", "libturbojpeg0 | libturbojpeg"],
+        "depends": [
+          "fprintd",
+          "libwebkit2gtk-4.1-0",
+          "libturbojpeg0 | libturbojpeg"
+        ],
         "postInstallScript": "scripts/deb/postinst",
         "desktopTemplate": "scripts/biopass.desktop",
         "files": {
-          "/usr/share/com.ticklab.biopass/download_models.sh": "scripts/download_models.sh",
           "/lib/security/libbiopass_pam.so": "../../auth/build/pam/libbiopass_pam.so",
           "/usr/bin/biopass-helper": "../../auth/build/pam/biopass-helper",
           "/usr/lib/biopass/libbiopass_det.so": "../../auth/build/face/detection/libbiopass_det.so",
@@ -54,12 +57,11 @@
         }
       },
       "rpm": {
-        "depends": ["curl", "fprintd", "turbojpeg"],
+        "depends": ["fprintd", "turbojpeg"],
         "postInstallScript": "scripts/rpm/postinst",
         "postRemoveScript": "scripts/rpm/postrm",
         "desktopTemplate": "scripts/biopass.desktop",
         "files": {
-          "/usr/share/com.ticklab.biopass/download_models.sh": "scripts/download_models.sh",
           "/lib64/security/libbiopass_pam.so": "../../auth/build/pam/libbiopass_pam.so",
           "/usr/bin/biopass-helper": "../../auth/build/pam/biopass-helper",
           "/usr/lib/biopass/libbiopass_det.so": "../../auth/build/face/detection/libbiopass_det.so",
