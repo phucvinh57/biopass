@@ -24,8 +24,15 @@ LEGACY_MODELS=(
 )
 
 # Determine the data dir. If running as root (e.g. system-wide install),
-# use SUDO_USER's home if available, otherwise fallback to /root.
-if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
+# use SUDO_USER's home. Without SUDO_USER (PackageKit/Discover, pacman, dnf
+# run from a root shell) there is no user to install for; the app downloads
+# missing models into the user's home on first launch instead.
+if [ "$(id -u)" -eq 0 ] && [ "${SUDO_USER:-root}" = "root" ]; then
+    echo "Biopass: No invoking user found; models will be downloaded when Biopass is first opened."
+    exit 0
+fi
+
+if [ "$(id -u)" -eq 0 ]; then
     USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
     APP_DATA_DIR="${USER_HOME}/.local/share/com.ticklab.biopass"
     DATA_DIR="${APP_DATA_DIR}/models"

@@ -15,7 +15,10 @@ use fingerprint::{
     add_fingerprint, delete_fingerprint, enroll_fingerprint, fingerprint_is_available,
     list_enrolled_fingerprints, list_fingerprint_devices, remove_fingerprint,
 };
-use models::{add_model_from_file, add_model_from_url, delete_model, list_models, rename_model};
+use models::{
+    add_model_from_file, add_model_from_url, delete_model, ensure_default_models, list_models,
+    rename_model, DefaultModelsLock,
+};
 use system::{get_current_username, list_video_devices};
 
 use tauri::Manager;
@@ -23,6 +26,7 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(DefaultModelsLock::default())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -66,7 +70,8 @@ pub fn run() {
             add_model_from_url,
             add_model_from_file,
             delete_model,
-            rename_model
+            rename_model,
+            ensure_default_models
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

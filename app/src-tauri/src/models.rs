@@ -7,7 +7,7 @@ use futures_util::StreamExt;
 use rusqlite::Connection;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, State};
 
 use crate::config::load_config;
 use crate::db::{self, Model};
@@ -15,6 +15,7 @@ use crate::paths::get_data_dir;
 
 const VALID_MODEL_TYPES: [&str; 3] = ["detection", "recognition", "anti_spoofing"];
 const PROGRESS_EVENT: &str = "model-download-progress";
+const DEFAULT_MODELS_EVENT: &str = "default-models-updated";
 const PROGRESS_THROTTLE_MS: u128 = 150;
 const MAX_NAME_LEN: usize = 200;
 
@@ -143,26 +144,16 @@ fn sha256_file(path: &Path) -> Result<String, String> {
     Ok(format!("sha256:{}", hex_encode(hasher.finalize())))
 }
 
-#[tauri::command]
-pub async fn add_model_from_url(
-    app: AppHandle,
-    name: String,
-    model_type: String,
-    url: String,
-) -> Result<Model, String> {
-    validate_model_type(&model_type)?;
-    let name = validate_name(&name)?;
-    if !(url.starts_with("http://") || url.starts_with("https://")) {
-        return Err("URL must start with http:// or https://".to_string());
-    }
-
-    let dir = models_dir(&app)?;
-    let id = {
-        let conn = db::open(&app)?;
-        unique_model_id(&conn, &slugify(&name))?
-    };
-
-    let response = reqwest::get(&url)
+/// Streams `url` into a temp file inside `dir`, rejecting content that
+/// doesn't look like ONNX. Emits PROGRESS_EVENT under `progress_id` when one is
+/// given. Returns the not-yet-persisted temp file and its checksum.
+async fn download_onnx(
+    app: &AppHandle,
+    url: &str,
+    dir: &Path,
+    progress_id: Option<&str>,
+) -> Result<(tempfile::NamedTempFile, String), String> {
+    let response = reqwest::get(url)
         .await
         .map_err(|e| format!("Failed to start download: {}", e))?;
     if !response.status().is_success() {
@@ -170,7 +161,20 @@ pub async fn add_model_from_url(
     }
     let total = response.content_length();
 
-    let mut tmp = tempfile::NamedTempFile::new_in(&dir)
+    let emit_progress = |downloaded: u64| {
+        if let Some(id) = progress_id {
+            let _ = app.emit(
+                PROGRESS_EVENT,
+                DownloadProgress {
+                    id: id.to_string(),
+                    downloaded,
+                    total,
+                },
+            );
+        }
+    };
+
+    let mut tmp = tempfile::NamedTempFile::new_in(dir)
         .map_err(|e| format!("Failed to create temp file: {}", e))?;
     let mut hasher = Sha256::new();
     let mut downloaded: u64 = 0;
@@ -192,25 +196,11 @@ pub async fn add_model_from_url(
         downloaded += chunk.len() as u64;
 
         if last_emit.elapsed().as_millis() >= PROGRESS_THROTTLE_MS {
-            let _ = app.emit(
-                PROGRESS_EVENT,
-                DownloadProgress {
-                    id: id.clone(),
-                    downloaded,
-                    total,
-                },
-            );
+            emit_progress(downloaded);
             last_emit = Instant::now();
         }
     }
-    let _ = app.emit(
-        PROGRESS_EVENT,
-        DownloadProgress {
-            id: id.clone(),
-            downloaded,
-            total,
-        },
-    );
+    emit_progress(downloaded);
 
     if !header_checked {
         return Err("Downloaded file is empty".to_string());
@@ -220,6 +210,29 @@ pub async fn add_model_from_url(
         .map_err(|e| format!("Failed to sync model file: {}", e))?;
 
     let checksum = format!("sha256:{}", hex_encode(hasher.finalize()));
+    Ok((tmp, checksum))
+}
+
+#[tauri::command]
+pub async fn add_model_from_url(
+    app: AppHandle,
+    name: String,
+    model_type: String,
+    url: String,
+) -> Result<Model, String> {
+    validate_model_type(&model_type)?;
+    let name = validate_name(&name)?;
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err("URL must start with http:// or https://".to_string());
+    }
+
+    let dir = models_dir(&app)?;
+    let id = {
+        let conn = db::open(&app)?;
+        unique_model_id(&conn, &slugify(&name))?
+    };
+
+    let (tmp, checksum) = download_onnx(&app, &url, &dir, Some(&id)).await?;
     let final_path = dir.join(format!("{id}.onnx"));
     tmp.persist(&final_path)
         .map_err(|e| format!("Failed to save model file: {}", e))?;
@@ -236,6 +249,78 @@ pub async fn add_model_from_url(
         "user",
     )?;
     db::get_model(&conn, &id)?.ok_or_else(|| "Model vanished after insert".to_string())
+}
+
+/// Release builds overwrite Cargo.toml's version with the git tag
+/// (Makefile build-app), and each release hosts its own model assets.
+/// Anything else (dev builds) keeps this placeholder and uses the latest release.
+const DEV_PLACEHOLDER_VERSION: &str = "0.1.0";
+
+fn default_models_base_url(version: &str) -> String {
+    if version == DEV_PLACEHOLDER_VERSION {
+        "https://github.com/TickLabVN/biopass/releases/latest/download".to_string()
+    } else {
+        format!("https://github.com/TickLabVN/biopass/releases/download/{version}")
+    }
+}
+
+/// Serializes ensure_default_models so overlapping calls (e.g. React effects
+/// running twice) don't download the same file at once.
+#[derive(Default)]
+pub struct DefaultModelsLock(tauri::async_runtime::Mutex<()>);
+
+#[derive(Serialize)]
+pub struct DefaultModelsReport {
+    downloaded: Vec<String>,
+    failed: Vec<String>,
+}
+
+/// Downloads any built-in model missing from this user's models directory and
+/// registers it. The package postinst only does this for the user behind
+/// `sudo`; PackageKit/Discover, AUR and dnf installs run it as plain root.
+#[tauri::command]
+pub async fn ensure_default_models(
+    app: AppHandle,
+    lock: State<'_, DefaultModelsLock>,
+) -> Result<DefaultModelsReport, String> {
+    let _guard = lock.0.lock().await;
+
+    let dir = models_dir(&app)?;
+    let base_url = default_models_base_url(env!("CARGO_PKG_VERSION"));
+    let mut report = DefaultModelsReport {
+        downloaded: Vec::new(),
+        failed: Vec::new(),
+    };
+
+    for known in db::KNOWN_MODELS {
+        let dest = dir.join(known.filename);
+        if dest.exists() {
+            continue;
+        }
+        let url = format!("{}/{}", base_url, known.filename);
+        let result = match download_onnx(&app, &url, &dir, None).await {
+            Ok((tmp, _)) => tmp
+                .persist(&dest)
+                .map(|_| ())
+                .map_err(|e| format!("Failed to save model file: {}", e)),
+            Err(e) => Err(e),
+        };
+        match result {
+            Ok(()) => report.downloaded.push(known.display_name.to_string()),
+            Err(e) => {
+                eprintln!("Warning: failed to download default model {}: {}", url, e);
+                report.failed.push(known.display_name.to_string());
+            }
+        }
+    }
+
+    if !report.downloaded.is_empty() {
+        // db::open seeds the registry from the files now on disk.
+        db::open(&app)?;
+        let _ = app.emit(DEFAULT_MODELS_EVENT, ());
+    }
+
+    Ok(report)
 }
 
 #[tauri::command]
@@ -319,4 +404,29 @@ pub fn rename_model(app: AppHandle, id: String, name: String) -> Result<Model, S
     let conn = db::open(&app)?;
     db::update_model_name(&conn, &id, &name)?;
     db::get_model(&conn, &id)?.ok_or_else(|| format!("Model '{}' not found", id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_models_url_pins_release_version() {
+        assert_eq!(
+            default_models_base_url("1.4.1"),
+            "https://github.com/TickLabVN/biopass/releases/download/1.4.1"
+        );
+        assert_eq!(
+            default_models_base_url("1.4.0-rc1"),
+            "https://github.com/TickLabVN/biopass/releases/download/1.4.0-rc1"
+        );
+    }
+
+    #[test]
+    fn default_models_url_uses_latest_for_dev_builds() {
+        assert_eq!(
+            default_models_base_url(DEV_PLACEHOLDER_VERSION),
+            "https://github.com/TickLabVN/biopass/releases/latest/download"
+        );
+    }
 }

@@ -10,6 +10,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Cpu, Laptop, Moon, Settings, Sun, User } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import logo from "@/assets/logo.png";
 import { cmd } from "@/commands";
 import { Button } from "@/components/ui/button";
@@ -94,6 +95,28 @@ function App() {
     loadInitialTheme();
     loadVersion();
   }, [setTheme]);
+
+  // Package installs that ran as plain root (PackageKit, AUR, dnf) never
+  // put the default models in this user's home, so fetch them here.
+  useEffect(() => {
+    const ensureDefaultModels = async () => {
+      try {
+        const report = await cmd.models.ensureDefaults();
+        if (report.failed.length > 0) {
+          toast.error(
+            `Could not download default models: ${report.failed.join(", ")}. Check your network and restart Biopass.`,
+          );
+        } else if (report.downloaded.length > 0) {
+          toast.success("Downloaded default AI models");
+        }
+      } catch (err) {
+        console.error("Failed to ensure default models:", err);
+        toast.error(`Failed to set up default models: ${err}`);
+      }
+    };
+
+    ensureDefaultModels();
+  }, []);
 
   // Update theme in config when it changes manually via toggle
   useEffect(() => {
