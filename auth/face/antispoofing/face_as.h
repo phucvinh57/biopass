@@ -16,11 +16,13 @@ struct SpoofResult {
   SpoofResult(float score, bool spoof) : score(score), spoof(spoof) {}
 };
 
-// model_type: "minifasv2" or "mobilenetv3" (default)
+// model_type: "minifasv2" or "mobilenetv3". Anything else (including the
+// default "") picks the type from the checkpoint filename: "minifas" in the
+// name means MiniFASv2, otherwise MobileNetV3.
 class FaceAntiSpoofing {
  public:
   FaceAntiSpoofing(const std::string& ckpt, int imgsz = 128, const float threshold = 0.8,
-                   const std::string& model_type = "mobilenetv3");
+                   const std::string& model_type = "");
 
   SpoofResult inference(const ImageRGB& image);
 

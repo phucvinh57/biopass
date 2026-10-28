@@ -27,6 +27,20 @@ AntiSpoofTask make_task(const std::string& name, std::future<bool> future) {
   return task;
 }
 
+// The registry only gives us a file path, but MobileNetV3 and MiniFASv2 need
+// different preprocessing and output decoding. Map the built-in ids (see
+// KNOWN_MODELS in app/src-tauri/src/db.rs); for anything else return "" so
+// FaceAntiSpoofing picks the type from the checkpoint filename.
+std::string antiSpoofModelType(const std::string& model_id) {
+  if (model_id == "minifas-v2") {
+    return "minifasv2";
+  }
+  if (model_id == "mobilenetv3-antispoof") {
+    return "mobilenetv3";
+  }
+  return "";
+}
+
 bool checkAntiSpoofByAIModel(const FaceMethodConfig& faceCfg, const std::string& username,
                              const ImageRGB& face, const AuthConfig& authCfg,
                              const ModelRegistry& model_registry) {
@@ -38,7 +52,8 @@ bool checkAntiSpoofByAIModel(const FaceMethodConfig& faceCfg, const std::string&
   }
 
   try {
-    FaceAntiSpoofing face_as(modelPath, 128, faceCfg.anti_spoofing.model.threshold);
+    FaceAntiSpoofing face_as(modelPath, 128, faceCfg.anti_spoofing.model.threshold,
+                             antiSpoofModelType(faceCfg.anti_spoofing.model.model_id));
     const SpoofResult result = face_as.inference(face);
     if (result.spoof) {
       spdlog::warn("FaceAuth: AI anti-spoofing detected spoof, score: {}", result.score);

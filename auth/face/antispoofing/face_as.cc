@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 
 namespace biopass {
 
@@ -29,8 +30,9 @@ FaceAntiSpoofing::FaceAntiSpoofing(const std::string& ckpt, int imgsz, const flo
       session(ckpt, "FaceAntiSpoofing") {
   // Unrecognized model_type: infer from the checkpoint filename.
   if (this->model_type != "minifasv2" && this->model_type != "mobilenetv3") {
+    const std::string filename = std::filesystem::path(ckpt).filename().string();
     this->model_type =
-        (ckpt.find("mobilenetv3") != std::string::npos) ? "mobilenetv3" : "minifasv2";
+        (filename.find("minifas") != std::string::npos) ? "minifasv2" : "mobilenetv3";
   }
 }
 
