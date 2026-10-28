@@ -16,7 +16,7 @@ use crate::paths::get_data_dir;
 const VALID_MODEL_TYPES: [&str; 3] = ["detection", "recognition", "anti_spoofing"];
 const PROGRESS_EVENT: &str = "model-download-progress";
 const DEFAULT_MODELS_EVENT: &str = "default-models-updated";
-const DEFAULT_MODELS_URL: &str = "https://github.com/TickLabVN/biopass/releases/latest/download";
+const DEFAULT_MODELS_URL: &str = "https://github.com/phucvinh57/biopass/releases/latest/download";
 const PROGRESS_THROTTLE_MS: u128 = 150;
 const MAX_NAME_LEN: usize = 200;
 
