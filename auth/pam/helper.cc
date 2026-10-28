@@ -1,4 +1,5 @@
 #include <spdlog/sinks/basic_file_sink.h>
+#include <spdlog/sinks/stdout_sinks.h>
 #include <spdlog/spdlog.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -131,6 +132,12 @@ int previewSession(const std::string& cameraPath, const std::string& modelPath, 
   if (!cameraPath.empty()) {
     deviceOpt = cameraPath;
   }
+
+  // stdout is the protocol channel; spdlog's default logger writes there, and
+  // a single stray log line (e.g. forwarded libcamera output) desyncs every
+  // response that follows. Send logs to stderr instead.
+  spdlog::set_default_logger(std::make_shared<spdlog::logger>(
+      "biopass", std::make_shared<spdlog::sinks::stderr_sink_mt>()));
 
   // Silence libcamera's info-level setup noise while we set up.
   spdlog::set_level(spdlog::level::err);
