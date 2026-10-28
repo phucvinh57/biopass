@@ -32,4 +32,8 @@ std::vector<Ort::Value> OnnxSession::run(std::vector<float>& input,
                        output_names_cstr_.data(), output_names_cstr_.size());
 }
 
+std::vector<int64_t> OnnxSession::inputShape() const {
+  return session_->GetInputTypeInfo(0).GetTensorTypeAndShapeInfo().GetShape();
+}
+
 }  // namespace biopass

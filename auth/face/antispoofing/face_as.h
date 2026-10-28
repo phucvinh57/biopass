@@ -6,6 +6,7 @@
 #include <vector>
 
 // Image utilities (replaces OpenCV)
+#include "face_detection.h"
 #include "image_utils.h"
 #include "onnx_session.h"
 
@@ -26,15 +27,17 @@ std::optional<AntiSpoofArchitecture> parseAntiSpoofArchitecture(const std::strin
 
 class FaceAntiSpoofing {
  public:
+  // imgsz is only used when the model's input height/width are dynamic.
   FaceAntiSpoofing(const std::string& ckpt, AntiSpoofArchitecture architecture, int imgsz = 128,
                    const float threshold = 0.8);
 
-  SpoofResult inference(const ImageRGB& image);
+  // frame: the full camera frame; face_box: the detected face in it.
+  SpoofResult inference(const ImageRGB& frame, const Box& face_box);
 
  private:
-  std::vector<float> preprocess(const ImageRGB& image);
-  std::vector<float> preprocessMobileNetV3(const ImageRGB& image);
-  std::vector<float> preprocessMiniFASv2(const ImageRGB& image);
+  std::vector<float> preprocess(const ImageRGB& frame, const Box& face_box);
+  std::vector<float> preprocessMobileNetV3(const ImageRGB& face);
+  std::vector<float> preprocessMiniFASv2(const ImageRGB& frame, const Box& face_box);
 
   float threshold;
   int imgsz;
