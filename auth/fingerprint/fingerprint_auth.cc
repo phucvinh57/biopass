@@ -260,16 +260,45 @@ AuthResult FingerprintAuth::authenticate(const std::string& username, const Auth
                                      // not set up.
   }
 
-  GVariant* claim_ret =
-      g_dbus_proxy_call_sync(device, "Claim", g_variant_new("(s)", username.c_str()),
-                             G_DBUS_CALL_FLAGS_NONE, -1, nullptr, &error);
+  // Retry Claim up to 3 times with backoff if the device is busy.  The
+  // device may already be claimed by the biopass GUI app, another PAM
+  // session, or a PolKit agent.  A short sleep gives the other process
+  // time to release it.
+  GVariant* claim_ret = nullptr;
+  GError* claim_error = nullptr;
+  const int kMaxClaimRetries = 3;
+  for (int attempt = 1; attempt <= kMaxClaimRetries; attempt++) {
+    if (claim_error) {
+      g_error_free(claim_error);
+      claim_error = nullptr;
+    }
+    claim_ret =
+        g_dbus_proxy_call_sync(device, "Claim", g_variant_new("(s)", username.c_str()),
+                               G_DBUS_CALL_FLAGS_NONE, -1, nullptr, &claim_error);
+
+    if (claim_ret) {
+      break;
+    }
+
+    std::string err_msg = claim_error ? claim_error->message : "";
+    spdlog::warn("FingerprintAuth: Failed to claim device (attempt {}/{}): {}",
+                 attempt, kMaxClaimRetries, err_msg);
+
+    if (attempt < kMaxClaimRetries) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(200 * attempt));
+    }
+  }
 
   if (!claim_ret) {
-    spdlog::error("FingerprintAuth: Failed to claim device: {}", (error ? error->message : ""));
-    if (error)
-      g_error_free(error);
+    spdlog::error("FingerprintAuth: Could not claim device after {} retries: {}",
+                  kMaxClaimRetries, (claim_error ? claim_error->message : ""));
+    if (claim_error)
+      g_error_free(claim_error);
     cleanup();
     return AuthResult::Unavailable;
+  }
+  if (claim_error) {
+    g_error_free(claim_error);
   }
   g_variant_unref(claim_ret);
   device_claimed = true;

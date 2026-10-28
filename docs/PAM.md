@@ -37,12 +37,18 @@ Keep a root terminal open while testing. Incorrect PAM configuration can lock yo
     ```bash
     sudoedit /etc/pam.d/system-auth
     ```
-3. Insert Biopass before the existing `pam_unix.so` auth rule:
+3. Insert Biopass and fprintd before the existing `pam_unix.so` auth rule:
     ```pam
+    auth sufficient pam_fprintd.so timeout=3 max-tries=1
     auth sufficient libbiopass_pam.so
     auth [success=1 default=ignore] pam_unix.so nullok
     auth requisite pam_deny.so
     ```
+
+    `pam_fprintd.so` handles fingerprint at the login screen so the user
+    can swipe right after clicking Login.  `libbiopass_pam.so` handles
+    face and fingerprint inside an active desktop session (lock screen,
+    sudo, PolKit dialogs).
 4. Test in a new terminal before closing the root terminal:
     ```bash
     sudo -k

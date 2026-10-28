@@ -23,6 +23,7 @@ ExternalProject_Add(libcamera_ext
     GIT_TAG        ${LIBCAMERA_VERSION}
     GIT_SHALLOW    TRUE
     CONFIGURE_COMMAND meson setup --prefix=${LIBCAMERA_STAGING} --libdir=lib --buildtype=release
+        -Dwerror=false
         -Dpipelines=uvcvideo -Dipas=[] -Dgstreamer=disabled -Dv4l2=disabled
         -Dcam=disabled -Dqcam=disabled -Dlc-compliance=disabled
         -Dtracing=disabled -Ddocumentation=disabled -Dpycamera=disabled -Dtest=false -Dudev=enabled

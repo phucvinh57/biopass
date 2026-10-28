@@ -1,9 +1,12 @@
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/stdout_sinks.h>
 #include <spdlog/spdlog.h>
+#include <grp.h>
+#include <pwd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <CLI/CLI.hpp>
 #include <algorithm>
@@ -256,6 +259,38 @@ int captureAndCropFace(const std::string& cameraPath, const std::string& outputP
   return 0;
 }
 
+// Drop privileges from root to the target user so that fprintd D-Bus calls
+// use the correct UID for looking up fingerprint templates.  When the helper
+// runs as root (forked from PAM), fprintd's ListEnrolledFingers / VerifyStart
+// use the caller's UID (0) and find no enrolled fingers for root.
+// Must be called after setupConfig() since creating directories needs root.
+static bool drop_to_user(const std::string& username) {
+  if (geteuid() != 0) {
+    return true;  // Not running as root, nothing to do.
+  }
+  struct passwd* pw = getpwnam(username.c_str());
+  if (pw == nullptr) {
+    spdlog::error("Biopass: Cannot drop privileges, unknown user '{}'", username);
+    return false;
+  }
+  // Set supplementary groups first (needs root, done before setuid).
+  if (initgroups(username.c_str(), pw->pw_gid) != 0) {
+    spdlog::error("Biopass: initgroups failed for '{}': {}", username, strerror(errno));
+    return false;
+  }
+  if (setgid(pw->pw_gid) != 0) {
+    spdlog::error("Biopass: setgid failed for '{}': {}", username, strerror(errno));
+    return false;
+  }
+  if (setuid(pw->pw_uid) != 0) {
+    spdlog::error("Biopass: setuid failed for '{}': {}", username, strerror(errno));
+    return false;
+  }
+  spdlog::debug("Biopass: Dropped privileges to {} (uid={}, gid={})",
+                username, pw->pw_uid, pw->pw_gid);
+  return true;
+}
+
 int authenticate(const std::string& username, const std::string& service) {
   const char* pUsername = username.c_str();
 
@@ -299,6 +334,15 @@ int authenticate(const std::string& username, const std::string& service) {
   // If no methods are enabled, ignore this module and let PAM jump to the next one
   if (numOfMethods == 0) {
     return 2;  // PAM_IGNORE
+  }
+
+  // Drop from root to the target user so fprintd D-Bus calls use the
+  // correct UID for template lookup.  The PAM module forks as root, but
+  // fprintd's ListEnrolledFingers and VerifyStart use the caller's UID to
+  // find stored templates.
+  if (!drop_to_user(username)) {
+    spdlog::error("Biopass: Failed to drop privileges, skipping");
+    return 1;  // PAM_AUTH_ERR
   }
 
   int retval = manager.authenticate(pUsername);
