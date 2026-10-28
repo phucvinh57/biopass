@@ -37,6 +37,7 @@
     "linux": {
       "deb": {
         "depends": [
+          "curl",
           "fprintd",
           "libwebkit2gtk-4.1-0",
           "libturbojpeg0 | libturbojpeg"
