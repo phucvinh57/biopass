@@ -11,7 +11,7 @@
 namespace biopass {
 
 enum class CameraCaptureFormat {
-  Default,   // Preference order: YUYV -> MJPEG -> R8 (grey).
+  Default,   // Preference order: MJPEG -> YUYV -> R8 (grey).
   V4L2Grey,  // IR sensors. Preference order: R8 (grey) -> YUYV -> MJPEG,
              // since some IR sensors (e.g. Windows Hello cameras) only
              // expose the stream as YUYV/MJPEG.
