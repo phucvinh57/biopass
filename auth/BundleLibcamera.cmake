@@ -22,6 +22,9 @@ ExternalProject_Add(libcamera_ext
     GIT_REPOSITORY https://git.libcamera.org/libcamera/libcamera.git
     GIT_TAG        ${LIBCAMERA_VERSION}
     GIT_SHALLOW    TRUE
+    # Never link gnutls/libcrypto: only used for IPA signing, and we build no IPAs (#176).
+    PATCH_COMMAND  ${CMAKE_COMMAND} -DLIBCAMERA_SOURCE_DIR=<SOURCE_DIR>
+        -P ${CMAKE_CURRENT_LIST_DIR}/PatchLibcameraNoCrypto.cmake
     CONFIGURE_COMMAND meson setup --prefix=${LIBCAMERA_STAGING} --libdir=lib --buildtype=release
         -Dpipelines=uvcvideo -Dipas=[] -Dgstreamer=disabled -Dv4l2=disabled
         -Dcam=disabled -Dqcam=disabled -Dlc-compliance=disabled
