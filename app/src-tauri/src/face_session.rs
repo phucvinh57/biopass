@@ -39,7 +39,7 @@ fn helper_path() -> String {
     }
 }
 
-fn read_line_trim(reader: &mut BufReader<ChildStdout>) -> std::io::Result<String> {
+fn read_line_trim<R: BufRead>(reader: &mut R) -> std::io::Result<String> {
     let mut line = String::new();
     let n = reader.read_line(&mut line)?;
     if n == 0 {
@@ -55,6 +55,38 @@ fn read_line_trim(reader: &mut BufReader<ChildStdout>) -> std::io::Result<String
         line.pop();
     }
     Ok(line)
+}
+
+// Reads lines until one is a reply the caller expects. Anything else on the
+// helper's stdout (e.g. a stray log line) is skipped; otherwise it would be
+// taken as the reply and leave the real one queued for the next command.
+fn read_reply<R: BufRead>(
+    reader: &mut R,
+    is_reply: impl Fn(&str) -> bool,
+) -> std::io::Result<String> {
+    loop {
+        let line = read_line_trim(reader)?;
+        if is_reply(&line) {
+            return Ok(line);
+        }
+    }
+}
+
+fn is_ready_reply(line: &str) -> bool {
+    line == "READY" || line.starts_with("ERR")
+}
+
+// Frame length from an `OK <byte_count>` header.
+fn frame_len(line: &str) -> Option<usize> {
+    line.strip_prefix("OK ")?.parse().ok()
+}
+
+fn is_frame_reply(line: &str) -> bool {
+    frame_len(line).is_some() || line.starts_with("ERR")
+}
+
+fn is_capture_reply(line: &str) -> bool {
+    line == "OK" || line == "NO_FACE" || line.starts_with("ERR")
 }
 
 #[tauri::command]
@@ -88,7 +120,8 @@ pub fn start_face_preview(app: AppHandle, camera: Option<String>) -> Result<(), 
     let stdout = child.stdout.take().ok_or("missing stdout")?;
     let mut reader = BufReader::new(stdout);
 
-    let ready = read_line_trim(&mut reader).map_err(|e| format!("Helper did not respond: {e}"))?;
+    let ready = read_reply(&mut reader, is_ready_reply)
+        .map_err(|e| format!("Helper did not respond: {e}"))?;
     if ready != "READY" {
         let _ = child.kill();
         return Err(format!("Helper failed to initialize: {ready}"));
@@ -116,23 +149,18 @@ pub fn start_face_preview(app: AppHandle, camera: Option<String>) -> Result<(), 
                     if send_err {
                         break;
                     }
-                    let mut header = String::new();
-                    if io_ref.stdout.read_line(&mut header).is_err() {
-                        break;
-                    }
-                    let header = header.trim();
-                    if let Some(rest) = header.strip_prefix("OK ") {
-                        if let Ok(len) = rest.parse::<usize>() {
-                            let mut buf = vec![0u8; len];
-                            if io_ref.stdout.read_exact(&mut buf).is_err() {
-                                break;
-                            }
-                            Ok(buf)
-                        } else {
-                            Err(())
+                    let header = match read_reply(&mut io_ref.stdout, is_frame_reply) {
+                        Ok(h) => h,
+                        Err(_) => break,
+                    };
+                    if let Some(len) = frame_len(&header) {
+                        let mut buf = vec![0u8; len];
+                        if io_ref.stdout.read_exact(&mut buf).is_err() {
+                            break;
                         }
+                        Ok(buf)
                     } else {
-                        // ERR or unexpected, skip this frame.
+                        // ERR, skip this frame.
                         Err(())
                     }
                 };
@@ -199,18 +227,49 @@ pub fn capture_face_in_session(app: AppHandle) -> Result<String, String> {
         .map_err(|e| format!("write CAPTURE: {e}"))?;
     io.stdin.flush().map_err(|e| format!("flush: {e}"))?;
 
-    let mut response = String::new();
-    io.stdout
-        .read_line(&mut response)
-        .map_err(|e| format!("read response: {e}"))?;
-    let response = response.trim();
+    let response =
+        read_reply(&mut io.stdout, is_capture_reply).map_err(|e| format!("read response: {e}"))?;
 
-    match response {
+    match response.as_str() {
         "OK" => Ok(file_path.to_string_lossy().to_string()),
         "NO_FACE" => {
             Err("No face detected. Please position your face in front of the camera.".into())
         }
-        s if s.starts_with("ERR") => Err(s.to_string()),
-        other => Err(format!("Unexpected response: {other}")),
+        s => Err(s.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn skips_log_noise_before_reply() {
+        let mut r = Cursor::new(&b"[info] libcamera: noise\nREADY\n"[..]);
+        assert_eq!(read_reply(&mut r, is_ready_reply).unwrap(), "READY");
+    }
+
+    #[test]
+    fn frame_payload_does_not_leak_into_next_reply() {
+        let mut r = Cursor::new(&b"log line\nOK 5\nab\ncdanother log\nNO_FACE\n"[..]);
+        let header = read_reply(&mut r, is_frame_reply).unwrap();
+        let mut buf = vec![0u8; frame_len(&header).unwrap()];
+        r.read_exact(&mut buf).unwrap();
+        assert_eq!(buf, b"ab\ncd");
+        assert_eq!(read_reply(&mut r, is_capture_reply).unwrap(), "NO_FACE");
+    }
+
+    #[test]
+    fn frame_err_is_a_reply() {
+        let mut r = Cursor::new(&b"ERR capture failed\n"[..]);
+        let header = read_reply(&mut r, is_frame_reply).unwrap();
+        assert_eq!(frame_len(&header), None);
+    }
+
+    #[test]
+    fn eof_without_reply_is_an_error() {
+        let mut r = Cursor::new(&b"noise\n"[..]);
+        assert!(read_reply(&mut r, is_capture_reply).is_err());
     }
 }
