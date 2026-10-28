@@ -1,6 +1,7 @@
 #ifndef FACE_AS_H
 #define FACE_AS_H
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -16,11 +17,17 @@ struct SpoofResult {
   SpoofResult(float score, bool spoof) : score(score), spoof(spoof) {}
 };
 
-// model_type: "minifasv2" or "mobilenetv3" (default)
+// Selects preprocessing and output decoding. Stored per model in the
+// `architecture` column of biopass.db.
+enum class AntiSpoofArchitecture { MobileNetV3, MiniFASv2 };
+
+// Parses the `architecture` column value ("mobilenetv3", "minifasv2").
+std::optional<AntiSpoofArchitecture> parseAntiSpoofArchitecture(const std::string& name);
+
 class FaceAntiSpoofing {
  public:
-  FaceAntiSpoofing(const std::string& ckpt, int imgsz = 128, const float threshold = 0.8,
-                   const std::string& model_type = "mobilenetv3");
+  FaceAntiSpoofing(const std::string& ckpt, AntiSpoofArchitecture architecture, int imgsz = 128,
+                   const float threshold = 0.8);
 
   SpoofResult inference(const ImageRGB& image);
 
@@ -31,7 +38,7 @@ class FaceAntiSpoofing {
 
   float threshold;
   int imgsz;
-  std::string model_type;
+  AntiSpoofArchitecture architecture;
   OnnxSession session;
 };
 

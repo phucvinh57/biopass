@@ -1,25 +1,37 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { Model, ModelType } from "@/types/config";
+import type { AntiSpoofArchitecture, Model, ModelTask } from "@/types/config";
 import { invokeCommand } from "./core";
 
-function list(modelType?: ModelType) {
+function list(task?: ModelTask) {
   return invokeCommand<Model[]>("list_models", {
-    modelType: modelType ?? null,
+    task: task ?? null,
   });
 }
 
-function addFromUrl(name: string, modelType: ModelType, url: string) {
+function addFromUrl(
+  name: string,
+  task: ModelTask,
+  architecture: AntiSpoofArchitecture | null,
+  url: string,
+) {
   return invokeCommand<Model>("add_model_from_url", {
     name,
-    modelType,
+    task,
+    architecture,
     url,
   });
 }
 
-function addFromFile(name: string, modelType: ModelType, srcPath: string) {
+function addFromFile(
+  name: string,
+  task: ModelTask,
+  architecture: AntiSpoofArchitecture | null,
+  srcPath: string,
+) {
   return invokeCommand<Model>("add_model_from_file", {
     name,
-    modelType,
+    task,
+    architecture,
     srcPath,
   });
 }

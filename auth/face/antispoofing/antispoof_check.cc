@@ -30,15 +30,23 @@ AntiSpoofTask make_task(const std::string& name, std::future<bool> future) {
 bool checkAntiSpoofByAIModel(const FaceMethodConfig& faceCfg, const std::string& username,
                              const ImageRGB& face, const AuthConfig& authCfg,
                              const ModelRegistry& model_registry) {
-  const std::string modelPath =
-      model_registry.resolveModelPath(faceCfg.anti_spoofing.model.model_id).value_or("");
+  const std::string& modelId = faceCfg.anti_spoofing.model.model_id;
+  const auto model = model_registry.resolveModel(modelId);
+  const std::string modelPath = model ? model->path : "";
   if (modelPath.empty() || !std::ifstream(modelPath).good()) {
     spdlog::error("FaceAuth: Anti-spoofing model file not found: {}", modelPath);
     return false;
   }
 
+  const auto architecture = parseAntiSpoofArchitecture(model->architecture);
+  if (!architecture) {
+    spdlog::error("FaceAuth: Anti-spoofing model '{}' has unknown architecture '{}'", modelId,
+                  model->architecture);
+    return false;
+  }
+
   try {
-    FaceAntiSpoofing face_as(modelPath, 128, faceCfg.anti_spoofing.model.threshold);
+    FaceAntiSpoofing face_as(modelPath, *architecture, 128, faceCfg.anti_spoofing.model.threshold);
     const SpoofResult result = face_as.inference(face);
     if (result.spoof) {
       spdlog::warn("FaceAuth: AI anti-spoofing detected spoof, score: {}", result.score);

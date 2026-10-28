@@ -78,7 +78,7 @@ function ModelCard({ model, status, onRenamed, onDelete }: ModelCardProps) {
                 {model.name}
               </h3>
               <p className="text-xs text-muted-foreground capitalize mt-1 block">
-                {model.model_type.replace(/_/g, " ")}
+                {model.task.replace(/_/g, " ")}
                 {isDefault ? " · Default" : ""}
               </p>
             </div>
