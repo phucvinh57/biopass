@@ -241,6 +241,22 @@ inline ImageRGB resizeImageLanczos4(const ImageRGB &src, int tw, int th) {
 }
 
 /**
+ * Maps an out-of-range index into [0, n) with reflect-101 (mirror without
+ * repeating the edge pixel), like cv::BORDER_REFLECT_101.
+ */
+inline int reflect101Index(int i, int n) {
+  if (n <= 1)
+    return 0;
+  while (i < 0 || i >= n) {
+    if (i < 0)
+      i = -i;
+    if (i >= n)
+      i = 2 * (n - 1) - i;
+  }
+  return i;
+}
+
+/**
  * Letterbox resize to imgsz x imgsz: Lanczos4 (upscale) or Area (downscale),
  * then pad with reflect-101.
  */
@@ -263,27 +279,46 @@ inline ImageRGB imageLetterboxReflect101(const ImageRGB &src, int imgsz) {
 
   ImageRGB out(imgsz, imgsz);
   for (int y = 0; y < imgsz; y++) {
-    int sy = y - top;
-    // reflect-101: mirror without repeating the edge pixel.
-    if (scaled_h > 1) {
-      while (sy < 0 || sy >= scaled_h) {
-        if (sy < 0) sy = -sy;
-        if (sy >= scaled_h) sy = 2 * (scaled_h - 1) - sy;
-      }
-    } else {
-      sy = 0;
-    }
+    int sy = reflect101Index(y - top, scaled_h);
     for (int x = 0; x < imgsz; x++) {
-      int sx = x - left;
-      if (scaled_w > 1) {
-        while (sx < 0 || sx >= scaled_w) {
-          if (sx < 0) sx = -sx;
-          if (sx >= scaled_w) sx = 2 * (scaled_w - 1) - sx;
-        }
-      } else {
-        sx = 0;
-      }
+      int sx = reflect101Index(x - left, scaled_w);
       for (int c = 0; c < 3; c++) out.at(y, x, c) = resized.at(sy, sx, c);
+    }
+  }
+  return out;
+}
+
+/**
+ * Square crop of side `scale * max(w, h)` centred on the box (x1, y1, x2, y2).
+ * Parts outside the image are filled with a reflect-101 of the in-image part.
+ * Mirrors crop() in suriAI/face-antispoof-onnx src/inference/preprocess.py.
+ */
+inline ImageRGB imageSquareCropReflect101(const ImageRGB& src, int x1, int y1, int x2, int y2,
+                                          float scale) {
+  int w = x2 - x1;
+  int h = y2 - y1;
+  if (src.empty() || w <= 0 || h <= 0 || scale <= 0)
+    return {};
+
+  int max_dim = std::max(w, h);
+  double center_x = x1 + w / 2.0;
+  double center_y = y1 + h / 2.0;
+  int x = (int)(center_x - max_dim * (double)scale / 2);
+  int y = (int)(center_y - max_dim * (double)scale / 2);
+  int size = (int)(max_dim * (double)scale);
+
+  ImageRGB inside = src.crop(x, y, x + size, y + size);
+  if (inside.empty() || size <= 0)
+    return {};
+  int off_x = std::max(0, x);
+  int off_y = std::max(0, y);
+
+  ImageRGB out(size, size);
+  for (int r = 0; r < size; r++) {
+    int sy = reflect101Index(y + r - off_y, inside.height);
+    for (int c = 0; c < size; c++) {
+      int sx = reflect101Index(x + c - off_x, inside.width);
+      for (int ch = 0; ch < 3; ch++) out.at(r, c, ch) = inside.at(sy, sx, ch);
     }
   }
   return out;

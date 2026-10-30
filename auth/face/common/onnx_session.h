@@ -18,6 +18,9 @@ class OnnxSession {
 
   std::vector<Ort::Value> run(std::vector<float>& input, const std::vector<int64_t>& shape);
 
+  // Shape of the first model input; dynamic dimensions are -1.
+  std::vector<int64_t> inputShape() const;
+
  private:
   Ort::Env env_;
   std::unique_ptr<Ort::Session> session_;
