@@ -15,9 +15,11 @@ pub fn get_current_username() -> Result<String, String> {
 }
 
 /// The login name from the environment: USER, then LOGNAME (set by login and
-/// PAM when USER isn't), then USERNAME. Empty values are skipped. The app runs
-/// as this user, so trusting its own environment is fine; a uid-based lookup
-/// would need getpwuid from a libc crate, which isn't a direct dependency.
+/// PAM when USER isn't), then USERNAME. Empty values are skipped. This is only
+/// a hint, not authoritative: fprintd's polkit check on the D-Bus caller is
+/// the real guarantee (claiming a device for another name needs
+/// net.reactivated.fprint.device.setusername). A uid-based lookup would need
+/// getpwuid from a libc crate, which isn't a direct dependency.
 fn username_from(var: impl Fn(&str) -> Option<String>) -> Option<String> {
     ["USER", "LOGNAME", "USERNAME"]
         .into_iter()
