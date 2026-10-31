@@ -3,6 +3,8 @@ import { z } from "zod";
 import { cmd } from "@/commands";
 import type { BiopassConfig } from "@/types/config";
 
+// Mirrors kMinThreshold/kMaxThreshold in auth/core/auth_config.h. The helper
+// turns face off for a threshold outside this range.
 const thresholdSchema = z
   .number("Threshold must be a number")
   .min(0, "Threshold must be at least 0%")
