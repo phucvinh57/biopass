@@ -40,6 +40,7 @@ While Windows Hello provides a seamless multi-modal biometric experience (Face, 
 - System sign-in setup uses distro-managed PAM configuration when available (for example `pam-auth-update` on Debian/Ubuntu): [docs/PAM.md](docs/PAM.md)
 - Interactive `polkit` authentication setup: [docs/Polkit.md](docs/Polkit.md)
 - [IR camera setup guide](docs/IR%20camera.md)
+- Keyring/KWallet not unlocked after face login: [docs/Keyring.md](docs/Keyring.md)
 
 ## Features
 
