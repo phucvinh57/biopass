@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend (Biome + tsc)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        working-directory: app
+        run: bun install --frozen-lockfile
+
+      - name: Biome
+        working-directory: app
+        run: bun run lint
+
+      - name: Type check
+        working-directory: app
+        run: bunx tsc --noEmit
+
+  native:
+    name: Native (auth + Rust)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          lfs: true
+
+      - name: Install system dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y librsvg2-dev libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev libpam0g-dev libcli11-dev pkg-config libturbojpeg0-dev meson ninja-build python3-jinja2 python3-yaml python3-ply libudev-dev libdrm-dev
+
+      - name: clang-format
+        run: |
+          find auth -path auth/build -prune -o \( -name '*.cc' -o -name '*.h' -o -name '*.cpp' \) -print \
+            | xargs pipx run clang-format==22.1.8 --dry-run --Werror
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            app/src-tauri/target
+          key: ci-${{ runner.os }}-cargo-${{ hashFiles('app/src-tauri/Cargo.lock') }}
+          restore-keys: ci-${{ runner.os }}-cargo-
+
+      - name: Cache auth build
+        uses: actions/cache@v5
+        with:
+          path: auth/build
+          key: ci-${{ runner.os }}-auth-${{ hashFiles('auth/BundleLibcamera.cmake', 'auth/Dependencies.cmake') }}
+
+      - name: Build auth
+        run: make build-auth BUILD_TYPE=Release
+
+      - uses: oven-sh/setup-bun@v2
+
+      # Tauri's generate_context! needs app/dist to exist at compile time.
+      - name: Build frontend
+        working-directory: app
+        run: bun install --frozen-lockfile && bun run build
+
+      - name: rustfmt
+        working-directory: app/src-tauri
+        run: cargo fmt --all --check
+
+      - name: clippy
+        working-directory: app/src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: cargo test
+        working-directory: app/src-tauri
+        run: cargo test
