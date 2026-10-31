@@ -28,6 +28,9 @@ class FaceAuth : public IAuthMethod {
                           std::atomic<bool>* cancel_signal = nullptr) override;
 
  private:
+  // One attempt; authenticate() wraps it so nothing it throws escapes.
+  AuthResult attempt(const std::string& username, const AuthConfig& config,
+                     std::atomic<bool>* cancel_signal);
   void ensureIrSession();
   // Loads detection + recognition once; false if either fails to load.
   bool ensureModelsLoaded();

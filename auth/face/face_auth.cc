@@ -2,6 +2,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <exception>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -119,8 +120,26 @@ void FaceAuth::endAuthenticationSession() {
   camera_session_.reset();
 }
 
+// ONNX Runtime, the image code (std::out_of_range, bad_alloc) and the
+// recognizer (zero-magnitude embedding) can throw. An attempt that threw is a
+// failed attempt, never a match. The camera sessions are dropped since the
+// throw may have left them mid-capture.
 AuthResult FaceAuth::authenticate(const std::string& username, const AuthConfig& config,
                                   std::atomic<bool>* cancel_signal) {
+  try {
+    return attempt(username, config, cancel_signal);
+  } catch (const std::exception& e) {
+    spdlog::error("FaceAuth: attempt threw, failing it: {}", e.what());
+  } catch (...) {
+    spdlog::error("FaceAuth: attempt threw, failing it");
+  }
+  ir_camera_session_.reset();
+  camera_session_.reset();
+  return AuthResult::Failure;
+}
+
+AuthResult FaceAuth::attempt(const std::string& username, const AuthConfig& config,
+                             std::atomic<bool>* cancel_signal) {
   if (!camera_session_) {
     camera_session_ = openCameraSession(face_config_.camera);
   }
