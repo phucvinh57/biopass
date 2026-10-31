@@ -49,6 +49,7 @@ if(BUILD_TESTS)
     add_subdirectory(test/auth_manager)
     add_subdirectory(test/helper_exit)
     add_subdirectory(test/helper_argv)
+    add_subdirectory(test/helper_wait)
 endif()
 
 install(
