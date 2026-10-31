@@ -81,7 +81,7 @@ pub fn list_faces(app: AppHandle) -> Result<Vec<String>, String> {
         .filter(|e| {
             e.path()
                 .extension()
-                .map_or(false, |ext| ext == "jpg" || ext == "png")
+                .is_some_and(|ext| ext == "jpg" || ext == "png")
         })
         .map(|e| e.path().to_string_lossy().to_string())
         .collect();
