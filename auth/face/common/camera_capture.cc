@@ -402,7 +402,7 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
 
   ~LibcameraCaptureSession() override { close(); }
 
-  bool isOpen() const override { return lifecycle_.isStarted() && !disconnected_; }
+  bool isOpen() const override { return lifecycle_.isStarted() && !events_->disconnected; }
 
   ImageRGB capture() override {
     if (!isOpen()) {
@@ -536,27 +536,33 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
       requests_.push_back(std::move(request));
     }
 
-    camera_->requestCompleted.connect(&connection_token_, [this](libcamera::Request* request) {
+    // The callbacks hold `events`, never `this`: after an unplug one may still
+    // run once the session is gone (see close()).
+    auto events = events_;
+    camera_->requestCompleted.connect(events.get(), [events](libcamera::Request* request) {
       if (request->status() == libcamera::Request::RequestCancelled) {
         return;
       }
       {
-        std::lock_guard<std::mutex> lock(mutex_);
-        completed_.push_back(request);
+        std::lock_guard<std::mutex> lock(events->mutex);
+        events->completed.push_back(request);
       }
-      ready_.notify_one();
+      events->ready.notify_one();
     });
-    camera_->disconnected.connect(&connection_token_, [this]() {
+    // Never disconnected: an unplug is signalled from another thread at any
+    // time, libcamera calls slots without holding its lock, and disconnect()
+    // deletes the slot at once. Each session leaves this small slot behind.
+    camera_->disconnected.connect(events.get(), [events]() {
       {
-        std::lock_guard<std::mutex> lock(mutex_);
-        disconnected_ = true;
+        std::lock_guard<std::mutex> lock(events->mutex);
+        events->disconnected = true;
       }
-      ready_.notify_all();
+      events->ready.notify_all();
     });
 
     if (camera_->start() < 0) {
       spdlog::error("FaceAuth: Failed to start camera '{}'", camera_label_);
-      camera_->requestCompleted.disconnect(&connection_token_);
+      camera_->requestCompleted.disconnect(events_.get());
       return false;
     }
     lifecycle_.markStarted();
@@ -592,16 +598,16 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
 
   libcamera::Request* waitForRequest(std::chrono::steady_clock::time_point deadline,
                                      bool has_timeout) {
-    std::unique_lock<std::mutex> lock(mutex_);
-    const auto ready = [this] { return !completed_.empty() || disconnected_; };
+    std::unique_lock<std::mutex> lock(events_->mutex);
+    const auto ready = [this] { return !events_->completed.empty() || events_->disconnected; };
     bool have_request;
     if (has_timeout) {
-      have_request = ready_.wait_until(lock, deadline, ready);
+      have_request = events_->ready.wait_until(lock, deadline, ready);
     } else {
-      ready_.wait(lock, ready);
+      events_->ready.wait(lock, ready);
       have_request = true;
     }
-    if (have_request && completed_.empty()) {
+    if (have_request && events_->completed.empty()) {
       spdlog::error("FaceAuth: Camera '{}' was disconnected", camera_label_);
       lock.unlock();
       close();
@@ -613,18 +619,18 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
       close();
       return nullptr;
     }
-    libcamera::Request* request = completed_.front();
-    completed_.pop_front();
+    libcamera::Request* request = events_->completed.front();
+    events_->completed.pop_front();
     return request;
   }
 
   // Requeues every completed request. False if one couldn't be requeued; the
   // caller must then close() (outside the lock).
   bool drainPending() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    while (!completed_.empty()) {
-      libcamera::Request* request = completed_.front();
-      completed_.pop_front();
+    std::lock_guard<std::mutex> lock(events_->mutex);
+    while (!events_->completed.empty()) {
+      libcamera::Request* request = events_->completed.front();
+      events_->completed.pop_front();
       if (!requeue(request)) {
         return false;
       }
@@ -685,7 +691,7 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
   // Safe to call more than once.
   void close() {
     // After an unplug stop() is a no-op that leaves requests in the pipeline.
-    if (disconnected_) {
+    if (events_->disconnected) {
       lifecycle_.markDisconnected();
     }
     if (lifecycle_.needsStop()) {
@@ -695,26 +701,28 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
       }
       // libcamera marks an unplugged camera stopped before it signals, so
       // stop() may have cancelled nothing; a request still pending is held.
-      if (disconnected_ || anyRequestPending()) {
+      if (events_->disconnected || anyRequestPending()) {
         lifecycle_.markRequestsHeld();
       }
       lifecycle_.markStopped(ret == 0);
     }
-    camera_->requestCompleted.disconnect(&connection_token_);
-    camera_->disconnected.disconnect(&connection_token_);
     {
-      std::lock_guard<std::mutex> lock(mutex_);
-      completed_.clear();
+      std::lock_guard<std::mutex> lock(events_->mutex);
+      events_->completed.clear();
     }
     for (auto& [buffer, mapping] : mappings_) {
       munmap(mapping.base, mapping.size);
     }
     mappings_.clear();
     if (lifecycle_.canFreeBuffers()) {
+      // stop() was a barrier, so requestCompleted isn't running.
+      camera_->requestCompleted.disconnect(events_.get());
       requests_.clear();
       allocator_.reset();
     } else {
-      // libcamera may still hold these; leaking beats a use-after-free.
+      // libcamera may still hold these, and may still complete them, so the
+      // requestCompleted slot stays connected. Leaking beats a use-after-free;
+      // the leaked allocator keeps the Camera, and with it the slot, alive.
       for (auto& request : requests_) {
         (void)request.release();
       }
@@ -752,12 +760,15 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
   std::vector<std::unique_ptr<libcamera::Request>> requests_;
   std::map<libcamera::FrameBuffer*, Mapping> mappings_;
 
-  std::mutex mutex_;
-  std::condition_variable ready_;
-  std::deque<libcamera::Request*> completed_;
-  int connection_token_ = 0;
-  // Set from libcamera's thread when the camera is unplugged.
-  std::atomic<bool> disconnected_{false};
+  // Shared with the libcamera callbacks, which may outlive the session.
+  struct Events {
+    std::mutex mutex;
+    std::condition_variable ready;
+    std::deque<libcamera::Request*> completed;
+    // Set from libcamera's thread when the camera is unplugged.
+    std::atomic<bool> disconnected{false};
+  };
+  std::shared_ptr<Events> events_ = std::make_shared<Events>();
 
   CameraLifecycle lifecycle_;
 };
