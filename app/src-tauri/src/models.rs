@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use futures_util::StreamExt;
-use rusqlite::Connection;
+use rusqlite::TransactionBehavior;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter};
@@ -90,17 +90,40 @@ fn slugify(name: &str) -> String {
     }
 }
 
-fn unique_model_id(conn: &Connection, base: &str) -> Result<String, String> {
-    if db::get_model(conn, base)?.is_none() {
-        return Ok(base.to_string());
-    }
-    for n in 2..1000 {
-        let candidate = format!("{base}-{n}");
-        if db::get_model(conn, &candidate)?.is_none() {
-            return Ok(candidate);
-        }
-    }
-    Err("Failed to allocate a unique model id".to_string())
+fn model_path(dir: &Path, id: &str) -> PathBuf {
+    dir.join(format!("{id}.onnx"))
+}
+
+/// Claims an id, moves `tmp` to `<id>.onnx` and inserts the row in one
+/// write transaction, so concurrent adds never share an id or a file and a
+/// failed move leaves no row behind.
+fn register_user_model(
+    app: &AppHandle,
+    dir: &Path,
+    tmp: tempfile::NamedTempFile,
+    name: &str,
+    task: &str,
+    architecture: Option<&str>,
+    checksum: &str,
+) -> Result<Model, String> {
+    let mut conn = db::open(app)?;
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|e| format!("Failed to start database transaction: {}", e))?;
+    let new = db::NewModel {
+        name,
+        task,
+        architecture,
+        checksum: Some(checksum),
+        source: "user",
+    };
+    let id = db::insert_with_unique_id(&tx, &slugify(name), &new, |id| {
+        model_path(dir, id).to_string_lossy().into_owned()
+    })?;
+    install_file(tmp, &model_path(dir, &id))?;
+    tx.commit()
+        .map_err(|e| format!("Failed to save model: {}", e))?;
+    db::get_model(&conn, &id)?.ok_or_else(|| "Model vanished after insert".to_string())
 }
 
 /// Heuristic, not a parse: a serialized ModelProto starts with ir_version
@@ -265,10 +288,8 @@ pub async fn add_model_from_url(
     require_https(&url)?;
 
     let dir = models_dir(&app)?;
-    let id = {
-        let conn = db::open(&app)?;
-        unique_model_id(&conn, &slugify(&name))?
-    };
+    // Progress only: the real id is claimed after the download.
+    let id = slugify(&name);
 
     let (tmp, sha256) = download_to_temp(&url, &dir, |downloaded, total| {
         let _ = app.emit(
@@ -282,23 +303,15 @@ pub async fn add_model_from_url(
     })
     .await?;
 
-    let checksum = format!("sha256:{sha256}");
-    let final_path = dir.join(format!("{id}.onnx"));
-    install_file(tmp, &final_path)?;
-
-    let conn = db::open(&app)?;
-    db::upsert_model(
-        &conn,
-        &id,
+    register_user_model(
+        &app,
+        &dir,
+        tmp,
         &name,
         &task,
         architecture.as_deref(),
-        &final_path.to_string_lossy(),
-        None,
-        Some(&checksum),
-        "user",
-    )?;
-    db::get_model(&conn, &id)?.ok_or_else(|| "Model vanished after insert".to_string())
+        &format!("sha256:{sha256}"),
+    )
 }
 
 /// Downloads any built-in model missing from the user's models directory.
@@ -349,10 +362,6 @@ pub fn add_model_from_file(
     validate_onnx_file(&src)?;
 
     let dir = models_dir(&app)?;
-    let conn = db::open(&app)?;
-    let id = unique_model_id(&conn, &slugify(&name))?;
-    let final_path = dir.join(format!("{id}.onnx"));
-
     let mut tmp = tempfile::NamedTempFile::new_in(&dir)
         .map_err(|e| format!("Failed to create temp file: {}", e))?;
     let mut src_file =
@@ -361,20 +370,15 @@ pub fn add_model_from_file(
         .map_err(|e| format!("Failed to copy model file: {}", e))?;
 
     let checksum = sha256_file(tmp.path())?;
-    install_file(tmp, &final_path)?;
-
-    db::upsert_model(
-        &conn,
-        &id,
+    register_user_model(
+        &app,
+        &dir,
+        tmp,
         &name,
         &task,
         architecture.as_deref(),
-        &final_path.to_string_lossy(),
-        None,
-        Some(&checksum),
-        "user",
-    )?;
-    db::get_model(&conn, &id)?.ok_or_else(|| "Model vanished after insert".to_string())
+        &checksum,
+    )
 }
 
 #[tauri::command]

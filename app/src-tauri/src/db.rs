@@ -208,45 +208,64 @@ pub fn update_model_name(conn: &Connection, id: &str, name: &str) -> Result<(), 
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn upsert_model(
+pub struct NewModel<'a> {
+    pub name: &'a str,
+    pub task: &'a str,
+    pub architecture: Option<&'a str>,
+    pub checksum: Option<&'a str>,
+    pub source: &'a str,
+}
+
+/// Inserts `model` under the first free id of `base`, `base-2`, ... and
+/// returns that id; `path_for(id)` gives the row's path.
+///
+/// Atomic: there is no separate "is it free?" read. A plain INSERT either
+/// claims the id or hits the PRIMARY KEY, so two concurrent adds can never
+/// share an id (or the `<id>.onnx` file). Built-in slugs are skipped even
+/// before the built-in is seeded, so a user model never takes its file.
+pub fn insert_with_unique_id(
     conn: &Connection,
-    id: &str,
-    name: &str,
-    task: &str,
-    architecture: Option<&str>,
-    path: &str,
-    version: Option<&str>,
-    checksum: Option<&str>,
-    source: &str,
-) -> Result<(), String> {
-    conn.execute(
-        "INSERT INTO models (id, name, task, architecture, path, version, checksum, source, installed_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
-         ON CONFLICT(id) DO UPDATE SET \
-             name = excluded.name, task = excluded.task, architecture = excluded.architecture, \
-             path = excluded.path, \
-             version = excluded.version, checksum = excluded.checksum, source = excluded.source, \
-             installed_at = excluded.installed_at",
-        params![
-            id,
-            name,
-            task,
-            architecture,
-            path,
-            version,
-            checksum,
-            source,
-            now_unix()
-        ],
-    )
-    .map_err(|e| format!("Failed to upsert model '{}': {}", id, e))?;
-    Ok(())
+    base: &str,
+    model: &NewModel,
+    path_for: impl Fn(&str) -> String,
+) -> Result<String, String> {
+    for n in 1..1000 {
+        let candidate = if n == 1 {
+            base.to_string()
+        } else {
+            format!("{base}-{n}")
+        };
+        if KNOWN_MODELS.iter().any(|k| k.slug == candidate) {
+            continue;
+        }
+        let inserted = conn.execute(
+            "INSERT INTO models (id, name, task, architecture, path, version, checksum, source, installed_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?8)",
+            params![
+                candidate,
+                model.name,
+                model.task,
+                model.architecture,
+                path_for(&candidate),
+                model.checksum,
+                model.source,
+                now_unix()
+            ],
+        );
+        match inserted {
+            Ok(_) => return Ok(candidate),
+            Err(rusqlite::Error::SqliteFailure(e, _))
+                if e.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_PRIMARYKEY => {}
+            Err(e) => return Err(format!("Failed to insert model '{}': {}", candidate, e)),
+        }
+    }
+    Err("Failed to allocate a unique model id".to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::TransactionBehavior;
 
     #[test]
     fn migration_002_backfills_architecture() {
@@ -275,12 +294,117 @@ mod tests {
         migrations().to_latest(&mut conn).unwrap();
 
         let insert = |task: &str, arch: Option<&str>| {
-            upsert_model(&conn, "m", "m", task, arch, "/m.onnx", None, None, "user")
+            let model = NewModel {
+                task,
+                architecture: arch,
+                ..user_model("m")
+            };
+            insert_with_unique_id(&conn, "m", &model, path_for)
         };
         assert!(insert("anti_spoofing", None).is_err());
         assert!(insert("anti_spoofing", Some("resnet")).is_err());
         assert!(insert("detection", Some("minifasv2")).is_err());
         assert!(insert("anti_spoofing", Some("minifasv2")).is_ok());
         assert!(insert("detection", None).is_ok());
+    }
+
+    fn user_model<'a>(name: &'a str) -> NewModel<'a> {
+        NewModel {
+            name,
+            task: "detection",
+            architecture: None,
+            checksum: None,
+            source: "user",
+        }
+    }
+
+    fn path_for(id: &str) -> String {
+        format!("/m/{id}.onnx")
+    }
+
+    #[test]
+    fn unique_id_takes_next_free_suffix_without_overwriting() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrations().to_latest(&mut conn).unwrap();
+
+        let a = insert_with_unique_id(&conn, "face", &user_model("A"), path_for).unwrap();
+        let b = insert_with_unique_id(&conn, "face", &user_model("B"), path_for).unwrap();
+        let c = insert_with_unique_id(&conn, "face", &user_model("C"), path_for).unwrap();
+        assert_eq!(
+            (a.as_str(), b.as_str(), c.as_str()),
+            ("face", "face-2", "face-3")
+        );
+        assert_eq!(get_model(&conn, "face").unwrap().unwrap().name, "A");
+        assert_eq!(
+            get_model(&conn, "face-2").unwrap().unwrap().path,
+            "/m/face-2.onnx"
+        );
+    }
+
+    #[test]
+    fn unique_id_never_takes_a_builtin_slug() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrations().to_latest(&mut conn).unwrap();
+
+        // The built-in is not seeded yet (its file is not downloaded).
+        let id =
+            insert_with_unique_id(&conn, "yolov8n-face", &user_model("Mine"), path_for).unwrap();
+        assert_eq!(id, "yolov8n-face-2");
+    }
+
+    #[test]
+    fn unique_id_reports_non_conflict_errors() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrations().to_latest(&mut conn).unwrap();
+
+        let bad = NewModel {
+            task: "anti_spoofing",
+            ..user_model("No arch")
+        };
+        assert!(insert_with_unique_id(&conn, "x", &bad, path_for).is_err());
+        assert!(get_model(&conn, "x").unwrap().is_none());
+    }
+
+    #[test]
+    fn concurrent_adds_get_distinct_ids() {
+        const ADDERS: usize = 8;
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("biopass.db");
+        migrations()
+            .to_latest(&mut Connection::open(&db_path).unwrap())
+            .unwrap();
+
+        let barrier = std::sync::Barrier::new(ADDERS);
+        let ids: Vec<String> = std::thread::scope(|s| {
+            let handles: Vec<_> = (0..ADDERS)
+                .map(|i| {
+                    let (db_path, barrier) = (&db_path, &barrier);
+                    s.spawn(move || {
+                        let conn = Connection::open(db_path).unwrap();
+                        conn.busy_timeout(Duration::from_secs(10)).unwrap();
+                        let name = format!("adder {i}");
+                        barrier.wait();
+                        let mut conn = conn;
+                        let tx = conn
+                            .transaction_with_behavior(TransactionBehavior::Immediate)
+                            .unwrap();
+                        let id = insert_with_unique_id(&tx, "face", &user_model(&name), path_for)
+                            .unwrap();
+                        // Widen the window between allocation and commit.
+                        std::thread::sleep(Duration::from_millis(20));
+                        tx.commit().unwrap();
+                        id
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+
+        let mut unique = ids.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), ADDERS, "duplicate ids: {ids:?}");
+        let conn = Connection::open(&db_path).unwrap();
+        assert_eq!(list_models(&conn, None).unwrap().len(), ADDERS);
     }
 }
