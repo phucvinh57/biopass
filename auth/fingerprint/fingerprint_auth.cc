@@ -36,6 +36,32 @@ struct AuthContext {
   std::string fprintd_owner;
 };
 
+// Returns fprintd's unique bus name (":1.N"), or "" if it can't be resolved.
+// The bus daemon sets the sender field, so another local process can't claim
+// this name.
+std::string resolveFprintdOwner(GDBusConnection* connection) {
+  GError* error = nullptr;
+  GVariant* owner_ret = g_dbus_connection_call_sync(
+      connection, DBUS_SERVICE, DBUS_PATH, DBUS_INTERFACE, "GetNameOwner",
+      g_variant_new("(s)", FPRINT_SERVICE), G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE, -1,
+      nullptr, &error);
+  if (!owner_ret) {
+    spdlog::error("FingerprintAuth: Failed to resolve the fprintd bus name: {}",
+                  (error ? error->message : ""));
+    if (error)
+      g_error_free(error);
+    return "";
+  }
+  const gchar* owner = nullptr;
+  g_variant_get(owner_ret, "(&s)", &owner);
+  std::string result = owner ? owner : "";
+  g_variant_unref(owner_ret);
+  if (result.empty()) {
+    spdlog::error("FingerprintAuth: fprintd has no bus owner");
+  }
+  return result;
+}
+
 // The first decision ends the wait; later events can't overwrite it.
 void finish(AuthContext* ctx, AuthResult result) {
   if (ctx->finished) {
@@ -324,26 +350,9 @@ AuthResult FingerprintAuth::authenticate(const std::string& username, const Auth
       connection, DBUS_SERVICE, DBUS_INTERFACE, "NameOwnerChanged", DBUS_PATH, FPRINT_SERVICE,
       G_DBUS_SIGNAL_FLAGS_NONE, on_fprintd_owner_changed, &ctx, nullptr);
 
-  // Pin VerifyStatus to fprintd's unique name. The bus daemon sets the sender
-  // field, so another local process can't claim it.
-  GVariant* owner_ret = g_dbus_connection_call_sync(
-      connection, DBUS_SERVICE, DBUS_PATH, DBUS_INTERFACE, "GetNameOwner",
-      g_variant_new("(s)", FPRINT_SERVICE), G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE, -1,
-      nullptr, &error);
-  if (!owner_ret) {
-    spdlog::error("FingerprintAuth: Failed to resolve the fprintd bus name: {}",
-                  (error ? error->message : ""));
-    if (error)
-      g_error_free(error);
-    cleanup();
-    return AuthResult::Unavailable;
-  }
-  const gchar* owner = nullptr;
-  g_variant_get(owner_ret, "(&s)", &owner);
-  ctx.fprintd_owner = owner ? owner : "";
-  g_variant_unref(owner_ret);
+  // Pin VerifyStatus to fprintd's unique name.
+  ctx.fprintd_owner = resolveFprintdOwner(connection);
   if (ctx.fprintd_owner.empty()) {
-    spdlog::error("FingerprintAuth: fprintd has no bus owner");
     cleanup();
     return AuthResult::Unavailable;
   }
@@ -536,6 +545,19 @@ bool FingerprintAuth::enroll(const std::string& username, const std::string& fin
   }
   g_variant_unref(claim_ret);
 
+  // Pin EnrollStatus to fprintd's unique name, as for verify.
+  std::string fprintd_owner = resolveFprintdOwner(connection);
+  if (fprintd_owner.empty()) {
+    GVariant* rel_ret = g_dbus_proxy_call_sync(device, "Release", nullptr, G_DBUS_CALL_FLAGS_NONE,
+                                               -1, nullptr, nullptr);
+    if (rel_ret)
+      g_variant_unref(rel_ret);
+    g_object_unref(device);
+    g_object_unref(manager);
+    g_object_unref(connection);
+    return false;
+  }
+
   GVariant* enroll_start_ret =
       g_dbus_proxy_call_sync(device, "EnrollStart", g_variant_new("(s)", finger_name.c_str()),
                              G_DBUS_CALL_FLAGS_NONE, -1, nullptr, &error);
@@ -561,6 +583,7 @@ bool FingerprintAuth::enroll(const std::string& username, const std::string& fin
     std::string error_msg;
     void (*callback)(bool done, const char* status, void* user_data);
     void* user_data;
+    std::string fprintd_owner;
   };
 
   EnrollContext ctx;
@@ -568,13 +591,24 @@ bool FingerprintAuth::enroll(const std::string& username, const std::string& fin
   ctx.success = false;
   ctx.callback = callback;
   ctx.user_data = user_data;
+  ctx.fprintd_owner = fprintd_owner;
 
   auto on_enroll_status = [](GDBusConnection* connection, const gchar* sender_name,
                              const gchar* object_path, const gchar* interface_name,
                              const gchar* signal_name, GVariant* parameters, gpointer user_data) {
     EnrollContext* ctx = static_cast<EnrollContext*>(user_data);
-    const gchar* result;
-    gboolean done;
+
+    // Same checks as VerifyStatus: fprintd's unique name and a "(sb)" payload.
+    bool type_ok =
+        parameters != nullptr && g_variant_is_of_type(parameters, G_VARIANT_TYPE("(sb)"));
+    if (!acceptVerifyStatus(sender_name, ctx->fprintd_owner, type_ok)) {
+      spdlog::warn("FingerprintAuth: Ignoring EnrollStatus from {} (payload type ok: {})",
+                   sender_name ? sender_name : "(none)", type_ok);
+      return;
+    }
+
+    const gchar* result = nullptr;
+    gboolean done = FALSE;
 
     g_variant_get(parameters, "(&sb)", &result, &done);
     std::string res_str = result;
@@ -603,8 +637,8 @@ bool FingerprintAuth::enroll(const std::string& username, const std::string& fin
 
   spdlog::info("Waiting for fingerprint enrollment...");
   guint sub_id = g_dbus_connection_signal_subscribe(
-      connection, FPRINT_SERVICE, FPRINT_DEVICE_INTERFACE, "EnrollStatus", dev_path_str.c_str(),
-      nullptr, G_DBUS_SIGNAL_FLAGS_NONE, on_enroll_status, &ctx, nullptr);
+      connection, ctx.fprintd_owner.c_str(), FPRINT_DEVICE_INTERFACE, "EnrollStatus",
+      dev_path_str.c_str(), nullptr, G_DBUS_SIGNAL_FLAGS_NONE, on_enroll_status, &ctx, nullptr);
 
   g_main_loop_run(ctx.loop);
 
