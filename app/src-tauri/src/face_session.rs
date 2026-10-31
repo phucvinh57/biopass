@@ -25,6 +25,8 @@ const FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(15);
 // How long the helper gets to exit after QUIT before it is killed.
 const QUIT_GRACE: Duration = Duration::from_millis(500);
+// How long a kill waits for the helper to exit before reaping it in the background.
+const KILL_WAIT: Duration = Duration::from_secs(2);
 
 /// Reads bytes that a pump thread pulls from the helper's stdout, so a read
 /// can give up at a deadline instead of blocking forever on a stuck helper.
@@ -118,33 +120,60 @@ impl<W: Write> ChildIO<W> {
 
 /// Owns the helper process: it is killed and reaped when the guard drops, so
 /// no early return can leak it or leave a zombie.
-struct ChildGuard(Mutex<Child>);
+struct ChildGuard(Mutex<Option<Child>>);
+
+// Polls `try_wait` until the process exits or `limit` passes. An error means
+// it can't be waited on any more, which counts as gone.
+fn exited_within(mut try_wait: impl FnMut() -> io::Result<bool>, limit: Duration) -> bool {
+    let deadline = Instant::now() + limit;
+    loop {
+        match try_wait() {
+            Ok(true) | Err(_) => return true,
+            Ok(false) if Instant::now() >= deadline => return false,
+            Ok(false) => thread::sleep(Duration::from_millis(20)),
+        }
+    }
+}
 
 impl ChildGuard {
     fn new(child: Child) -> Self {
-        Self(Mutex::new(child))
+        Self(Mutex::new(Some(child)))
     }
 
-    fn child(&self) -> MutexGuard<'_, Child> {
+    fn child(&self) -> MutexGuard<'_, Option<Child>> {
         self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    // SIGKILL, then wait at most KILL_WAIT. A helper stuck in the kernel (D
+    // state) only dies when its syscall returns; it is then reaped on a
+    // detached thread so the caller (and any lock it holds) is not blocked.
     fn kill(&self) {
-        let mut c = self.child();
+        let mut slot = self.child();
+        let Some(c) = slot.as_mut() else { return };
         let _ = c.kill();
-        let _ = c.wait();
+        if exited_within(|| c.try_wait().map(|s| s.is_some()), KILL_WAIT) {
+            return;
+        }
+        eprintln!("face preview: helper did not exit after SIGKILL; reaping in background");
+        if let Some(mut c) = slot.take() {
+            thread::spawn(move || {
+                let _ = c.wait();
+            });
+        }
     }
 
     // Lets the helper exit on its own for `grace`, then kills it.
     fn reap(&self, grace: Duration) {
-        let deadline = Instant::now() + grace;
-        while Instant::now() < deadline {
-            match self.child().try_wait() {
-                Ok(Some(_)) | Err(_) => return,
-                Ok(None) => thread::sleep(Duration::from_millis(20)),
+        let exited = {
+            let mut slot = self.child();
+            match slot.as_mut() {
+                Some(c) => exited_within(|| c.try_wait().map(|s| s.is_some()), grace),
+                None => true,
             }
+        };
+        if !exited {
+            self.kill();
         }
-        self.kill();
     }
 }
 
@@ -586,6 +615,19 @@ mod tests {
         let e = request_frame(&mut io, Duration::from_millis(100)).unwrap_err();
         assert_eq!(e.kind(), io::ErrorKind::TimedOut);
         assert!(start.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn wait_for_exit_is_bounded() {
+        // A process that never exits (e.g. stuck in D state after SIGKILL).
+        let start = Instant::now();
+        assert!(!exited_within(|| Ok(false), Duration::from_millis(100)));
+        assert!(start.elapsed() < Duration::from_secs(2));
+        assert!(exited_within(|| Ok(true), Duration::from_secs(5)));
+        assert!(exited_within(
+            || Err(io::Error::other("ECHILD")),
+            Duration::from_secs(5)
+        ));
     }
 
     #[test]
