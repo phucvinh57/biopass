@@ -2,8 +2,6 @@
 
 #include <spdlog/spdlog.h>
 
-#include <algorithm>
-#include <cmath>
 #include <stdexcept>
 
 #include "antispoof_output.h"
@@ -94,12 +92,8 @@ SpoofResult FaceAntiSpoofing::inference(const ImageRGB& frame, const Box& face_b
     return SpoofResult(decision.score, decision.spoof);
   }
 
-  // minifasv2: logits[0] = real_logit, logits[1] = spoof_logit
-  float max_logit = std::max(logits[0], logits[1]);
-  float exp_real = std::exp(logits[0] - max_logit);
-  float exp_spoof = std::exp(logits[1] - max_logit);
-  float spoof_prob = exp_spoof / (exp_real + exp_spoof);
-  return SpoofResult(spoof_prob, spoof_prob >= this->threshold);
+  const AntiSpoofDecision decision = decodeMiniFasV2Output(logits, 2, this->threshold);
+  return SpoofResult(decision.score, decision.spoof);
 }
 
 }  // namespace biopass

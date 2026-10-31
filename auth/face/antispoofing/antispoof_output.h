@@ -21,4 +21,8 @@ struct AntiSpoofDecision {
 // spoof = true.
 AntiSpoofDecision decodeMobileNetV3Output(const float* data, size_t size, float threshold);
 
+// Interprets the MiniFASv2 anti-spoofing output: two raw logits, index 0 =
+// real, index 1 = spoof. Spoof iff softmax spoof probability >= threshold.
+AntiSpoofDecision decodeMiniFasV2Output(const float* data, size_t size, float threshold);
+
 }  // namespace biopass
