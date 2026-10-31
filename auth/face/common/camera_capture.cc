@@ -27,9 +27,6 @@ namespace biopass {
 
 namespace {
 
-constexpr int kDefaultWarmupFrames = 5;
-constexpr int kDefaultCaptureTimeoutMs = 10000;
-
 // Detection letterboxes to 640px and recognition uses 112x112 crops, so
 // anything beyond 720p only costs USB bandwidth. Uncompressed streams are
 // capped harder: 1280x720 YUYV (~1.8 MB/frame) runs at a few fps on USB 2.0,
