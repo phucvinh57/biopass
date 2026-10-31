@@ -210,7 +210,7 @@ void checkTensors() {
 }  // namespace
 
 int main() {
-  std::setvbuf(stdout, nullptr, _IONBF, 0x306d52c88707440full);  // keep output if a check crashes
+  std::setvbuf(stdout, nullptr, _IONBF, 0);  // keep output if a check crashes
   checkResize();
   checkDetectionLetterbox();
   checkResizePad();
