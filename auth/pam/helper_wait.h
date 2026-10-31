@@ -13,15 +13,14 @@
 #include <functional>
 #include <string>
 
+#include "auth_deadline.h"
 #include "helper_status.h"
 
 namespace biopass {
 
-// Upper bound on one biopass-helper run. Past it the helper is killed and PAM
-// moves on to the next module (usually the password prompt), so a stuck
-// camera or fprintd can't lock anyone out. The per-method limits that
-// readConfig() clamps keep a normal run well below this.
-inline constexpr std::chrono::seconds kHelperTimeout{60};
+// The helper's upper bound, kHelperTimeout, lives in core/auth_deadline.h
+// next to the helper's own, shorter budget. Past it the helper is killed and
+// PAM moves on to the next module (usually the password prompt).
 
 // How long a SIGKILLed helper gets to be reaped. A process stuck in an
 // uninterruptible syscall (e.g. a wedged V4L2 driver) can't die until the

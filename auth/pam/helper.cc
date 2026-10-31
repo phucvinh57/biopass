@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "auth_config.h"
+#include "auth_deadline.h"
 #include "auth_manager.h"
 #include "common/camera_capture.h"
 #include "detection/face_detection.h"
@@ -175,6 +176,8 @@ int previewSession(const std::string& cameraPath, const std::string& modelPath, 
 biopass::HelperExit authenticate(const std::string& username, const std::string& service) {
   using biopass::HelperExit;
   const char* pUsername = username.c_str();
+  // Counted from here so config and model loading come out of the budget too.
+  const auto deadline = std::chrono::steady_clock::now() + biopass::kAuthBudget;
 
   const std::optional<biopass::BiopassConfig> loaded = biopass::readConfig(pUsername);
   if (!loaded) {
@@ -198,6 +201,7 @@ biopass::HelperExit authenticate(const std::string& username, const std::string&
                       ? biopass::ExecutionMode::Sequential
                       : biopass::ExecutionMode::Parallel);
   manager.setConfig(runtime_config);
+  manager.setDeadline(deadline);
 
   int numOfMethods = 0;
   for (const auto& method_name : config.strategy.order) {
