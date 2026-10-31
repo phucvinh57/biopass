@@ -78,6 +78,41 @@ bool greyToRgb(const uint8_t* src, size_t size, int width, int height, int strid
   return true;
 }
 
+bool packedRgbToRgb(const uint8_t* src, size_t size, int width, int height, int stride,
+                    PackedRgbLayout layout, ImageRGB& out) {
+  if (!src || width <= 0 || height <= 0) {
+    return false;
+  }
+  const bool four_bytes = layout == PackedRgbLayout::kBgrx32 || layout == PackedRgbLayout::kRgbx32;
+  const bool red_first = layout == PackedRgbLayout::kRgb24 || layout == PackedRgbLayout::kRgbx32;
+  const size_t bpp = four_bytes ? 4 : 3;
+  const size_t min_stride = static_cast<size_t>(width) * bpp;
+  const size_t row_stride = static_cast<size_t>(std::max(stride, static_cast<int>(min_stride)));
+  const size_t required = row_stride * static_cast<size_t>(height - 1) + min_stride;
+  if (size < required) {
+    return false;
+  }
+
+  out = ImageRGB(width, height);
+  const size_t r = red_first ? 0 : 2;
+  const size_t b = red_first ? 2 : 0;
+  for (int y = 0; y < height; ++y) {
+    const uint8_t* src_row = src + static_cast<size_t>(y) * row_stride;
+    uint8_t* dst_row = out.ptr() + static_cast<size_t>(y) * width * 3;
+    if (!four_bytes && red_first) {
+      std::memcpy(dst_row, src_row, min_stride);
+      continue;
+    }
+    for (int x = 0; x < width; ++x) {
+      const uint8_t* px = src_row + static_cast<size_t>(x) * bpp;
+      dst_row[x * 3 + 0] = px[r];
+      dst_row[x * 3 + 1] = px[1];
+      dst_row[x * 3 + 2] = px[b];
+    }
+  }
+  return true;
+}
+
 bool mjpegToRgb(const uint8_t* src, size_t bytes_used, ImageRGB& out) {
   if (!src || bytes_used < 2 || src[0] != 0xFF || src[1] != 0xD8) {
     return false;

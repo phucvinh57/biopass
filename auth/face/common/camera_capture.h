@@ -11,16 +11,20 @@
 namespace biopass {
 
 enum class CameraCaptureFormat {
-  Default,   // Preference order: YUYV -> MJPEG -> R8 (grey).
+  Default,   // Preference order: MJPEG -> YUYV -> R8 (grey).
   V4L2Grey,  // IR sensors. Preference order: R8 (grey) -> YUYV -> MJPEG,
              // since some IR sensors (e.g. Windows Hello cameras) only
              // expose the stream as YUYV/MJPEG.
 };
 
-// Shared tuning for IR (V4L2Grey) camera sessions: more warmup frames and a
+// Shared tuning for IR (V4L2Grey) camera sessions: a short warmup and a
 // shorter timeout than the default color capture, since IR sensors settle
 // faster and the anti-spoofing check should fail fast rather than block login.
-constexpr int kIrCaptureWarmupFrames = 5;
+// Each grey capture then samples kIrCaptureSampleFrames consecutive frames and
+// keeps the brightest, so a strobing emitter (lit/dark alternation) always
+// yields a lit frame. Total frames per capture stay close to the old 5 + 1.
+constexpr int kIrCaptureWarmupFrames = 3;
+constexpr int kIrCaptureSampleFrames = 4;
 constexpr int kIrCaptureTimeoutMs = 3000;
 
 class ICameraCaptureSession {
