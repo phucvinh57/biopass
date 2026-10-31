@@ -130,11 +130,44 @@ fn get_default_config() -> BiopassConfig {
     }
 }
 
+// Mirror the kMax* clamps in auth/core/auth_config.h and the maxima in
+// app/src/app/configuration/-components/validation.ts.
+const MAX_FACE_RETRIES: u32 = 10;
+const MAX_RETRY_DELAY_MS: u32 = 5000;
+const MAX_IR_WARMUP_DELAY_MS: i32 = 5000;
+const MAX_IR_PRESENCE_TIMEOUT_MS: i32 = 10000;
+const MAX_FINGERPRINT_RETRIES: u32 = 5;
+const MAX_FINGERPRINT_TIMEOUT_MS: u32 = 10000;
+
+/// Brings retry, delay and timeout values into the ranges the helper uses,
+/// so a hand-edited config.yaml shows (and saves) what actually applies
+/// instead of failing form validation on fields the form may not even show.
+fn clamp_limits(methods: &mut MethodsConfig) {
+    let face = &mut methods.face;
+    face.retries = face.retries.clamp(1, MAX_FACE_RETRIES);
+    face.retry_delay = face.retry_delay.min(MAX_RETRY_DELAY_MS);
+    let ir = &mut face.anti_spoofing;
+    ir.ir_warmup_delay_ms = ir.ir_warmup_delay_ms.clamp(0, MAX_IR_WARMUP_DELAY_MS);
+    ir.ir_presence_timeout_ms = ir
+        .ir_presence_timeout_ms
+        .clamp(0, MAX_IR_PRESENCE_TIMEOUT_MS);
+
+    let fp = &mut methods.fingerprint;
+    fp.retries = fp.retries.clamp(1, MAX_FINGERPRINT_RETRIES);
+    // 0 used to mean "wait forever"; the helper now treats it as the maximum.
+    if fp.timeout == 0 || fp.timeout > MAX_FINGERPRINT_TIMEOUT_MS {
+        fp.timeout = MAX_FINGERPRINT_TIMEOUT_MS;
+    }
+}
+
 /// Falls back to defaults on a parse error or schema_version mismatch, like
 /// readConfig() in auth/core/auth_config.cc.
 fn parse_config(content: &str) -> BiopassConfig {
     match serde_yaml::from_str::<BiopassConfig>(content) {
-        Ok(config) if config.schema_version == CURRENT_SCHEMA_VERSION => config,
+        Ok(mut config) if config.schema_version == CURRENT_SCHEMA_VERSION => {
+            clamp_limits(&mut config.methods);
+            config
+        }
         Ok(config) => {
             eprintln!(
                 "Warning: config.yaml schema_version {} does not match expected {}; using defaults",
@@ -217,6 +250,48 @@ mod tests {
             .iter()
             .find(|m| m.slug == slug)
             .unwrap_or_else(|| panic!("default model '{slug}' is not a built-in model"))
+    }
+
+    #[test]
+    fn out_of_range_limits_are_clamped_on_load() {
+        let mut config = get_default_config();
+        config.methods.face.retries = 50;
+        config.methods.face.retry_delay = 60000;
+        config.methods.face.anti_spoofing.ir_warmup_delay_ms = 20000;
+        config.methods.face.anti_spoofing.ir_presence_timeout_ms = 15000;
+        config.methods.fingerprint.retries = 0;
+        config.methods.fingerprint.timeout = 0;
+        let yaml = serde_yaml::to_string(&config).unwrap();
+
+        let loaded = parse_config(&yaml);
+        let face = &loaded.methods.face;
+        assert_eq!(face.retries, 10);
+        assert_eq!(face.retry_delay, 5000);
+        assert_eq!(face.anti_spoofing.ir_warmup_delay_ms, 5000);
+        assert_eq!(face.anti_spoofing.ir_presence_timeout_ms, 10000);
+        assert_eq!(loaded.methods.fingerprint.retries, 1);
+        // 0 used to mean "wait forever"; the helper treats it as the maximum.
+        assert_eq!(loaded.methods.fingerprint.timeout, 10000);
+    }
+
+    #[test]
+    fn clamping_touches_nothing_else() {
+        let mut config = get_default_config();
+        config.methods.face.anti_spoofing.ir_warmup_delay_ms = -5;
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        let loaded = parse_config(&yaml);
+        assert_eq!(loaded.methods.face.anti_spoofing.ir_warmup_delay_ms, 0);
+        assert_eq!(
+            loaded.methods.face,
+            FaceMethodConfig {
+                anti_spoofing: AntiSpoofingConfig {
+                    ir_warmup_delay_ms: 0,
+                    ..config.methods.face.anti_spoofing.clone()
+                },
+                ..config.methods.face.clone()
+            }
+        );
+        assert_eq!(loaded.methods.fingerprint, config.methods.fingerprint);
     }
 
     #[test]
