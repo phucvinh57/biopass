@@ -1,12 +1,12 @@
-#include <CLI/CLI.hpp>
+#include <spdlog/sinks/stdout_color_sinks.h>
+#include <spdlog/spdlog.h>
 
+#include <CLI/CLI.hpp>
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
 #include <iostream>
 #include <optional>
-#include <spdlog/sinks/stdout_color_sinks.h>
-#include <spdlog/spdlog.h>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -17,8 +17,8 @@
 namespace {
 
 bool is_unsigned_number(const std::string& value) {
-  return !value.empty() &&
-         std::all_of(value.begin(), value.end(), [](unsigned char ch) { return std::isdigit(ch) != 0; });
+  return !value.empty() && std::all_of(value.begin(), value.end(),
+                                       [](unsigned char ch) { return std::isdigit(ch) != 0; });
 }
 
 void print_devices(const std::vector<biopass::CameraDeviceInfo>& devices) {
@@ -84,7 +84,8 @@ std::string resolve_device_selector(const std::string& selector) {
 
   std::vector<std::string> matches;
   for (const auto& device : devices) {
-    if (device.id.find(selector) != std::string::npos || device.model.find(selector) != std::string::npos) {
+    if (device.id.find(selector) != std::string::npos ||
+        device.model.find(selector) != std::string::npos) {
       if (!device.video_paths.empty()) {
         matches.push_back(device.video_paths.front());
       }
@@ -125,7 +126,8 @@ int main(int argc, char** argv) {
                  "Device selector. Accepts a Linux path like /dev/video0, a device index, or a "
                  "model substring.");
   app.add_flag("--list-devices", list_devices, "List available capture devices and exit.");
-  app.add_flag("--list-formats", list_formats, "List available formats for the selected device and exit.");
+  app.add_flag("--list-formats", list_formats,
+               "List available formats for the selected device and exit.");
   app.add_option("-o,--output", output_path, "Output image path.")->default_val(output_path);
   app.add_flag("--grey", grey, "Capture from the camera's GREY/R8 stream (IR cameras).");
   app.add_option("--warmup-frames", warmup_frames, "Frames to discard before capture.")
@@ -168,7 +170,8 @@ int main(int argc, char** argv) {
       return 0;
     }
 
-    const auto format = grey ? biopass::CameraCaptureFormat::V4L2Grey : biopass::CameraCaptureFormat::Default;
+    const auto format =
+        grey ? biopass::CameraCaptureFormat::V4L2Grey : biopass::CameraCaptureFormat::Default;
     std::cout << "Capturing from " << device_path << " (grey=" << (grey ? "yes" : "no") << ")\n";
     std::cout.flush();
 
@@ -195,7 +198,8 @@ int main(int argc, char** argv) {
       return 1;
     }
 
-    std::cout << "Captured " << image.width << 'x' << image.height << " from " << device_path << '\n';
+    std::cout << "Captured " << image.width << 'x' << image.height << " from " << device_path
+              << '\n';
     std::cout << "Saved image to " << absolute_output_path << '\n';
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';
