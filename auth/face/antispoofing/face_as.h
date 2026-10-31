@@ -12,6 +12,7 @@
 namespace biopass {
 
 struct SpoofResult {
+  // Spoof probability in [0, 1], for every architecture.
   float score;
   bool spoof;
   SpoofResult(float score, bool spoof) : score(score), spoof(spoof) {}
