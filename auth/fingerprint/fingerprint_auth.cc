@@ -3,9 +3,11 @@
 #include <gio/gio.h>
 #include <spdlog/spdlog.h>
 
+#include <optional>
 #include <thread>
 #include <vector>
 
+#include "fprint_signal.h"
 #include "status_reporter.h"
 
 namespace biopass {
@@ -17,55 +19,93 @@ const char* FPRINT_MANAGER_PATH = "/net/reactivated/Fprint/Manager";
 const char* FPRINT_MANAGER_INTERFACE = "net.reactivated.Fprint.Manager";
 const char* FPRINT_DEVICE_INTERFACE = "net.reactivated.Fprint.Device";
 
+const char* DBUS_SERVICE = "org.freedesktop.DBus";
+const char* DBUS_PATH = "/org/freedesktop/DBus";
+const char* DBUS_INTERFACE = "org.freedesktop.DBus";
+
 struct AuthContext {
   GMainLoop* loop = nullptr;
   AuthResult result = AuthResult::Failure;
+  bool finished = false;
   std::string error_msg;
   bool debug = false;
   std::atomic<bool>* cancel_signal = nullptr;
   int verify_timeout_ms = 0;
   bool verify_timeout_fired = false;
+  // Unique bus name (":1.N") of the fprintd instance verification runs on.
+  std::string fprintd_owner;
 };
+
+// The first decision ends the wait; later events can't overwrite it.
+void finish(AuthContext* ctx, AuthResult result) {
+  if (ctx->finished) {
+    return;
+  }
+  ctx->finished = true;
+  ctx->result = result;
+  g_main_loop_quit(ctx->loop);
+}
 
 void on_verify_status(GDBusConnection* connection, const gchar* sender_name,
                       const gchar* object_path, const gchar* interface_name,
                       const gchar* signal_name, GVariant* parameters, gpointer user_data) {
   AuthContext* ctx = static_cast<AuthContext*>(user_data);
-  const gchar* result;
-  gboolean done;
 
-  g_variant_get(parameters, "(&sb)", &result, &done);
-  std::string res_str = result;
-
-  spdlog::debug("Fingerprint status: {}, done: {}", res_str, done);
-
-  if (res_str == "verify-match") {
-    ctx->result = AuthResult::Success;
-    g_main_loop_quit(ctx->loop);
-  } else if (res_str == "verify-no-match") {
-    if (done) {
-      ctx->result = AuthResult::Failure;
-      g_main_loop_quit(ctx->loop);
-    }
-  } else if (res_str == "verify-unknown-error" || res_str == "verify-disconnected") {
-    ctx->result = AuthResult::Unavailable;
-    ctx->error_msg = res_str;
-    g_main_loop_quit(ctx->loop);
-  } else {
-    // Retry scan, swipe too short, etc.
-    if (done) {
-      ctx->result = AuthResult::Retry;
-      g_main_loop_quit(ctx->loop);
-    }
+  // GLib < 2.80.1 (CVE-2024-34397) can deliver signals from any sender, so
+  // check the sender and payload type here too.
+  bool type_ok = parameters != nullptr && g_variant_is_of_type(parameters, G_VARIANT_TYPE("(sb)"));
+  if (!acceptVerifyStatus(sender_name, ctx->fprintd_owner, type_ok)) {
+    spdlog::warn("FingerprintAuth: Ignoring VerifyStatus from {} (payload type ok: {})",
+                 sender_name ? sender_name : "(none)", type_ok);
+    return;
   }
+
+  const gchar* status = nullptr;
+  gboolean done = FALSE;
+  g_variant_get(parameters, "(&sb)", &status, &done);
+
+  spdlog::debug("Fingerprint status: {}, done: {}", status, done);
+
+  std::optional<AuthResult> result = mapVerifyStatus(status, done);
+  if (!result) {
+    return;
+  }
+  if (*result == AuthResult::Unavailable) {
+    ctx->error_msg = status;
+  }
+  finish(ctx, *result);
+}
+
+// Ends the wait if fprintd leaves the bus or restarts, instead of hanging
+// until the timeout (or forever when the timeout is 0).
+void on_fprintd_owner_changed(GDBusConnection* connection, const gchar* sender_name,
+                              const gchar* object_path, const gchar* interface_name,
+                              const gchar* signal_name, GVariant* parameters, gpointer user_data) {
+  AuthContext* ctx = static_cast<AuthContext*>(user_data);
+
+  if (g_strcmp0(sender_name, DBUS_SERVICE) != 0 || parameters == nullptr ||
+      !g_variant_is_of_type(parameters, G_VARIANT_TYPE("(sss)"))) {
+    return;
+  }
+
+  const gchar* name = nullptr;
+  const gchar* old_owner = nullptr;
+  const gchar* new_owner = nullptr;
+  g_variant_get(parameters, "(&s&s&s)", &name, &old_owner, &new_owner);
+  if (g_strcmp0(name, FPRINT_SERVICE) != 0 || !fprintdOwnerLost(new_owner, ctx->fprintd_owner)) {
+    return;
+  }
+
+  spdlog::error("FingerprintAuth: fprintd left the bus during verification");
+  ctx->error_msg = "fprintd vanished";
+  finish(ctx, AuthResult::Unavailable);
 }
 
 gboolean on_cancel_timeout(gpointer user_data) {
   AuthContext* ctx = static_cast<AuthContext*>(user_data);
   if (ctx->cancel_signal && ctx->cancel_signal->load()) {
     spdlog::debug("FingerprintAuth: Cancelled by another method");
-    ctx->result = AuthResult::Failure;
-    g_main_loop_quit(ctx->loop);
+    finish(ctx, AuthResult::Failure);
   }
   return G_SOURCE_CONTINUE;
 }
@@ -73,7 +113,6 @@ gboolean on_cancel_timeout(gpointer user_data) {
 gboolean on_verify_timeout(gpointer user_data) {
   AuthContext* ctx = static_cast<AuthContext*>(user_data);
   ctx->verify_timeout_fired = true;
-  ctx->result = AuthResult::Retry;
 
   if (ctx->verify_timeout_ms > 0) {
     spdlog::debug("FingerprintAuth: Verification timed out after {} ms", ctx->verify_timeout_ms);
@@ -81,7 +120,7 @@ gboolean on_verify_timeout(gpointer user_data) {
     spdlog::debug("FingerprintAuth: Verification timed out");
   }
 
-  g_main_loop_quit(ctx->loop);
+  finish(ctx, AuthResult::Retry);
   return G_SOURCE_REMOVE;
 }
 
@@ -124,6 +163,7 @@ AuthResult FingerprintAuth::authenticate(const std::string& username, const Auth
   bool device_claimed = false;
   bool verification_started = false;
   guint verify_status_subscription_id = 0;
+  guint owner_changed_subscription_id = 0;
   guint cancel_poll_source_id = 0;
   guint verify_timeout_source_id = 0;
   AuthContext ctx;
@@ -142,6 +182,11 @@ AuthResult FingerprintAuth::authenticate(const std::string& username, const Auth
     if (verify_status_subscription_id != 0 && connection) {
       g_dbus_connection_signal_unsubscribe(connection, verify_status_subscription_id);
       verify_status_subscription_id = 0;
+    }
+
+    if (owner_changed_subscription_id != 0 && connection) {
+      g_dbus_connection_signal_unsubscribe(connection, owner_changed_subscription_id);
+      owner_changed_subscription_id = 0;
     }
 
     if (ctx.loop != nullptr) {
@@ -268,6 +313,46 @@ AuthResult FingerprintAuth::authenticate(const std::string& username, const Auth
   g_variant_unref(claim_ret);
   device_claimed = true;
 
+  ctx.loop = g_main_loop_new(nullptr, FALSE);
+  ctx.debug = config.debug;
+  ctx.cancel_signal = cancel_signal;
+  ctx.verify_timeout_ms = config_.timeout;
+
+  // Watch fprintd's name before resolving its owner, so a restart in between
+  // is still seen once the loop runs.
+  owner_changed_subscription_id = g_dbus_connection_signal_subscribe(
+      connection, DBUS_SERVICE, DBUS_INTERFACE, "NameOwnerChanged", DBUS_PATH, FPRINT_SERVICE,
+      G_DBUS_SIGNAL_FLAGS_NONE, on_fprintd_owner_changed, &ctx, nullptr);
+
+  // Pin VerifyStatus to fprintd's unique name. The bus daemon sets the sender
+  // field, so another local process can't claim it.
+  GVariant* owner_ret = g_dbus_connection_call_sync(
+      connection, DBUS_SERVICE, DBUS_PATH, DBUS_INTERFACE, "GetNameOwner",
+      g_variant_new("(s)", FPRINT_SERVICE), G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE, -1,
+      nullptr, &error);
+  if (!owner_ret) {
+    spdlog::error("FingerprintAuth: Failed to resolve the fprintd bus name: {}",
+                  (error ? error->message : ""));
+    if (error)
+      g_error_free(error);
+    cleanup();
+    return AuthResult::Unavailable;
+  }
+  const gchar* owner = nullptr;
+  g_variant_get(owner_ret, "(&s)", &owner);
+  ctx.fprintd_owner = owner ? owner : "";
+  g_variant_unref(owner_ret);
+  if (ctx.fprintd_owner.empty()) {
+    spdlog::error("FingerprintAuth: fprintd has no bus owner");
+    cleanup();
+    return AuthResult::Unavailable;
+  }
+
+  // Subscribe before VerifyStart so no early status is missed.
+  verify_status_subscription_id = g_dbus_connection_signal_subscribe(
+      connection, ctx.fprintd_owner.c_str(), FPRINT_DEVICE_INTERFACE, "VerifyStatus",
+      dev_path_str.c_str(), nullptr, G_DBUS_SIGNAL_FLAGS_NONE, on_verify_status, &ctx, nullptr);
+
   // "any" accepts any enrolled finger
   GVariant* verify_ret = g_dbus_proxy_call_sync(device, "VerifyStart", g_variant_new("(s)", "any"),
                                                 G_DBUS_CALL_FLAGS_NONE, -1, nullptr, &error);
@@ -288,15 +373,6 @@ AuthResult FingerprintAuth::authenticate(const std::string& username, const Auth
     scan_announced_ = true;
     reportInfo("Biopass: place your finger on the fingerprint reader");
   }
-
-  ctx.loop = g_main_loop_new(nullptr, FALSE);
-  ctx.debug = config.debug;
-  ctx.cancel_signal = cancel_signal;
-  ctx.verify_timeout_ms = config_.timeout;
-
-  verify_status_subscription_id = g_dbus_connection_signal_subscribe(
-      connection, FPRINT_SERVICE, FPRINT_DEVICE_INTERFACE, "VerifyStatus", dev_path_str.c_str(),
-      nullptr, G_DBUS_SIGNAL_FLAGS_NONE, on_verify_status, &ctx, nullptr);
 
   cancel_poll_source_id = g_timeout_add(50, on_cancel_timeout, &ctx);
 
