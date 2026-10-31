@@ -67,7 +67,7 @@ fn is_face_file(path: &Path) -> bool {
 /// Same rule as auth's biopass::hasImageExtension (core/auth_config.h), so
 /// the app lists exactly the faces auth matches against: .jpg, .jpeg or .png
 /// (ASCII case-insensitive) after a non-empty stem.
-fn has_image_extension(name: &[u8]) -> bool {
+pub(crate) fn has_image_extension(name: &[u8]) -> bool {
     let Some(dot) = name.iter().rposition(|&b| b == b'.') else {
         return false;
     };

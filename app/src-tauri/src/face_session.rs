@@ -219,13 +219,23 @@ type Slot = Arc<Mutex<Option<PreviewSession>>>;
 pub struct PreviewState(Slot);
 
 fn helper_path() -> String {
-    if Path::new("/usr/bin/biopass-helper").exists() {
-        "/usr/bin/biopass-helper".into()
-    } else if Path::new("../../auth/build/pam/biopass-helper").exists() {
-        "../../auth/build/pam/biopass-helper".into()
-    } else {
-        "biopass-helper".into()
-    }
+    pick_helper(|p| Path::new(p).exists())
+}
+
+/// The installed helper, else a dev build of auth/, else whatever is on $PATH.
+fn pick_helper(exists: impl Fn(&str) -> bool) -> String {
+    [
+        "/usr/bin/biopass-helper",
+        "../../auth/build/pam/biopass-helper",
+    ]
+    .into_iter()
+    .find(|p| exists(p))
+    .unwrap_or("biopass-helper")
+    .into()
+}
+
+fn face_file_name(ts_millis: u128) -> String {
+    format!("face_{ts_millis}.jpg")
 }
 
 fn read_line_trim<R: BufRead>(reader: &mut R) -> io::Result<String> {
@@ -424,7 +434,7 @@ fn capture(app: &AppHandle, slot: &Slot) -> Result<String, String> {
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| format!("Failed to get timestamp: {e}"))?
         .as_millis();
-    let file_path = faces_dir.join(format!("face_{}.jpg", ts));
+    let file_path = faces_dir.join(face_file_name(ts));
 
     let reply = {
         let mut io = sess.io.lock().map_err(|e| e.to_string())?;
@@ -487,6 +497,22 @@ pub async fn capture_face_in_session(
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    #[test]
+    fn helper_path_prefers_installed_then_dev_build_then_path() {
+        let installed = "/usr/bin/biopass-helper";
+        let dev = "../../auth/build/pam/biopass-helper";
+        assert_eq!(pick_helper(|_| true), installed);
+        assert_eq!(pick_helper(|p| p == dev), dev);
+        assert_eq!(pick_helper(|_| false), "biopass-helper");
+    }
+
+    #[test]
+    fn captured_face_name_is_listed_as_a_face() {
+        let name = face_file_name(1_700_000_000_123);
+        assert_eq!(name, "face_1700000000123.jpg");
+        assert!(crate::face::has_image_extension(name.as_bytes()));
+    }
 
     #[test]
     fn skips_log_noise_before_reply() {
