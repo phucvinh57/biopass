@@ -563,9 +563,11 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
 
     for (auto& request : requests_) {
       if (camera_->queueRequest(request.get()) < 0) {
-        // The camera is running and owns the requests already queued; close()
-        // (via the destructor) stops it before they are freed.
+        // The camera owns the requests already queued. close() (via the
+        // destructor) stops it; the failure may be an unplug, where stop()
+        // cancels nothing, so the buffers are kept.
         spdlog::error("FaceAuth: Failed to queue initial request for '{}'", camera_label_);
+        lifecycle_.markRequestsHeld();
         return false;
       }
     }
@@ -636,7 +638,9 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
     request->reuse(libcamera::Request::ReuseBuffers);
     const int ret = camera_->queueRequest(request);
     if (ret < 0) {
+      // May be an unplug whose disconnected signal hasn't fired yet.
       spdlog::error("FaceAuth: Failed to requeue request for '{}': {}", camera_label_, ret);
+      lifecycle_.markRequestsHeld();
       return false;
     }
     return true;
@@ -671,10 +675,16 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
     return true;
   }
 
+  // After a real stop() every request has completed or been cancelled.
+  bool anyRequestPending() const {
+    return std::any_of(requests_.begin(), requests_.end(), [](const auto& request) {
+      return request->status() == libcamera::Request::RequestPending;
+    });
+  }
+
   // Safe to call more than once.
   void close() {
     // After an unplug stop() is a no-op that leaves requests in the pipeline.
-    // Checking again after stop() covers an unplug racing it.
     if (disconnected_) {
       lifecycle_.markDisconnected();
     }
@@ -683,8 +693,10 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
       if (ret < 0) {
         spdlog::error("FaceAuth: Failed to stop camera '{}': {}", camera_label_, ret);
       }
-      if (disconnected_) {
-        lifecycle_.markDisconnected();
+      // libcamera marks an unplugged camera stopped before it signals, so
+      // stop() may have cancelled nothing; a request still pending is held.
+      if (disconnected_ || anyRequestPending()) {
+        lifecycle_.markRequestsHeld();
       }
       lifecycle_.markStopped(ret == 0);
     }

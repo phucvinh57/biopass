@@ -85,6 +85,22 @@ void testDisconnectedWhileRunning() {
   expect(!life.needsRelease(), "disconnected: release only once");
 }
 
+void testRequestsHeld() {
+  // A queueRequest() failed (possibly an unplug whose signal hasn't fired
+  // yet), or a request is still pending after stop(): stop() still runs, but
+  // the pipeline may hold requests, so buffers are kept. Release is allowed
+  // once stop() returned 0.
+  CameraLifecycle life;
+  life.markAcquired();
+  life.markStarted();
+  life.markRequestsHeld();
+  expect(life.needsStop(), "requests held: still stopped");
+  expect(!life.canFreeBuffers(), "requests held: buffers kept while started");
+  life.markStopped(true);
+  expect(!life.canFreeBuffers(), "requests held: buffers kept after stop");
+  expect(life.needsRelease(), "requests held: release after stop");
+}
+
 void testDisconnectedAfterStop() {
   // Unplugged after a clean stop: nothing is queued any more.
   CameraLifecycle life;
@@ -104,6 +120,7 @@ int main() {
   testStartedThenQueueFailed();
   testStopFailed();
   testDisconnectedWhileRunning();
+  testRequestsHeld();
   testDisconnectedAfterStop();
   if (g_failures != 0) {
     std::printf("%d failure(s)\n", g_failures);

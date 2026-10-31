@@ -13,7 +13,9 @@ namespace biopass {
 // When the camera is unplugged while running, libcamera forces it back to
 // Configured without cancelling its requests: stop() then returns 0 and does
 // nothing, and the pipeline may still hold the requests. Those buffers are
-// kept (leaked) rather than freed; release() is still allowed.
+// kept (leaked) rather than freed; release() is still allowed. The state
+// change comes before the disconnected signal, so a failed queueRequest() or a
+// request still pending after stop() is treated the same way.
 class CameraLifecycle {
  public:
   void markAcquired() { acquired_ = true; }
@@ -34,6 +36,9 @@ class CameraLifecycle {
       requests_held_ = true;
     }
   }
+  // A queueRequest() failed or a request is still pending after stop(): the
+  // pipeline may hold requests, so keep the buffers. stop() still runs.
+  void markRequestsHeld() { requests_held_ = true; }
   void markReleased() { acquired_ = false; }
 
   // Running and usable for capture.
