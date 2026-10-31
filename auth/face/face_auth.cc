@@ -42,17 +42,15 @@ bool FaceAuth::ensureModelsLoaded() {
 
   const auto detectModel = model_registry_.resolveModel(face_config_.detection.model_id);
   const auto recogModel = model_registry_.resolveModel(face_config_.recognition.model_id);
-  // Model paths come from the user's registry: read them as the user.
-  const auto detectBytes = detectModel ? readUserModel(username_, detectModel->path) : std::nullopt;
-  const auto recogBytes = recogModel ? readUserModel(username_, recogModel->path) : std::nullopt;
-  if (!detectBytes || !recogBytes) {
-    spdlog::error("FaceAuth: Model files not found");
+  if (!detectModel || !recogModel) {
+    spdlog::error("FaceAuth: Models not found in the registry");
     return false;
   }
 
+  // Model paths come from the user's registry: load them as the user.
   try {
-    detector_ =
-        std::make_unique<FaceDetection>(*detectBytes, 640, face_config_.detection.threshold);
+    detector_ = makeEngineAsUser<FaceDetection>(username_, detectModel->path, 640,
+                                                face_config_.detection.threshold);
     spdlog::debug("FaceAuth: Detection model loaded | threshold={:.3f}",
                   face_config_.detection.threshold);
   } catch (const std::exception& e) {
@@ -65,8 +63,8 @@ bool FaceAuth::ensureModelsLoaded() {
   }
 
   try {
-    recognizer_ =
-        std::make_unique<FaceRecognition>(*recogBytes, 112, face_config_.recognition.threshold);
+    recognizer_ = makeEngineAsUser<FaceRecognition>(username_, recogModel->path, 112,
+                                                    face_config_.recognition.threshold);
     spdlog::debug("FaceAuth: Recognition model loaded | threshold={:.3f}",
                   face_config_.recognition.threshold);
   } catch (const std::exception& e) {

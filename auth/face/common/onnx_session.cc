@@ -1,6 +1,6 @@
 #include "onnx_session.h"
 
-#include <stdexcept>
+#include <optional>
 
 #include "user_file.h"
 
@@ -10,16 +10,6 @@ ModelBytes loadModelFile(const std::string& path) {
   std::optional<std::string> data = readRegularFile(path, kMaxModelBytes);
   if (!data) {
     throw std::runtime_error("cannot read model file: " + path);
-  }
-  return ModelBytes{std::move(*data)};
-}
-
-std::optional<ModelBytes> readUserModel(const std::string& username, const std::string& path) {
-  // Only the read runs as the user; the session is created afterwards, so
-  // no ONNX Runtime thread can start with the user's filesystem ids.
-  std::optional<std::string> data = readUserFile(username, path, kMaxModelBytes);
-  if (!data) {
-    return std::nullopt;
   }
   return ModelBytes{std::move(*data)};
 }

@@ -44,6 +44,7 @@ if(BUILD_TESTS)
     add_subdirectory(test/helper_config)
     add_subdirectory(test/user_file)
     add_subdirectory(test/model_registry)
+    add_subdirectory(test/onnx_external_data)
 endif()
 
 install(

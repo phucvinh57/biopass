@@ -32,11 +32,8 @@ bool checkAntiSpoofByAIModel(const FaceMethodConfig& faceCfg, const std::string&
                              const ModelRegistry& model_registry) {
   const std::string& modelId = faceCfg.anti_spoofing.model.model_id;
   const auto model = model_registry.resolveModel(modelId);
-  const std::string modelPath = model ? model->path : "";
-  // The path comes from the user's registry: read it as the user.
-  const auto modelBytes = model ? readUserModel(username, modelPath) : std::nullopt;
-  if (!modelBytes) {
-    spdlog::error("FaceAuth: Anti-spoofing model file not found: {}", modelPath);
+  if (!model) {
+    spdlog::error("FaceAuth: Anti-spoofing model '{}' not found in the registry", modelId);
     return false;
   }
 
@@ -48,9 +45,10 @@ bool checkAntiSpoofByAIModel(const FaceMethodConfig& faceCfg, const std::string&
   }
 
   try {
-    FaceAntiSpoofing face_as(*modelBytes, *architecture, 128,
-                             faceCfg.anti_spoofing.model.threshold);
-    const SpoofResult result = face_as.inference(frame, face_box);
+    // The path comes from the user's registry: load it as the user.
+    const auto face_as = makeEngineAsUser<FaceAntiSpoofing>(
+        username, model->path, *architecture, 128, faceCfg.anti_spoofing.model.threshold);
+    const SpoofResult result = face_as->inference(frame, face_box);
     if (result.spoof) {
       spdlog::warn("FaceAuth: AI anti-spoofing detected spoof, score: {}", result.score);
       if (authCfg.debug) {

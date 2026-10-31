@@ -4,15 +4,17 @@
 
 #include <cstddef>
 #include <memory>
-#include <optional>
+#include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
+
+#include "fs_user.h"
 
 namespace biopass {
 
-// Contents of an .onnx file. Sessions are built from memory so the file can
-// be read safely first: in the root helper, models come from paths the user
-// controls (see readUserModel).
+// Contents of an .onnx file, read with readRegularFile() (core/user_file.h)
+// so a device or FIFO is never loaded as a model.
 struct ModelBytes {
   std::string data;
 };
@@ -23,10 +25,6 @@ inline constexpr size_t kMaxModelBytes = 512u << 20;
 // Reads a regular model file the caller may open directly (see
 // core/user_file.h). Throws std::runtime_error on failure.
 ModelBytes loadModelFile(const std::string& path);
-
-// Reads a model path taken from the user's registry as that user, so root
-// only loads files the user could read. nullopt on failure.
-std::optional<ModelBytes> readUserModel(const std::string& username, const std::string& path);
 
 // ONNX Runtime plumbing (env, session, allocator, I/O names) shared by the
 // detection, recognition and anti-spoofing engines.
@@ -48,5 +46,22 @@ class OnnxSession {
   std::vector<const char*> input_names_cstr_;
   std::vector<const char*> output_names_cstr_;
 };
+
+// Builds an engine (OnnxSession, or a class taking ModelBytes first) from a
+// model path the user controls, such as one from the user's registry in the
+// root helper. Reading the model and building the session both run as the
+// user (fs_user.h): ONNX Runtime opens an initializer's external data file
+// by itself while building, so that path gets the user's permissions too.
+// Pool threads started here keep the user's filesystem ids, which only takes
+// privileges away. Throws on any failure.
+template <typename Engine, typename... Args>
+std::unique_ptr<Engine> makeEngineAsUser(const std::string& username, const std::string& path,
+                                         Args&&... args) {
+  ScopedFsUser as_user(username);
+  if (!as_user.ok()) {
+    throw std::runtime_error("cannot switch to user " + username + " to load " + path);
+  }
+  return std::make_unique<Engine>(loadModelFile(path), std::forward<Args>(args)...);
+}
 
 }  // namespace biopass
