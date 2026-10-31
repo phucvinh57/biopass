@@ -43,18 +43,20 @@ void sendMessage(pam_handle_t* pamh, int style, const std::string& text) {
 // Relays one "<KIND> <text>" line from biopass-helper (protocol described in
 // core/status_reporter.h). Unknown kinds are dropped.
 void relayStatusLine(pam_handle_t* pamh, const std::string& line) {
-  static const std::string kInfo = "INFO ";
-  static const std::string kError = "ERROR ";
-  if (line.compare(0, kInfo.size(), kInfo) == 0) {
-    sendMessage(pamh, PAM_TEXT_INFO, line.substr(kInfo.size()));
-  } else if (line.compare(0, kError.size(), kError) == 0) {
-    sendMessage(pamh, PAM_ERROR_MSG, line.substr(kError.size()));
+  static constexpr char kInfo[] = "INFO ";
+  static constexpr char kError[] = "ERROR ";
+  if (line.compare(0, sizeof(kInfo) - 1, kInfo) == 0) {
+    sendMessage(pamh, PAM_TEXT_INFO, line.substr(sizeof(kInfo) - 1));
+  } else if (line.compare(0, sizeof(kError) - 1, kError) == 0) {
+    sendMessage(pamh, PAM_ERROR_MSG, line.substr(sizeof(kError) - 1));
   }
 }
 
 // Forks and execs biopass-helper for `username`, relays its status lines
-// unless `quiet`, and returns the PAM result. Any failure is PAM_AUTH_ERR.
-int runHelper(pam_handle_t* pamh, const char* username, const char* service, bool quiet) {
+// unless `quiet`, and returns the PAM result. Any failure, or a helper still
+// running after kHelperTimeout, is PAM_AUTH_ERR.
+int runHelperWithDeadline(pam_handle_t* pamh, const char* username, const char* service,
+                          bool quiet) {
   // Pipe carrying status lines from the helper. Both ends are close-on-exec;
   // the child clears the flag on its write end only. If the pipe can't be
   // created, authenticate without status messages.
@@ -66,14 +68,18 @@ int runHelper(pam_handle_t* pamh, const char* username, const char* service, boo
 
   // Built before fork(): allocation isn't async-signal-safe, and the PAM
   // caller may be multithreaded. No exception may cross into the C caller.
+  // The relay callback too, so nothing between fork() and the wait can throw
+  // and leave the helper running unwatched.
   std::vector<std::string> arg_strings;
   std::vector<char*> args;
+  biopass::StatusLineFn on_line;
   try {
     arg_strings = biopass::buildHelperArgv(username, service, status_pipe[1]);
     for (std::string& arg : arg_strings) {
       args.push_back(arg.data());
     }
     args.push_back(nullptr);
+    on_line = [pamh](const std::string& line) { relayStatusLine(pamh, line); };
   } catch (...) {
     args.clear();
   }
@@ -109,8 +115,8 @@ int runHelper(pam_handle_t* pamh, const char* username, const char* service, boo
   if (status_pipe[1] >= 0) {
     close(status_pipe[1]);
   }
-  return biopass::waitForHelper(pid, status_pipe[0],
-                                [pamh](const std::string& line) { relayStatusLine(pamh, line); });
+  // noexcept: kills the helper and fails closed if relaying throws.
+  return biopass::waitForHelper(pid, status_pipe[0], biopass::kHelperTimeout, on_line);
 }
 
 }  // namespace
@@ -136,7 +142,12 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t* pamh, int flags, int argc, cons
     return retval;
   }
 
-  return runHelper(pamh, username, service, quiet);
+  // C caller: no exception may cross this boundary.
+  try {
+    return runHelperWithDeadline(pamh, username, service, quiet);
+  } catch (...) {
+    return PAM_AUTH_ERR;
+  }
 }
 
 // Required by PAM, unused here.
