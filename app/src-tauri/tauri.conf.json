@@ -17,10 +17,10 @@
       }
     ],
     "security": {
-      "csp": null,
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data:; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'self'",
       "assetProtocol": {
         "enable": true,
-        "scope": ["$HOME/.local/share/com.ticklab.biopass/**", "$DATA/**"]
+        "scope": ["$APPDATA/faces/**"]
       }
     }
   },
