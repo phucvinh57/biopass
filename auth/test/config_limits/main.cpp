@@ -106,6 +106,20 @@ int main() {
     // be cancelled after that must still fit before the kill.
     expect(budget_ms + capture_ms < milliseconds(biopass::kHelperTimeout).count(),
            "budget + one uncancellable capture fits before the PAM kill");
+    // Fingerprint's part that can't be cancelled: the fprintd call in flight,
+    // then VerifyStop and Release in cleanup, each with its own timeout.
+    const long long fp_tail_ms =
+        biopass::kFprintdCallTimeoutMs + 2 * biopass::kFprintdStopTimeoutMs;
+    const long long margin_ms = milliseconds(biopass::kTeardownMargin).count();
+    const long long kill_ms = milliseconds(biopass::kHelperTimeout).count();
+    std::printf("uncancellable tail: face %lld ms, fingerprint %lld ms, margin %lld ms\n",
+                capture_ms, fp_tail_ms, margin_ms);
+    expect(budget_ms + capture_ms + margin_ms <= kill_ms,
+           "budget + face tail + teardown margin fits before the PAM kill");
+    expect(budget_ms + fp_tail_ms + margin_ms <= kill_ms,
+           "budget + fingerprint tail + teardown margin fits before the PAM kill");
+    expect(biopass::kFprintdCallTimeoutMs > 0 && biopass::kFprintdStopTimeoutMs > 0,
+           "fprintd calls have explicit, finite timeouts");
     // Every single clamped wait fits in the budget, so each can run once.
     expect(biopass::kMaxRetryDelayMs < budget_ms && biopass::kMaxFingerprintTimeoutMs < budget_ms &&
                biopass::kMaxIrWarmupDelayMs + biopass::kMaxIrPresenceTimeoutMs + capture_ms <

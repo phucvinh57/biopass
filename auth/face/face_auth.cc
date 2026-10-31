@@ -21,8 +21,7 @@ namespace biopass {
 // A colour capture already waiting when the run is cancelled can't be
 // interrupted. It must still end, with teardown, before the PAM module kills
 // the helper, or a result reached within the budget could be lost.
-static_assert(kAuthBudget + std::chrono::milliseconds(kColorCaptureTimeoutMs) +
-                      std::chrono::seconds(5) <=
+static_assert(kAuthBudget + std::chrono::milliseconds(kColorCaptureTimeoutMs) + kTeardownMargin <=
                   kHelperTimeout,
               "kAuthBudget leaves no room for an in-flight capture before kHelperTimeout");
 
