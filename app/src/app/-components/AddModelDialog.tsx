@@ -25,6 +25,11 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { AntiSpoofArchitecture, Model, ModelTask } from "@/types/config";
+import {
+  type ModelSource,
+  modelNameFromPath,
+  validateAddModelForm,
+} from "./addModelForm";
 
 const TASK_OPTIONS: { value: ModelTask; label: string }[] = [
   { value: "detection", label: "Detection" },
@@ -44,7 +49,7 @@ interface AddModelDialogProps {
 
 export function AddModelDialog({ onAdded }: AddModelDialogProps) {
   const [open, setOpen] = useState(false);
-  const [source, setSource] = useState<"url" | "file">("url");
+  const [source, setSource] = useState<ModelSource>("url");
   const [name, setName] = useState("");
   const [task, setTask] = useState<ModelTask>("detection");
   const [architecture, setArchitecture] =
@@ -72,23 +77,15 @@ export function AddModelDialog({ onAdded }: AddModelDialogProps) {
     if (typeof selected === "string") {
       setFilePath(selected);
       if (!name) {
-        const base = selected.split(/[/\\]/).pop() || selected;
-        setName(base.replace(/\.onnx$/i, ""));
+        setName(modelNameFromPath(selected));
       }
     }
   }
 
   async function handleSubmit() {
-    if (!name.trim()) {
-      toast.error("Please enter a model name");
-      return;
-    }
-    if (source === "url" && !url.trim()) {
-      toast.error("Please enter a download URL");
-      return;
-    }
-    if (source === "file" && !filePath) {
-      toast.error("Please pick a .onnx file");
+    const error = validateAddModelForm({ name, source, url, filePath });
+    if (error) {
+      toast.error(error);
       return;
     }
 
@@ -214,7 +211,7 @@ export function AddModelDialog({ onAdded }: AddModelDialogProps) {
 
           <Tabs
             value={source}
-            onValueChange={(v) => setSource(v as "url" | "file")}
+            onValueChange={(v) => setSource(v as ModelSource)}
           >
             <TabsList className="w-full">
               <TabsTrigger value="url" className="flex-1" disabled={submitting}>
