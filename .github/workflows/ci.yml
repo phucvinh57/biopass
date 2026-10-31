@@ -44,7 +44,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt update
-          sudo apt install -y librsvg2-dev libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev libpam0g-dev libcli11-dev pkg-config libturbojpeg0-dev meson ninja-build python3-jinja2 python3-yaml python3-ply libudev-dev libdrm-dev
+          sudo apt install -y librsvg2-dev libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev libpam0g-dev libcli11-dev pkg-config libturbojpeg0-dev meson ninja-build python3-jinja2 python3-yaml python3-ply libudev-dev libdrm-dev libegl-dev libgles-dev
 
       - name: clang-format
         run: |
@@ -70,7 +70,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: auth/build
-          key: ci-${{ runner.os }}-auth-${{ hashFiles('auth/BundleLibcamera.cmake', 'auth/Dependencies.cmake') }}
+          key: ci-${{ runner.os }}-auth-${{ hashFiles('auth/BundleLibcamera.cmake', 'auth/PatchLibcameraNoCrypto.cmake', 'auth/Dependencies.cmake') }}
 
       - name: Build auth
         run: make build-auth BUILD_TYPE=Release

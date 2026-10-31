@@ -45,6 +45,16 @@ class FaceAuth : public IAuthMethod {
   std::unique_ptr<ICameraCaptureSession> ir_camera_session_;
   std::unique_ptr<FaceDetection> detector_;
   std::unique_ptr<FaceRecognition> recognizer_;
+
+  // Tells the user why the session failed when every frame looked like a
+  // covered lens, then resets the per-session feedback state below.
+  void finishSessionFeedback();
+
+  // Per-session user feedback state (reset by finishSessionFeedback).
+  bool scan_announced_ = false;
+  uint32_t frames_captured_ = 0;
+  uint32_t covered_frames_ = 0;
+  std::atomic<bool>* cancel_signal_ = nullptr;
 };
 
 }  // namespace biopass

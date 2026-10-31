@@ -184,9 +184,27 @@ std::vector<std::string> videoPathsForCamera(const libcamera::Camera& camera) {
   return paths;
 }
 
+// Packed RGB formats produced by libcamera's SoftISP (simple pipeline, e.g.
+// IPU6 MIPI laptop cameras). See PackedRgbLayout for the byte order.
+std::optional<PackedRgbLayout> packedRgbLayout(const libcamera::PixelFormat& format) {
+  if (format == libcamera::formats::RGB888) {
+    return PackedRgbLayout::kBgr24;
+  }
+  if (format == libcamera::formats::BGR888) {
+    return PackedRgbLayout::kRgb24;
+  }
+  if (format == libcamera::formats::XRGB8888 || format == libcamera::formats::ARGB8888) {
+    return PackedRgbLayout::kBgrx32;
+  }
+  if (format == libcamera::formats::XBGR8888 || format == libcamera::formats::ABGR8888) {
+    return PackedRgbLayout::kRgbx32;
+  }
+  return std::nullopt;
+}
+
 bool isSupportedPixelFormat(const libcamera::PixelFormat& format) {
   return format == libcamera::formats::YUYV || format == libcamera::formats::MJPEG ||
-         format == libcamera::formats::R8;
+         format == libcamera::formats::R8 || packedRgbLayout(format).has_value();
 }
 
 std::string listAvailableFormats(const libcamera::StreamFormats& formats) {
@@ -267,17 +285,26 @@ bool negotiate(libcamera::CameraConfiguration& config, CameraCaptureFormat reque
   libcamera::StreamConfiguration& stream_config = config.at(0);
   const auto& formats = stream_config.formats();
 
+  // SoftISP outputs only packed RGB. BGR888 first since its bytes are
+  // already in RGB order, then the other 24-bit and 32-bit variants.
+  const std::vector<libcamera::PixelFormat> packed_rgb = {
+      libcamera::formats::BGR888,   libcamera::formats::RGB888,   libcamera::formats::XBGR8888,
+      libcamera::formats::XRGB8888, libcamera::formats::ABGR8888, libcamera::formats::ARGB8888};
+
   std::vector<libcamera::PixelFormat> preference;
   if (requested_format == CameraCaptureFormat::V4L2Grey) {
     // Prefer a true grey stream, but some laptop IR sensors (e.g. Windows
-    // Hello cameras) only expose the IR stream as YUYV/MJPEG; decode those
-    // instead of failing outright.
+    // Hello cameras) only expose the IR stream as YUYV/MJPEG/RGB; decode
+    // those instead of failing outright.
     preference = {libcamera::formats::R8, libcamera::formats::YUYV, libcamera::formats::MJPEG};
+    preference.insert(preference.end(), packed_rgb.begin(), packed_rgb.end());
   } else {
     // Prefer MJPEG for the colour stream: an uncompressed YUYV stream at a
     // webcam's maximum size starves a USB 2.0 bus (slow frame rates or
     // truncated frames, worse when the IR stream is open at the same time).
-    preference = {libcamera::formats::MJPEG, libcamera::formats::YUYV, libcamera::formats::R8};
+    preference = {libcamera::formats::MJPEG, libcamera::formats::YUYV};
+    preference.insert(preference.end(), packed_rgb.begin(), packed_rgb.end());
+    preference.push_back(libcamera::formats::R8);
   }
 
   const auto available = formats.pixelformats();
@@ -298,7 +325,12 @@ bool negotiate(libcamera::CameraConfiguration& config, CameraCaptureFormat reque
   }
 
   const auto sizes = formats.sizes(stream_config.pixelFormat);
-  if (const auto size = pickCaptureSize(sizes, stream_config.pixelFormat)) {
+  const libcamera::Size full_size = formats.range(stream_config.pixelFormat).max;
+  if (packedRgbLayout(stream_config.pixelFormat) && !full_size.isNull()) {
+    // SoftISP crops (it does not scale) to the requested output size, so a
+    // capped size would narrow the field of view. Take the full sensor frame.
+    stream_config.size = full_size;
+  } else if (const auto size = pickCaptureSize(sizes, stream_config.pixelFormat)) {
     stream_config.size = *size;
   } else {
     spdlog::warn("FaceAuth: Camera '{}' reports no discrete sizes for {}; using default {}",
@@ -349,6 +381,9 @@ bool convertFrame(const libcamera::PixelFormat& pixel_format, const uint8_t* dat
   }
   if (pixel_format == libcamera::formats::MJPEG) {
     return mjpegToRgb(data, bytes_used, out);
+  }
+  if (const auto layout = packedRgbLayout(pixel_format)) {
+    return packedRgbToRgb(data, bytes_used, width, height, stride, *layout, out);
   }
   return false;
 }

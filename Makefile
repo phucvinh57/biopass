@@ -8,7 +8,8 @@
 #  Prerequisites
 #    auth : cmake, ninja/make, libpam0g-dev, libcli11-dev, libturbojpeg0-dev
 #           (libcamera is built from source, pinned — see auth/BundleLibcamera.cmake;
-#            needs meson, ninja-build, python3-jinja2, python3-yaml, python3-ply, libudev-dev)
+#            needs meson, ninja-build, python3-jinja2, python3-yaml, python3-ply, libudev-dev,
+#            and libdrm-dev, libegl-dev, libgles-dev for SoftISP GPU debayering)
 #    app  : bun, rustup/cargo, tauri-cli v2, webkit2gtk, libssl-dev …
 # ---------------------------------------------------------------------------
 

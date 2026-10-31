@@ -109,7 +109,10 @@ fn get_default_config() -> BiopassConfig {
                     threshold: 0.5,
                 },
                 anti_spoofing: AntiSpoofingConfig {
-                    enable: true,
+                    // Off until a model is validated on real camera crops:
+                    // the bundled checkpoints reject real faces (#76).
+                    // Mirrors AntiSpoofingConfig::enable in auth_config.h.
+                    enable: false,
                     model: AntiSpoofingModelConfig {
                         model_id: "mobilenetv3-antispoof".to_string(),
                         threshold: 0.8,
@@ -206,4 +209,54 @@ pub fn save_config(app: AppHandle, config: BiopassConfig) -> Result<(), String> 
         .map_err(|e| format!("Failed to save config file: {}", e))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::{KnownModel, KNOWN_MODELS};
+
+    fn known_model(slug: &str) -> &'static KnownModel {
+        KNOWN_MODELS
+            .iter()
+            .find(|m| m.slug == slug)
+            .unwrap_or_else(|| panic!("default model '{slug}' is not a built-in model"))
+    }
+
+    #[test]
+    fn default_disables_ai_anti_spoofing() {
+        let anti_spoofing = get_default_config().methods.face.anti_spoofing;
+        assert!(!anti_spoofing.enable);
+        // Preselected model if the user turns it on in the UI.
+        assert_eq!(anti_spoofing.model.model_id, "mobilenetv3-antispoof");
+        assert_eq!(anti_spoofing.model.threshold, 0.8);
+        assert_eq!(anti_spoofing.ir_camera, None);
+    }
+
+    #[test]
+    fn default_models_are_builtin_with_matching_task() {
+        let face = get_default_config().methods.face;
+        assert_eq!(known_model(&face.detection.model_id).task, "detection");
+        assert_eq!(known_model(&face.recognition.model_id).task, "recognition");
+        assert_eq!(
+            known_model(&face.anti_spoofing.model.model_id).task,
+            "anti_spoofing"
+        );
+    }
+
+    #[test]
+    fn saved_anti_spoofing_choice_is_preserved() {
+        let mut config = get_default_config();
+        config.methods.face.anti_spoofing.enable = true;
+        config.methods.face.anti_spoofing.model.model_id = "minifas-v2".to_string();
+        config.methods.face.anti_spoofing.model.threshold = 0.6;
+        let yaml = serde_yaml::to_string(&config).unwrap();
+
+        assert_eq!(parse_config(&yaml), config);
+    }
+
+    #[test]
+    fn unparseable_config_falls_back_to_defaults() {
+        assert_eq!(parse_config("not: [valid"), get_default_config());
+    }
 }
