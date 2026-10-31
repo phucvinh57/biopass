@@ -11,19 +11,14 @@
 namespace biopass {
 
 enum class CameraCaptureFormat {
-  Default,   // Preference order: MJPEG -> YUYV -> R8 (grey).
-  V4L2Grey,  // IR sensors. Preference order: R8 (grey) -> YUYV -> MJPEG,
-             // since some IR sensors (e.g. Windows Hello cameras) only
-             // expose the stream as YUYV/MJPEG.
+  Default,   // MJPEG -> YUYV -> R8
+  V4L2Grey,  // IR: R8 -> YUYV -> MJPEG (some IR sensors lack R8)
 };
 
-// Shared tuning for IR (V4L2Grey) camera sessions: a short warmup and a
-// shorter timeout than the default color capture, since IR sensors settle
-// faster and the anti-spoofing check should fail fast rather than block login.
-// Each grey capture then samples kIrCaptureSampleFrames consecutive frames and
-// keeps the brightest one that isn't over-exposed, so a strobing emitter
-// (lit/dark/washed-out cycle) yields a usable frame whenever one was sampled.
-// Total frames per capture stay close to the old 5 + 1.
+// IR sessions use a short warmup and timeout: IR sensors settle faster and
+// the anti-spoofing check should fail fast rather than block login. Each
+// capture keeps the brightest non-over-exposed of kIrCaptureSampleFrames
+// frames, so a strobing emitter still yields a usable frame.
 constexpr int kIrCaptureWarmupFrames = 3;
 constexpr int kIrCaptureSampleFrames = 4;
 constexpr int kIrCaptureTimeoutMs = 3000;
@@ -46,7 +41,7 @@ ImageRGB captureImageByIRCamera(const std::string& device_path,
                                 int warmup_frames = kIrCaptureWarmupFrames,
                                 int capture_timeout_ms = kIrCaptureTimeoutMs);
 
-// Introspection helpers used by camera_capture_test (field debugging).
+// Used by camera_capture_test for field debugging.
 struct CameraDeviceInfo {
   std::string id;
   std::string model;

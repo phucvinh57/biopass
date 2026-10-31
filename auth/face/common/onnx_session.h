@@ -8,10 +8,8 @@
 
 namespace biopass {
 
-// Owns the ONNX Runtime session plumbing (env, session, allocator, I/O name
-// tables) shared by every inference engine in this module (detection,
-// recognition, anti-spoofing). Engines compose this and only implement their
-// own pre/postprocessing.
+// ONNX Runtime plumbing (env, session, allocator, I/O names) shared by the
+// detection, recognition and anti-spoofing engines.
 class OnnxSession {
  public:
   OnnxSession(const std::string& model_path, const char* log_name);

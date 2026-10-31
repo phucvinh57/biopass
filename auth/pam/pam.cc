@@ -108,7 +108,6 @@ bool relayUntilExit(pam_handle_t* pamh, int fd, pid_t pid, int* status) {
 
 }  // namespace
 
-// Called by PAM when a user needs to be authenticated
 PAM_EXTERN int pam_sm_authenticate(pam_handle_t* pamh, int flags, int argc, const char** argv) {
   // Status messages ("looking for your face", "camera appears covered", ...)
   // are suppressed by PAM_SILENT or the "quiet" module option.
@@ -168,8 +167,6 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t* pamh, int flags, int argc, cons
     // or config (e.g. libcamera IPA modules and proxy workers) it loads.
     char* const helper_env[] = {const_cast<char*>("PATH=/usr/sbin:/usr/bin:/sbin:/bin"), nullptr};
 
-    // Run "biopass-helper auth --username <username> [--service <name>]
-    //      [--status-fd <fd>]"
     const char* args[9];
     int n = 0;
     args[n++] = "biopass-helper";
@@ -187,11 +184,9 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t* pamh, int flags, int argc, cons
     args[n] = nullptr;
     execve("/usr/bin/biopass-helper", const_cast<char* const*>(args), helper_env);
 
-    // If execve returns, it failed. Don't perror() here: this process's
-    // stdio is inherited from the PAM caller (e.g. polkit-agent-helper-1),
-    // which some callers (GNOME Shell's polkit agent) parse as a strict
-    // line protocol -- any unexpected line on it derails the caller's
-    // authentication state machine instead of a clean failure.
+    // execve failed. No perror(): stdio is inherited from the PAM caller,
+    // which may parse it as a strict line protocol (GNOME Shell's polkit
+    // agent); a stray line derails its auth state machine.
     _exit(1);
   } else {
     if (status_pipe[1] >= 0) {
@@ -213,13 +208,13 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t* pamh, int flags, int argc, cons
         return PAM_AUTH_ERR;
       }
     } else {
-      // Child did not exit normally (e.g., killed by signal)
+      // e.g. killed by a signal
       return PAM_AUTH_ERR;
     }
   }
 }
 
-// The functions below are required by PAM, but not needed in this module
+// Required by PAM, unused here.
 PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, const char** argv) {
   (void)pamh;
   (void)flags;

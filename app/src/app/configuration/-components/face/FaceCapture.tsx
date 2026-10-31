@@ -29,7 +29,6 @@ export function FaceCapture() {
     loadFaceImages();
   }, [loadFaceImages]);
 
-  // Subscribe to native preview frames whenever the session is active.
   useEffect(() => {
     if (!capturing) return;
 
@@ -54,7 +53,6 @@ export function FaceCapture() {
     };
   }, [capturing]);
 
-  // Make sure the helper process is torn down on unmount.
   useEffect(() => {
     return () => {
       cmd.face.stopPreview().catch(() => {});

@@ -1,7 +1,6 @@
 #ifndef FACE_DET_UTILS_H
 #define FACE_DET_UTILS_H
 
-// CPP native
 #include <vector>
 
 namespace biopass {

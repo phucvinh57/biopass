@@ -10,26 +10,18 @@
 
 namespace biopass {
 
-// One-way channel from biopass-helper back to the PAM module (pam.cc), which
-// relays each line to the application through the PAM conversation function.
-// The helper cannot talk to the conversation itself: it is a separate process
-// and its stdout/stderr must stay silent (see setupBiopassLogger in helper.cc).
+// One-way status channel from biopass-helper to pam.cc, which relays each
+// line through the PAM conversation (the helper's stdout/stderr must stay
+// silent, see helper.cc). Format: "<KIND> <text>\n", KIND is INFO
+// (PAM_TEXT_INFO) or ERROR (PAM_ERROR_MSG). No fd configured = no-op.
 //
-// Wire format: one message per line, "<KIND> <text>\n", where KIND is INFO
-// (relayed as PAM_TEXT_INFO) or ERROR (relayed as PAM_ERROR_MSG).
-//
-// When no status fd is configured (helper run outside pam.cc, PAM_SILENT, or
-// the "quiet" module option), every report is a no-op.
-//
-// Header-only on purpose: the Tauri app links libbiopass_fingerprint.a alone
-// (app/src-tauri/build.rs), so methods must not gain a link-time dependency
-// on biopass_core just to report status.
+// Header-only: the Tauri app links libbiopass_fingerprint.a alone, so methods
+// must not depend on biopass_core to report status.
 
 namespace status_detail {
 
 struct State {
-  // Methods may run on parallel threads (ExecutionMode::Parallel); serialize
-  // writes so lines never interleave.
+  // Methods may run in parallel; serialize so lines never interleave.
   std::mutex mutex;
   int fd = -1;
 };
@@ -46,8 +38,7 @@ inline void writeLine(const char* kind, const std::string& message) {
     return;
   }
 
-  // The protocol is line-based: flatten embedded newlines so one message can
-  // never be split into two (or smuggle in a second KIND prefix).
+  // Flatten newlines so a message can't split or smuggle a second KIND.
   std::string line = std::string(kind) + " " + message;
   for (char& c : line) {
     if (c == '\n' || c == '\r') {
@@ -87,9 +78,8 @@ inline void setStatusFd(int fd) {
   if (fd < 0 || fcntl(fd, F_GETFD) < 0) {
     return;
   }
-  // Don't leak the channel into anything this process might exec (a lingering
-  // holder would delay pam.cc noticing EOF), and don't let a vanished reader
-  // kill the helper with SIGPIPE.
+  // CLOEXEC: a lingering holder would delay pam.cc seeing EOF.
+  // SIGPIPE ignored: a vanished reader must not kill the helper.
   fcntl(fd, F_SETFD, FD_CLOEXEC);
   signal(SIGPIPE, SIG_IGN);
   s.fd = fd;

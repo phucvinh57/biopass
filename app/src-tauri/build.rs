@@ -12,10 +12,8 @@ fn main() {
         library_dir.join("libbiopass_fingerprint.a").display()
     );
 
-    // Link C++ standard library
     println!("cargo:rustc-link-lib=stdc++");
 
-    // Use pkg-config to link glib and its dependencies
     pkg_config::Config::new()
         .atleast_version("2.0")
         .probe("glib-2.0")

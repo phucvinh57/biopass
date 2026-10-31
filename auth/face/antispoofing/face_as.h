@@ -5,7 +5,6 @@
 #include <string>
 #include <vector>
 
-// Image utilities (replaces OpenCV)
 #include "face_detection.h"
 #include "image_utils.h"
 #include "onnx_session.h"
@@ -18,8 +17,7 @@ struct SpoofResult {
   SpoofResult(float score, bool spoof) : score(score), spoof(spoof) {}
 };
 
-// Selects preprocessing and output decoding. Stored per model in the
-// `architecture` column of biopass.db.
+// Selects preprocessing and output decoding; stored per model in biopass.db.
 enum class AntiSpoofArchitecture { MobileNetV3, MiniFASv2 };
 
 // Parses the `architecture` column value ("mobilenetv3", "minifasv2").

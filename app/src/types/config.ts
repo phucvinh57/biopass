@@ -56,12 +56,10 @@ export interface FingerprintMethodConfig {
 
 export type ModelTask = "detection" | "recognition" | "anti_spoofing";
 
-// Network architecture of an anti-spoofing model. The auth side picks
-// preprocessing and output decoding from it. Other tasks have none.
+// Anti-spoofing only; auth picks preprocessing and output decoding from it.
 export type AntiSpoofArchitecture = "mobilenetv3" | "minifasv2";
 
-// A row from the SQLite `models` table (see app/src-tauri/src/db.rs), listed
-// via the list_models command rather than embedded in config.yaml.
+// A row of the SQLite `models` table (app/src-tauri/src/db.rs).
 export interface Model {
   id: string;
   name: string;

@@ -30,24 +30,21 @@ namespace {
 constexpr int kDefaultWarmupFrames = 5;
 constexpr int kDefaultCaptureTimeoutMs = 10000;
 
-// Capture size limits. Detection letterboxes every frame to 640px and
-// recognition works on 112x112 crops, so anything beyond 720p only costs USB
-// bandwidth and conversion time. Uncompressed streams (YUYV/GREY) are capped
-// harder: 1280x720 YUYV is ~1.8 MB per frame, which a USB 2.0 webcam can only
-// deliver at a few fps (or truncates once the IR stream shares the bus), while
-// 640x480 still runs at full frame rate.
+// Detection letterboxes to 640px and recognition uses 112x112 crops, so
+// anything beyond 720p only costs USB bandwidth. Uncompressed streams are
+// capped harder: 1280x720 YUYV (~1.8 MB/frame) runs at a few fps on USB 2.0,
+// or truncates once the IR stream shares the bus.
 const libcamera::Size kMaxCompressedCaptureSize(1280, 720);
 const libcamera::Size kMaxUncompressedCaptureSize(640, 480);
-// Below this width a face at arm's length gets too few pixels to recognise;
-// prefer a size above the cap over one below it.
+// Narrower frames leave too few pixels for a face at arm's length; prefer a
+// size above the cap over one below it.
 constexpr unsigned int kMinCaptureWidth = 640;
 
 std::string device_label(const std::optional<std::string>& linux_video_device_path) {
   return linux_video_device_path.has_value() ? *linux_video_device_path : std::string("<default>");
 }
 
-// Routes libcamera's internal logging through spdlog so it lands wherever
-// the rest of the process's logs go (see setupBiopassLogger in helper.cc).
+// Routes libcamera's logging through spdlog (see setupBiopassLogger in helper.cc).
 class SpdlogStreambuf : public std::streambuf {
  public:
   int overflow(int ch) override {
@@ -80,9 +77,8 @@ class SpdlogStreambuf : public std::streambuf {
   std::string line_;
 };
 
-// The manager (and its logging redirection) is process-wide and outlives all
-// sessions; RGB and IR capture can run concurrently against two Camera
-// objects from a single CameraManager.
+// Process-wide and outlives all sessions; RGB and IR capture run
+// concurrently as two Cameras from this one manager.
 std::shared_ptr<libcamera::CameraManager> cameraManager() {
   static std::mutex init_mutex;
   static std::shared_ptr<libcamera::CameraManager> manager;
@@ -148,8 +144,8 @@ std::shared_ptr<libcamera::Camera> findCamera(
   return cameras.front();
 }
 
-// Reverse-maps a libcamera Camera's SystemDevices dev_t entries back to
-// /dev/video* node paths, for field-debugging output (listCameraDevices).
+// Maps the camera's SystemDevices dev_t entries back to /dev/video* paths
+// (field debugging via listCameraDevices).
 std::vector<std::string> videoPathsForCamera(const libcamera::Camera& camera) {
   std::vector<std::string> paths;
   const auto devices = camera.properties().get(libcamera::properties::SystemDevices);
@@ -249,10 +245,9 @@ uint64_t area(const libcamera::Size& size) {
   return static_cast<uint64_t>(size.width) * static_cast<uint64_t>(size.height);
 }
 
-// Picks the capture size for a stream: the largest size within the cap for
-// the pixel format, unless that is narrower than kMinCaptureWidth and a
-// larger size exists, in which case the smallest size above the cap wins.
-// Returns nullopt when the camera reports no discrete sizes.
+// Largest size within the format's cap, unless that is narrower than
+// kMinCaptureWidth and a larger one exists; then the smallest above the cap.
+// nullopt when the camera reports no discrete sizes.
 std::optional<libcamera::Size> pickCaptureSize(const std::vector<libcamera::Size>& sizes,
                                                const libcamera::PixelFormat& pixel_format) {
   const libcamera::Size& max_size = pixel_format == libcamera::formats::MJPEG
@@ -277,8 +272,7 @@ std::optional<libcamera::Size> pickCaptureSize(const std::vector<libcamera::Size
   return smallest_above;
 }
 
-// Picks a pixel format for the given capture request out of what the camera
-// actually offers, in preference order, sets a capped capture size, then
+// Picks the most preferred format the camera offers, sets a capped size and
 // validates the configuration.
 bool negotiate(libcamera::CameraConfiguration& config, CameraCaptureFormat requested_format,
                const std::string& camera_label) {
@@ -369,8 +363,6 @@ bool negotiate(libcamera::CameraConfiguration& config, CameraCaptureFormat reque
   return true;
 }
 
-// Converts one captured plane's bytes into RGB according to the negotiated
-// pixel format.
 bool convertFrame(const libcamera::PixelFormat& pixel_format, const uint8_t* data,
                   size_t bytes_used, int width, int height, int stride, ImageRGB& out) {
   if (pixel_format == libcamera::formats::YUYV) {
@@ -416,13 +408,11 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
     const auto deadline = std::chrono::steady_clock::now() +
                           std::chrono::milliseconds(std::max(0, capture_timeout_ms_));
 
-    // Drop any frames that completed before this call so a long-idle session
-    // never returns a stale frame.
+    // A long-idle session must never return a stale frame.
     drainPending();
 
-    // Color sessions warm up once per session (mirrors the always-running
-    // openpnp stream); grey/IR sessions warm up on every capture to let the
-    // IR emitter/AE settle (mirrors the old V4L2 GREY fallback).
+    // Colour sessions warm up once; grey/IR sessions warm up on every capture
+    // to let the IR emitter and auto-exposure settle.
     const int discard_count = (is_grey_ || !warmed_up_) ? warmup_frames_ : 0;
     warmed_up_ = true;
     for (int i = 0; i < discard_count; ++i) {
@@ -433,10 +423,9 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
       requeue(request);
     }
 
-    // Many IR emitters strobe, alternating lit and dark frames. A fixed
-    // warmup count lands on the same phase every time, so grey sessions
-    // sample several consecutive frames and keep the brightest one that
-    // isn't over-exposed.
+    // Many IR emitters strobe lit/dark, and a fixed warmup count lands on the
+    // same phase every time, so sample several frames and keep the brightest
+    // one that isn't over-exposed.
     const int samples = is_grey_ ? kIrCaptureSampleFrames : 1;
     ImageRGB best;
     double best_mean = 0.0;
@@ -571,7 +560,6 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
     return true;
   }
 
-  // Blocks until a completed request is available or the deadline passes.
   libcamera::Request* waitForRequest(std::chrono::steady_clock::time_point deadline,
                                      bool has_timeout) {
     std::unique_lock<std::mutex> lock(mutex_);

@@ -1,6 +1,4 @@
 #!/bin/bash
-# postinst — Debian package post-installation maintainer script.
-# Runs after all files in the .deb package have been unpacked.
 
 set -e
 

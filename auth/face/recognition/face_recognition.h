@@ -4,7 +4,6 @@
 #include <string>
 #include <vector>
 
-// Image utilities (replaces OpenCV)
 #include "image_utils.h"
 #include "onnx_session.h"
 

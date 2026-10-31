@@ -22,7 +22,7 @@
 
 ## Why Biopass?
 
-While Windows Hello provides a seamless multi-modal biometric experience (Face, Fingerprint, PIN) on Windows 11, Linux has historically lacked a modern, unified equivalent. Biopass was developed by [@phucvinh57](https://github.com/phucvinh57) and [@thaitran24](https://github.com/thaitran24) to fill that gap — see the comparison with [Howdy](https://github.com/boltgolt/howdy) below.
+Linux lacks a unified, modern equivalent of Windows Hello. Biopass, by [@phucvinh57](https://github.com/phucvinh57) and [@thaitran24](https://github.com/thaitran24), fills that gap.
 
 ## Comparison
 
@@ -35,25 +35,27 @@ While Windows Hello provides a seamless multi-modal biometric experience (Face, 
 
 ## Installation
 
-- Debian and RPM package: https://github.com/phucvinh57/biopass/releases
-- AUR package: https://aur.archlinux.org/packages/biopass-bin
-- System sign-in setup uses distro-managed PAM configuration when available (for example `pam-auth-update` on Debian/Ubuntu): [docs/PAM.md](docs/PAM.md)
-- Interactive `polkit` authentication setup: [docs/Polkit.md](docs/Polkit.md)
-- [IR camera setup guide](docs/IR%20camera.md)
+- Debian and RPM packages: https://github.com/phucvinh57/biopass/releases
+- AUR: https://aur.archlinux.org/packages/biopass-bin
+
+Setup guides:
+- PAM (system sign-in, `pam-auth-update` on Debian/Ubuntu): [docs/PAM.md](docs/PAM.md)
+- Polkit (interactive authentication): [docs/Polkit.md](docs/Polkit.md)
+- IR camera: [docs/IR camera.md](docs/IR%20camera.md)
 - Keyring/KWallet not unlocked after face login: [docs/Keyring.md](docs/Keyring.md)
 
 ## Features
 
-- [x] Authentication: User can register multiple biometrics for authentication. Authentication methods can be executed in parallel or sequentially.
+- [x] Authentication: register multiple biometrics, run methods in parallel or sequentially.
     - [x] Face:
       - [x] Recognition
       - [x] Anti-spoofing
         - [x] With AI model
         - [x] With IR camera
     - [x] Fingerprint
-- [ ] Local AI model management: User can download, update, and delete AI models for supported authentication methods.
+- [ ] Local AI model management: download, update, and delete models.
 
-Feel free to request new features or report bugs by opening an issue. For contributing, please read [CONTRIBUTING.md](CONTRIBUTING.md).
+Bugs and feature requests: open an issue. To contribute, read [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## References
 Models used in this project:

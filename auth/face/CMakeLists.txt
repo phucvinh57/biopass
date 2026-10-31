@@ -12,8 +12,7 @@ target_include_directories(biopass_stb PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-# Shared ONNX Runtime session plumbing (env/session/allocator/IO names) used
-# by the detection, recognition, and anti-spoofing inference engines.
+# ONNX Runtime plumbing shared by detection, recognition and anti-spoofing.
 add_library(biopass_onnx STATIC
     common/onnx_session.cc
 )
@@ -48,7 +47,6 @@ target_link_libraries(biopass_face_common
 )
 add_dependencies(biopass_face_common libcamera_ext)
 
-# Face auth wrapper library
 add_library(biopass_face STATIC
     face_auth.cc
 )

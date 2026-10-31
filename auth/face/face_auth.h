@@ -11,15 +11,9 @@
 
 namespace biopass {
 
-/**
- * Face authentication method.
- * Wraps existing face detection, recognition, and anti-spoofing.
- */
 class FaceAuth : public IAuthMethod {
  public:
-  // model_registry_ opens one sqlite connection for the lifetime of this
-  // instance (one authentication session), reused for every model_id lookup
-  // instead of opening/closing the DB per lookup.
+  // One sqlite connection per auth session, reused for every model_id lookup.
   FaceAuth(const FaceMethodConfig& config, const std::string& username)
       : face_config_(config), model_registry_(username) {}
   ~FaceAuth() override = default;
@@ -35,8 +29,7 @@ class FaceAuth : public IAuthMethod {
 
  private:
   void ensureIrSession();
-  // Loads the detection + recognition models once; returns false if either
-  // model file is missing or fails to load.
+  // Loads detection + recognition once; false if either fails to load.
   bool ensureModelsLoaded();
 
   FaceMethodConfig face_config_;

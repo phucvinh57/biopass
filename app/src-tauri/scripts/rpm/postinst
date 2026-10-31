@@ -1,5 +1,4 @@
 #!/bin/bash
-# postinst-rpm - RPM package post-install script.
 # In RPM, $1 is the number of installed versions after the transaction.
 
 set -e

@@ -38,7 +38,7 @@ char** fingerprint_list_enrolled_fingers(void* auth, const char* username, int* 
     return nullptr;
   }
 
-  // Allocate array of string pointers (including null terminator)
+  // +1 for the null terminator
   char** result = new char*[fingers.size() + 1];
 
   for (size_t i = 0; i < fingers.size(); ++i) {

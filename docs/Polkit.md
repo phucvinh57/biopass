@@ -1,12 +1,10 @@
 # Polkit Integration Guide
 
-In some desktop environments, such as GNOME and KDE, when a user edits some important settings, they are required their password or fingerprint through an interactive dialog.
+Desktop environments such as GNOME and KDE ask for your password or fingerprint in a dialog before changing protected settings.
 
 ![Interactive Auth](./images/interactive-auth.png)
 
-This flow is handled by [Polkit](https://github.com/polkit-org/polkit). In some cases, Biopass's authentication is not triggered by Polkit due to the strict policy on device accesses.
-
-Here are steps to fix the issue:
+This dialog is handled by [Polkit](https://github.com/polkit-org/polkit). Its strict device-access policy can stop Biopass from running there. To fix it:
 
 1. Create a systemd override for `polkit-agent-helper`
     ```bash
@@ -31,6 +29,6 @@ Here are steps to fix the issue:
     sudo systemctl daemon-reload
     sudo systemctl restart polkit.service
     ```
-4. Check the configuration in Biopass's UI. Please make sure to remove `pkexec`, `polkit-1` from the ignore service list ![Ignore services](images/ignore-services.png)
-5. Finally, run `pkexec id` to check if the camera opens. If the override is working, the `polkit` authentication window will not open.
+4. In Biopass's UI, remove `pkexec` and `polkit-1` from the ignored services list. ![Ignore services](images/ignore-services.png)
+5. Run `pkexec id`. If the override works, the camera opens and the polkit password window does not appear.
 

@@ -70,10 +70,8 @@ export const biopassConfigSchema = z.object({
   appearance: z.string(),
 });
 
-// Model existence/file checks need a live models list from the SQLite
-// registry (no longer embedded in the form state), so they run here as a
-// separate async pass rather than inside the zod schema's synchronous
-// superRefine.
+// Model checks need the live SQLite registry, so they run as a separate
+// async pass instead of in the zod schema's synchronous superRefine.
 export async function validateConfig(config: BiopassConfig): Promise<boolean> {
   const models = await cmd.models.list();
   const modelsById = new Map(models.map((m) => [m.id, m]));

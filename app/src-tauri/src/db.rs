@@ -81,9 +81,7 @@ fn migrations() -> Migrations<'static> {
     ])
 }
 
-/// Opens (creating if necessary) the biopass.db sqlite database, applies any
-/// pending migrations, and seeds the `models` table from the known bundled
-/// models on first run.
+/// Opens biopass.db, runs pending migrations, and seeds built-in models.
 pub fn open(app: &AppHandle) -> Result<Connection, String> {
     let config_dir = get_config_dir(app)?;
     if !config_dir.exists() {

@@ -108,7 +108,6 @@ function App() {
       );
   }, []);
 
-  // Update theme in config when it changes manually via toggle
   useEffect(() => {
     const updateConfigTheme = async () => {
       try {

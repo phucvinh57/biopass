@@ -14,10 +14,7 @@
 #include "stb_image.h"
 #include "stb_image_write.h"
 
-/**
- * Minimal RGB image container replacing cv::Mat.
- * Stores 3-channel (RGB) uint8 data in row-major order.
- */
+// Row-major 8-bit RGB image (minimal cv::Mat replacement).
 struct ImageRGB {
   int width = 0;
   int height = 0;
@@ -77,9 +74,7 @@ struct ImageRGB {
   }
 };
 
-/**
- * Bilinear resize.
- */
+// Bilinear.
 inline ImageRGB resizeImage(const ImageRGB& src, int tw, int th) {
   if (src.empty())
     return {};
@@ -110,9 +105,7 @@ inline ImageRGB resizeImage(const ImageRGB& src, int tw, int th) {
   return dst;
 }
 
-/**
- * Letterbox resize: scale to fit target keeping aspect ratio, pad with pad_val.
- */
+// Fit inside tw x th keeping aspect ratio, pad with pad_val.
 inline ImageRGB imageLetterbox(const ImageRGB& src, int tw, int th, uint8_t pad_val = 114) {
   if (src.empty())
     return {};
@@ -131,16 +124,12 @@ inline ImageRGB imageLetterbox(const ImageRGB& src, int tw, int th, uint8_t pad_
   return out;
 }
 
-/**
- * Resize with aspect-ratio preserving and zero-padding (for recognition).
- */
+// Aspect-preserving resize with zero padding (recognition input).
 inline ImageRGB imageResizePad(const ImageRGB& src, int tw, int th) {
   return imageLetterbox(src, tw, th, 0);
 }
 
-/**
- * Area-average resize (downscaling).
- */
+// Area-average, for downscaling.
 inline ImageRGB resizeImageArea(const ImageRGB& src, int tw, int th) {
   if (src.empty() || tw <= 0 || th <= 0)
     return {};
@@ -221,7 +210,6 @@ inline ImageRGB resizeImageLanczos4(const ImageRGB& src, int tw, int th) {
   double sx = (double)src.width / tw;
   double sy = (double)src.height / th;
 
-  // Precompute horizontal weights/indices per output column.
   std::vector<std::array<int, 8>> col_idx(tw);
   std::vector<std::array<double, 8>> col_w(tw);
   for (int x = 0; x < tw; x++) {
@@ -251,10 +239,8 @@ inline ImageRGB resizeImageLanczos4(const ImageRGB& src, int tw, int th) {
   return dst;
 }
 
-/**
- * Maps an out-of-range index into [0, n) with reflect-101 (mirror without
- * repeating the edge pixel), like cv::BORDER_REFLECT_101.
- */
+// Mirrors an out-of-range index into [0, n) without repeating the edge pixel
+// (cv::BORDER_REFLECT_101).
 inline int reflect101Index(int i, int n) {
   if (n <= 1)
     return 0;
@@ -267,10 +253,7 @@ inline int reflect101Index(int i, int n) {
   return i;
 }
 
-/**
- * Letterbox resize to imgsz x imgsz: Lanczos4 (upscale) or Area (downscale),
- * then pad with reflect-101.
- */
+// Letterbox to imgsz x imgsz (Lanczos4 up, Area down), reflect-101 padding.
 inline ImageRGB imageLetterboxReflect101(const ImageRGB& src, int imgsz) {
   if (src.empty() || imgsz <= 0)
     return {};
@@ -300,11 +283,9 @@ inline ImageRGB imageLetterboxReflect101(const ImageRGB& src, int imgsz) {
   return out;
 }
 
-/**
- * Square crop of side `scale * max(w, h)` centred on the box (x1, y1, x2, y2).
- * Parts outside the image are filled with a reflect-101 of the in-image part.
- * Mirrors crop() in suriAI/face-antispoof-onnx src/inference/preprocess.py.
- */
+// Square crop of side `scale * max(w, h)` centred on the box, reflect-101
+// outside the image. Mirrors crop() in suriAI/face-antispoof-onnx
+// src/inference/preprocess.py.
 inline ImageRGB imageSquareCropReflect101(const ImageRGB& src, int x1, int y1, int x2, int y2,
                                           float scale) {
   int w = x2 - x1;
@@ -336,9 +317,7 @@ inline ImageRGB imageSquareCropReflect101(const ImageRGB& src, int x1, int y1, i
   return out;
 }
 
-/**
- * HWC RGB uint8 -> CHW float, normalized to [0,1].
- */
+// HWC uint8 -> CHW float in [0, 1].
 inline std::vector<float> imageToChw(const ImageRGB& img) {
   int h = img.height, w = img.width;
   std::vector<float> out(3 * h * w);
@@ -348,9 +327,7 @@ inline std::vector<float> imageToChw(const ImageRGB& img) {
   return out;
 }
 
-/**
- * HWC RGB uint8 -> CHW float, with mean/std normalization.
- */
+// HWC uint8 -> CHW float, mean/std normalized.
 inline std::vector<float> imageToChwNormalized(const ImageRGB& img, const float mean[3],
                                                const float std_val[3]) {
   int h = img.height, w = img.width;
@@ -373,10 +350,7 @@ inline std::string lowercasePathExtension(const std::string& path) {
 }
 }  // namespace
 
-/**
- * Load image from any supported format (JPEG, PNG, BMP, GIF, TGA, PSD, HDR, PIC, PNM).
- * Automatically detects format from file contents via stb_image.
- */
+// Any stb_image format, detected from file contents.
 inline ImageRGB readImage(const std::string& path) {
   int w = 0, h = 0, channels = 0;
   uint8_t* pixels = stbi_load(path.c_str(), &w, &h, &channels, 3);
@@ -388,14 +362,7 @@ inline ImageRGB readImage(const std::string& path) {
   return img;
 }
 
-/**
- * Save image to file. Format is determined by file extension:
- *   .jpg / .jpeg  -> JPEG (quality 95)
- *   .png          -> PNG
- *   .bmp          -> BMP
- *   .tga          -> TGA
- * Returns false on unsupported extension or write failure.
- */
+// Format by extension: .jpg/.jpeg (quality 95), .bmp, .tga, otherwise PNG.
 inline bool saveImage(const std::string& path, const ImageRGB& img) {
   if (img.empty())
     return false;
@@ -413,7 +380,6 @@ inline bool saveImage(const std::string& path, const ImageRGB& img) {
     return stbi_write_tga(path.c_str(), img.width, img.height, 3, img.ptr()) != 0;
   }
 
-  // Fallback: save as PNG
   return stbi_write_png(path.c_str(), img.width, img.height, 3, img.ptr(), stride) != 0;
 }
 
