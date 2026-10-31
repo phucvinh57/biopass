@@ -174,10 +174,11 @@ int previewSession(const std::string& cameraPath, const std::string& modelPath, 
 int authenticate(const std::string& username, const std::string& service) {
   const char* pUsername = username.c_str();
 
-  if (!biopass::configExists(pUsername)) {
-    return 2;  // PAM_IGNORE
+  const std::optional<biopass::BiopassConfig> loaded = biopass::readConfig(pUsername);
+  if (!loaded) {
+    return 2;  // PAM_IGNORE: no usable config.yaml
   }
-  biopass::BiopassConfig config = biopass::readConfig(pUsername);
+  const biopass::BiopassConfig& config = *loaded;
 
   if (!service.empty() &&
       std::find(config.strategy.ignore_services.begin(), config.strategy.ignore_services.end(),

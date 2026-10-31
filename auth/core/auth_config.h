@@ -88,8 +88,9 @@ struct BiopassConfig {
   MethodsConfig methods = {};
 };
 std::string getConfigPath(const std::string& username);
-BiopassConfig readConfig(const std::string& username);
-bool configExists(const std::string& username);
+// nullopt when config.yaml is missing, unreadable or not a regular file.
+// A config that doesn't parse or has another schema_version gives defaults.
+std::optional<BiopassConfig> readConfig(const std::string& username);
 
 std::vector<std::string> listFaces(const std::string& username);
 std::string getDebugPath(const std::string& username);

@@ -18,12 +18,6 @@ namespace {
 // Real configs are a few hundred bytes.
 constexpr size_t kMaxConfigBytes = 1 << 20;
 
-// The config path is user-controlled, so it is read as the user and only if
-// it is a regular file. Anything else counts as missing.
-std::optional<std::string> readConfigText(const std::string& username) {
-  return readUserFile(username, getConfigPath(username), kMaxConfigBytes);
-}
-
 }  // namespace
 
 std::string getConfigPath(const std::string& username) {
@@ -38,8 +32,6 @@ std::string getConfigPath(const std::string& username) {
   return std::string(pw->pw_dir) + "/.config/com.ticklab.biopass/config.yaml";
 }
 
-bool configExists(const std::string& username) { return readConfigText(username).has_value(); }
-
 std::string user_data_dir(const std::string& username) {
   struct passwd* pw = getpwnam(username.c_str());
   if (pw != nullptr) {
@@ -51,15 +43,16 @@ std::string user_data_dir(const std::string& username) {
   return "";
 }
 
-BiopassConfig readConfig(const std::string& username) {
-  BiopassConfig config;
-
-  const std::optional<std::string> text = readConfigText(username);
+std::optional<BiopassConfig> readConfig(const std::string& username) {
+  // The config path is user-controlled, so it is read as the user and only
+  // if it is a regular file. Anything else counts as missing.
+  const std::optional<std::string> text =
+      readUserFile(username, getConfigPath(username), kMaxConfigBytes);
   if (!text) {
-    spdlog::warn("Biopass: Config file not found or not readable at {}, using defaults",
-                 getConfigPath(username));
-    return config;
+    return std::nullopt;
   }
+
+  BiopassConfig config;
 
   try {
     YAML::Node yaml = YAML::Load(*text);
