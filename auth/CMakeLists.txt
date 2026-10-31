@@ -41,6 +41,7 @@ if(BUILD_TESTS)
     add_subdirectory(test/camera)
     add_subdirectory(test/face_engine)
     add_subdirectory(test/pixel_convert)
+    add_subdirectory(test/frame_darkness)
 endif()
 
 install(
