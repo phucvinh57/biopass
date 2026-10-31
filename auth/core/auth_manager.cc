@@ -21,6 +21,15 @@ class MethodSessionGuard {
   IAuthMethod& method_;
 };
 
+// A method that got past its first attempt was tried, so going unavailable
+// later (e.g. camera unplugged mid-scan) is a failure, not "nothing ran".
+AuthResult finalResult(AuthResult last, uint32_t attempts) {
+  if (last == AuthResult::Unavailable && attempts > 1) {
+    return AuthResult::Failure;
+  }
+  return last;
+}
+
 }  // namespace
 
 void AuthManager::addMethod(std::unique_ptr<IAuthMethod> method) {
@@ -81,6 +90,7 @@ AuthOutcome AuthManager::runSequential(const std::string& username) {
       attempts++;
 
     } while (rs.shouldRetry(result, attempts));
+    result = finalResult(result, attempts);
 
     switch (result) {
       case AuthResult::Success:
@@ -149,6 +159,7 @@ AuthOutcome AuthManager::runParallel(const std::string& username) {
             result = method->authenticate(username, config, &success_found);
             attempts++;
           } while (retry_strategy.shouldRetry(result, attempts) && !success_found.load());
+          result = finalResult(result, attempts);
 
           if (result == AuthResult::Success) {
             success_found.store(true);

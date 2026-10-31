@@ -105,6 +105,15 @@ void checkMode(ExecutionMode mode, const char* label) {
   expect(run(mode, {Spec{{AuthResult::Retry, AuthResult::Success}, true, 3}}) == Outcome::Success,
          name("retry then success -> success"));
 
+  // A method that started scanning was tried, even if it then went away
+  // (e.g. camera unplugged mid-attempt).
+  expect(
+      run(mode, {Spec{{AuthResult::Retry, AuthResult::Unavailable}, true, 3}}) == Outcome::Failure,
+      name("retry then unavailable -> failure"));
+  expect(run(mode, {gone, Spec{{AuthResult::Retry, AuthResult::Unavailable}, true, 3}}) ==
+             Outcome::Failure,
+         name("unavailable + retry then unavailable -> failure"));
+
   run(mode, {fail, refused, ok}, &calls);
   expect(calls[0].begin == 1 && calls[0].end == 1 && calls[2].begin == 1 && calls[2].end == 1,
          name("sessions begin and end once per tried method"));
