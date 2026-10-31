@@ -236,6 +236,15 @@ double meanLuma(const ImageRGB& image) {
   return static_cast<double>(sum) / (3.0 * static_cast<double>(count));
 }
 
+// Some emitters also produce washed-out (near all-white) frames, which hold no
+// more face detail than dark ones. Above this mean, a frame counts as
+// over-exposed and only wins when every sample is.
+constexpr double kIrOverexposedMeanLuma = 220.0;
+
+// Ranks an IR sample by its mean brightness: the brightest well-exposed frame
+// first, then over-exposed frames from the least washed-out.
+double irFrameScore(double mean) { return mean <= kIrOverexposedMeanLuma ? mean : -mean; }
+
 uint64_t area(const libcamera::Size& size) {
   return static_cast<uint64_t>(size.width) * static_cast<uint64_t>(size.height);
 }
@@ -426,10 +435,11 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
 
     // Many IR emitters strobe, alternating lit and dark frames. A fixed
     // warmup count lands on the same phase every time, so grey sessions
-    // sample several consecutive frames and keep the brightest one.
+    // sample several consecutive frames and keep the brightest one that
+    // isn't over-exposed.
     const int samples = is_grey_ ? kIrCaptureSampleFrames : 1;
     ImageRGB best;
-    double best_mean = -1.0;
+    double best_mean = 0.0;
     for (int i = 0; i < samples; ++i) {
       libcamera::Request* request = waitForRequest(deadline, has_timeout);
       if (!request) {
@@ -443,7 +453,7 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
         continue;
       }
       const double mean = samples > 1 ? meanLuma(image) : 0.0;
-      if (mean > best_mean) {
+      if (best.empty() || irFrameScore(mean) > irFrameScore(best_mean)) {
         best_mean = mean;
         best = std::move(image);
       }

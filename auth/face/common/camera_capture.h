@@ -21,8 +21,9 @@ enum class CameraCaptureFormat {
 // shorter timeout than the default color capture, since IR sensors settle
 // faster and the anti-spoofing check should fail fast rather than block login.
 // Each grey capture then samples kIrCaptureSampleFrames consecutive frames and
-// keeps the brightest, so a strobing emitter (lit/dark alternation) always
-// yields a lit frame. Total frames per capture stay close to the old 5 + 1.
+// keeps the brightest one that isn't over-exposed, so a strobing emitter
+// (lit/dark/washed-out cycle) yields a usable frame whenever one was sampled.
+// Total frames per capture stay close to the old 5 + 1.
 constexpr int kIrCaptureWarmupFrames = 3;
 constexpr int kIrCaptureSampleFrames = 4;
 constexpr int kIrCaptureTimeoutMs = 3000;
