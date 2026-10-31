@@ -153,6 +153,15 @@ fn sha256_file(path: &Path) -> Result<String, String> {
     Ok(format!("sha256:{}", hex_encode(hasher.finalize())))
 }
 
+/// Plain http lets anyone on the path swap the model the PAM module will run.
+fn require_https(url: &str) -> Result<(), String> {
+    let parsed = reqwest::Url::parse(url).map_err(|e| format!("Invalid URL: {}", e))?;
+    if parsed.scheme() != "https" || !parsed.has_host() {
+        return Err("URL must start with https://".to_string());
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn add_model_from_url(
     app: AppHandle,
@@ -163,9 +172,7 @@ pub async fn add_model_from_url(
 ) -> Result<Model, String> {
     validate_task(&task, architecture.as_deref())?;
     let name = validate_name(&name)?;
-    if !(url.starts_with("http://") || url.starts_with("https://")) {
-        return Err("URL must start with http:// or https://".to_string());
-    }
+    require_https(&url)?;
 
     let dir = models_dir(&app)?;
     let id = {
@@ -368,4 +375,20 @@ pub fn rename_model(app: AppHandle, id: String, name: String) -> Result<Model, S
     let conn = db::open(&app)?;
     db::update_model_name(&conn, &id, &name)?;
     db::get_model(&conn, &id)?.ok_or_else(|| format!("Model '{}' not found", id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn model_urls_must_be_https() {
+        assert!(require_https("https://example.com/m.onnx").is_ok());
+        assert!(require_https("HTTPS://example.com/m.onnx").is_ok());
+        assert!(require_https("http://example.com/m.onnx").is_err());
+        assert!(require_https("ftp://example.com/m.onnx").is_err());
+        assert!(require_https("file:///tmp/m.onnx").is_err());
+        assert!(require_https("example.com/m.onnx").is_err());
+        assert!(require_https("https://").is_err());
+    }
 }
