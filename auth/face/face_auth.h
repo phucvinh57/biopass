@@ -15,7 +15,7 @@ class FaceAuth : public IAuthMethod {
  public:
   // One sqlite connection per auth session, reused for every model_id lookup.
   FaceAuth(const FaceMethodConfig& config, const std::string& username)
-      : face_config_(config), model_registry_(username) {}
+      : face_config_(config), username_(username), model_registry_(username) {}
   ~FaceAuth() override = default;
 
   std::string name() const override { return "Face"; }
@@ -33,6 +33,8 @@ class FaceAuth : public IAuthMethod {
   bool ensureModelsLoaded();
 
   FaceMethodConfig face_config_;
+  // Owner of the registry and model files, which are read as this user.
+  std::string username_;
   ModelRegistry model_registry_;
   std::unique_ptr<ICameraCaptureSession> camera_session_;
   std::unique_ptr<ICameraCaptureSession> ir_camera_session_;

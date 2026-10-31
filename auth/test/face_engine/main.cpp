@@ -68,8 +68,8 @@ int main(int argc, char** argv) {
   CLI11_PARSE(app, argc, argv);
 
   try {
-    FaceDetection detector(detector_model);
-    FaceRecognition recognizer(recognition_model, 112, threshold);
+    FaceDetection detector(biopass::loadModelFile(detector_model));
+    FaceRecognition recognizer(biopass::loadModelFile(recognition_model), 112, threshold);
 
     ImageRGB face1 = extract_largest_face(detector, image_1_path, "Image1");
     ImageRGB face2 = extract_largest_face(detector, image_2_path, "Image2");

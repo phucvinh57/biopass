@@ -2,7 +2,6 @@
 
 #include <spdlog/spdlog.h>
 
-#include <fstream>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -12,7 +11,9 @@
 #include "debug_image_io.h"
 #include "frame_darkness.h"
 #include "image_utils.h"
+#include "onnx_session.h"
 #include "status_reporter.h"
+#include "user_file.h"
 
 namespace biopass {
 
@@ -41,16 +42,17 @@ bool FaceAuth::ensureModelsLoaded() {
 
   const auto detectModel = model_registry_.resolveModel(face_config_.detection.model_id);
   const auto recogModel = model_registry_.resolveModel(face_config_.recognition.model_id);
-  const std::string detectModelPath = detectModel ? detectModel->path : "";
-  const std::string recogModelPath = recogModel ? recogModel->path : "";
-  if (!std::ifstream(recogModelPath).good() || !std::ifstream(detectModelPath).good()) {
+  // Model paths come from the user's registry: read them as the user.
+  const auto detectBytes = detectModel ? readUserModel(username_, detectModel->path) : std::nullopt;
+  const auto recogBytes = recogModel ? readUserModel(username_, recogModel->path) : std::nullopt;
+  if (!detectBytes || !recogBytes) {
     spdlog::error("FaceAuth: Model files not found");
     return false;
   }
 
   try {
     detector_ =
-        std::make_unique<FaceDetection>(detectModelPath, 640, face_config_.detection.threshold);
+        std::make_unique<FaceDetection>(*detectBytes, 640, face_config_.detection.threshold);
     spdlog::debug("FaceAuth: Detection model loaded | threshold={:.3f}",
                   face_config_.detection.threshold);
   } catch (const std::exception& e) {
@@ -64,7 +66,7 @@ bool FaceAuth::ensureModelsLoaded() {
 
   try {
     recognizer_ =
-        std::make_unique<FaceRecognition>(recogModelPath, 112, face_config_.recognition.threshold);
+        std::make_unique<FaceRecognition>(*recogBytes, 112, face_config_.recognition.threshold);
     spdlog::debug("FaceAuth: Recognition model loaded | threshold={:.3f}",
                   face_config_.recognition.threshold);
   } catch (const std::exception& e) {
@@ -184,7 +186,8 @@ AuthResult FaceAuth::authenticate(const std::string& username, const AuthConfig&
   spdlog::debug("FaceAuth: Recognition | threshold={:.3f} enrolled_count={}",
                 face_config_.recognition.threshold, enrolledFaces.size());
   for (const auto& facePath : enrolledFaces) {
-    ImageRGB preparedFace = readImage(facePath);
+    const auto faceBytes = readUserFile(username, facePath, kMaxImageFileBytes);
+    ImageRGB preparedFace = faceBytes ? decodeImage(*faceBytes) : ImageRGB{};
     if (preparedFace.empty()) {
       spdlog::warn("FaceAuth: Recognition | could not load enrolled image: {}", facePath);
       continue;

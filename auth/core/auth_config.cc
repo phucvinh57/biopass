@@ -227,6 +227,11 @@ static int mkdir_p(const std::string& path) {
 std::vector<std::string> listFaces(const std::string& username) {
   std::vector<std::string> faces;
   std::string dir = user_data_dir(username) + "/faces";
+  // The dir is the user's: list it as the user. Callers read each file with
+  // readUserFile(), which skips anything that isn't a regular file.
+  ScopedFsUser as_user(username);
+  if (!as_user.ok())
+    return faces;
   DIR* dp = opendir(dir.c_str());
   if (!dp)
     return faces;

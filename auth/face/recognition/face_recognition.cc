@@ -5,8 +5,8 @@
 
 namespace biopass {
 
-FaceRecognition::FaceRecognition(const std::string& ckpt, int imgsz, const float threshold)
-    : threshold(threshold), imgsz(imgsz), session(ckpt, "FaceRecognition") {}
+FaceRecognition::FaceRecognition(const ModelBytes& model, int imgsz, const float threshold)
+    : threshold(threshold), imgsz(imgsz), session(model, "FaceRecognition") {}
 
 std::vector<float> FaceRecognition::preprocess(const ImageRGB& input_image) {
   ImageRGB resize_img = imageResizePad(input_image, this->imgsz, this->imgsz);

@@ -1,14 +1,36 @@
 #include "onnx_session.h"
 
+#include <stdexcept>
+
+#include "user_file.h"
+
 namespace biopass {
 
-OnnxSession::OnnxSession(const std::string& model_path, const char* log_name)
+ModelBytes loadModelFile(const std::string& path) {
+  std::optional<std::string> data = readRegularFile(path, kMaxModelBytes);
+  if (!data) {
+    throw std::runtime_error("cannot read model file: " + path);
+  }
+  return ModelBytes{std::move(*data)};
+}
+
+std::optional<ModelBytes> readUserModel(const std::string& username, const std::string& path) {
+  // Only the read runs as the user; the session is created afterwards, so
+  // no ONNX Runtime thread can start with the user's filesystem ids.
+  std::optional<std::string> data = readUserFile(username, path, kMaxModelBytes);
+  if (!data) {
+    return std::nullopt;
+  }
+  return ModelBytes{std::move(*data)};
+}
+
+OnnxSession::OnnxSession(const ModelBytes& model, const char* log_name)
     : env_(ORT_LOGGING_LEVEL_WARNING, log_name) {
   Ort::SessionOptions opts;
   opts.SetIntraOpNumThreads(1);
   opts.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
 
-  session_ = std::make_unique<Ort::Session>(env_, model_path.c_str(), opts);
+  session_ = std::make_unique<Ort::Session>(env_, model.data.data(), model.data.size(), opts);
 
   for (size_t i = 0; i < session_->GetInputCount(); i++) {
     auto name = session_->GetInputNameAllocated(i, allocator_);

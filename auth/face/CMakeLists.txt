@@ -11,6 +11,10 @@ target_include_directories(biopass_stb PUBLIC
     ${STB_INCLUDE_DIRS}
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
+# image_utils.h reads files through core/user_file.h.
+target_link_libraries(biopass_stb PUBLIC
+    biopass_core
+)
 
 # ONNX Runtime plumbing shared by detection, recognition and anti-spoofing.
 add_library(biopass_onnx STATIC
@@ -23,6 +27,7 @@ target_include_directories(biopass_onnx PUBLIC
 )
 target_link_libraries(biopass_onnx PUBLIC
     ${ONNXRUNTIME_LIB}
+    biopass_core
 )
 
 # Shared face utilities (camera capture, debug image I/O).

@@ -8,11 +8,13 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "stb_image.h"
 #include "stb_image_write.h"
+#include "user_file.h"
 
 // Row-major 8-bit RGB image (minimal cv::Mat replacement).
 struct ImageRGB {
@@ -350,16 +352,29 @@ inline std::string lowercasePathExtension(const std::string& path) {
 }
 }  // namespace
 
-// Any stb_image format, detected from file contents.
-inline ImageRGB readImage(const std::string& path) {
+// Enrolled faces are small crops; this only stops absurd files.
+inline constexpr size_t kMaxImageFileBytes = 32u << 20;
+
+// Any stb_image format, detected from the encoded bytes.
+inline ImageRGB decodeImage(const std::string& bytes) {
+  if (bytes.empty() || bytes.size() > static_cast<size_t>(std::numeric_limits<int>::max()))
+    return {};
   int w = 0, h = 0, channels = 0;
-  uint8_t* pixels = stbi_load(path.c_str(), &w, &h, &channels, 3);
+  uint8_t* pixels = stbi_load_from_memory(reinterpret_cast<const stbi_uc*>(bytes.data()),
+                                          static_cast<int>(bytes.size()), &w, &h, &channels, 3);
   if (!pixels)
     return {};
 
   ImageRGB img(w, h, pixels);
   stbi_image_free(pixels);
   return img;
+}
+
+// Reads a regular image file (see core/user_file.h). In the root helper,
+// read user-controlled paths with readUserFile() + decodeImage() instead.
+inline ImageRGB readImage(const std::string& path) {
+  const std::optional<std::string> bytes = biopass::readRegularFile(path, kMaxImageFileBytes);
+  return bytes ? decodeImage(*bytes) : ImageRGB{};
 }
 
 // Format by extension: .jpg/.jpeg (quality 95), .bmp, .tga, otherwise PNG.

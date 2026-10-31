@@ -2,7 +2,6 @@
 
 #include <spdlog/spdlog.h>
 
-#include <fstream>
 #include <future>
 #include <memory>
 #include <vector>
@@ -10,6 +9,7 @@
 #include "debug_image_io.h"
 #include "face_as.h"
 #include "ir_camera_as.h"
+#include "onnx_session.h"
 
 namespace biopass {
 
@@ -33,7 +33,9 @@ bool checkAntiSpoofByAIModel(const FaceMethodConfig& faceCfg, const std::string&
   const std::string& modelId = faceCfg.anti_spoofing.model.model_id;
   const auto model = model_registry.resolveModel(modelId);
   const std::string modelPath = model ? model->path : "";
-  if (modelPath.empty() || !std::ifstream(modelPath).good()) {
+  // The path comes from the user's registry: read it as the user.
+  const auto modelBytes = model ? readUserModel(username, modelPath) : std::nullopt;
+  if (!modelBytes) {
     spdlog::error("FaceAuth: Anti-spoofing model file not found: {}", modelPath);
     return false;
   }
@@ -46,7 +48,8 @@ bool checkAntiSpoofByAIModel(const FaceMethodConfig& faceCfg, const std::string&
   }
 
   try {
-    FaceAntiSpoofing face_as(modelPath, *architecture, 128, faceCfg.anti_spoofing.model.threshold);
+    FaceAntiSpoofing face_as(*modelBytes, *architecture, 128,
+                             faceCfg.anti_spoofing.model.threshold);
     const SpoofResult result = face_as.inference(frame, face_box);
     if (result.spoof) {
       spdlog::warn("FaceAuth: AI anti-spoofing detected spoof, score: {}", result.score);

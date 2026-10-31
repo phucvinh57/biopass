@@ -1,7 +1,8 @@
-// Checks that files the user controls are read only when they are regular
-// files (core/user_file.h): no device, FIFO or oversized file is read, and
-// nothing blocks. Runs as any user; the extra checks for the root helper
-// run when started with sudo or inside `unshare --map-root-user --map-auto`.
+// Checks that files the user controls, face images included, are read only
+// when they are regular files (core/user_file.h): no device, FIFO or
+// oversized file is read, and nothing blocks. Runs as any user; the extra
+// checks for the root helper run when started with sudo or inside
+// `unshare --map-root-user --map-auto`.
 
 #include <stdlib.h>
 #include <sys/stat.h>
@@ -11,6 +12,7 @@
 #include <fstream>
 #include <string>
 
+#include "image_utils.h"
 #include "user_file.h"
 
 namespace {
@@ -64,6 +66,20 @@ void checkReadRegularFile(const std::string& dir) {
   alarm(0);
 }
 
+// Enrolled face images go through the same reader (face/image_utils.h).
+void checkImages(const std::string& dir) {
+  const uint8_t pixels[2 * 2 * 3] = {255, 0, 0, 0, 255, 0, 0, 0, 255, 10, 20, 30};
+  const std::string png = dir + "/face.png";
+  expect(stbi_write_png(png.c_str(), 2, 2, 3, pixels, 2 * 3) != 0, "write test PNG");
+  const ImageRGB img = readImage(png);
+  expect(img.width == 2 && img.height == 2 && img.at(1, 1, 2) == 30, "regular image is decoded");
+
+  const std::string zero = dir + "/zero.png";
+  expect(symlink("/dev/zero", zero.c_str()) == 0, "plant image symlink to /dev/zero");
+  expect(readImage(zero).empty(), "image symlinked to /dev/zero is refused");
+  expect(decodeImage("not an image").empty(), "garbage bytes decode to an empty image");
+}
+
 // Root reading through a path the user controls must get only what the user
 // could read.
 void checkReadUserFileAsRoot(const std::string& dir) {
@@ -92,6 +108,7 @@ int main() {
   expect(!dir.empty(), "create temp dir");
 
   checkReadRegularFile(dir);
+  checkImages(dir);
   if (geteuid() == 0) {
     checkReadUserFileAsRoot(dir);
   } else {

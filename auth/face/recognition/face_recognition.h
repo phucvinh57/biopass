@@ -17,7 +17,7 @@ struct MatchResult {
 
 class FaceRecognition {
  public:
-  FaceRecognition(const std::string& ckpt, int imgsz = 112, const float threshold = 0.50);
+  FaceRecognition(const ModelBytes& model, int imgsz = 112, const float threshold = 0.50);
 
   MatchResult match(const ImageRGB& image1, const ImageRGB& image2);
 

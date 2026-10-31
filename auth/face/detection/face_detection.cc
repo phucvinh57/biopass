@@ -6,8 +6,8 @@
 
 namespace biopass {
 
-FaceDetection::FaceDetection(const std::string& ckpt, int imgsz, const float conf, const float iou)
-    : conf(conf), iou(iou), imgsz(imgsz), session(ckpt, "FaceDetection") {}
+FaceDetection::FaceDetection(const ModelBytes& model, int imgsz, const float conf, const float iou)
+    : conf(conf), iou(iou), imgsz(imgsz), session(model, "FaceDetection") {}
 
 std::vector<Detection> FaceDetection::inference(const ImageRGB& image) {
   ImageRGB input_image = imageLetterbox(image, this->imgsz, this->imgsz);

@@ -108,7 +108,7 @@ int previewSession(const std::string& cameraPath, const std::string& modelPath, 
   std::unique_ptr<FaceDetection> faceDetector;
   if (!modelPath.empty()) {
     try {
-      faceDetector = std::make_unique<FaceDetection>(modelPath);
+      faceDetector = std::make_unique<FaceDetection>(biopass::loadModelFile(modelPath));
     } catch (const std::exception& e) {
       std::cout << "ERR failed to load detection model: " << e.what() << "\n" << std::flush;
       return 1;
