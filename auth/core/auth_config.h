@@ -87,6 +87,21 @@ struct BiopassConfig {
   StrategyConfig strategy = {};
   MethodsConfig methods = {};
 };
+// Upper bounds for the timing values in the user's config. The PAM module
+// kills the helper after 60 s regardless (pam/helper_wait.h); these keep a
+// normal run below that so the user isn't cut off mid-attempt.
+inline constexpr uint32_t kMaxFaceRetries = 10;
+inline constexpr uint32_t kMaxRetryDelayMs = 5000;
+inline constexpr int kMaxIrWarmupDelayMs = 5000;
+inline constexpr int kMaxIrPresenceTimeoutMs = 10000;
+inline constexpr uint32_t kMaxFingerprintRetries = 5;
+inline constexpr uint32_t kMaxFingerprintTimeoutMs = 10000;
+
+// Clamps retries, delays and timeouts into [0, max]. fingerprint.timeout 0
+// used to mean "wait forever"; it now means the maximum. readConfig() calls
+// this on every config it returns.
+void clampStrategyLimits(MethodsConfig& methods);
+
 std::string getConfigPath(const std::string& username);
 // nullopt when config.yaml is missing, unreadable or not a regular file.
 // A config that doesn't parse or has another schema_version gives defaults.

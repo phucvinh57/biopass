@@ -50,6 +50,7 @@ if(BUILD_TESTS)
     add_subdirectory(test/helper_exit)
     add_subdirectory(test/helper_argv)
     add_subdirectory(test/helper_wait)
+    add_subdirectory(test/config_limits)
 endif()
 
 install(

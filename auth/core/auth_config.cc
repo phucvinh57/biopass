@@ -20,6 +20,22 @@ constexpr size_t kMaxConfigBytes = 1 << 20;
 
 }  // namespace
 
+void clampStrategyLimits(MethodsConfig& methods) {
+  FaceMethodConfig& face = methods.face;
+  face.retries = std::min(face.retries, kMaxFaceRetries);
+  face.retry_delay = std::min(face.retry_delay, kMaxRetryDelayMs);
+  face.anti_spoofing.ir_warmup_delay_ms =
+      std::clamp(face.anti_spoofing.ir_warmup_delay_ms, 0, kMaxIrWarmupDelayMs);
+  face.anti_spoofing.ir_presence_timeout_ms =
+      std::clamp(face.anti_spoofing.ir_presence_timeout_ms, 0, kMaxIrPresenceTimeoutMs);
+
+  FingerprintMethodConfig& fp = methods.fingerprint;
+  fp.retries = std::min(fp.retries, kMaxFingerprintRetries);
+  if (fp.timeout == 0 || fp.timeout > kMaxFingerprintTimeoutMs) {
+    fp.timeout = kMaxFingerprintTimeoutMs;
+  }
+}
+
 std::string getConfigPath(const std::string& username) {
   struct passwd* pw = getpwnam(username.c_str());
   if (pw == nullptr) {
@@ -192,6 +208,7 @@ std::optional<BiopassConfig> readConfig(const std::string& username) {
     spdlog::error("Biopass: Failed to parse config: {}, using defaults", e.what());
   }
 
+  clampStrategyLimits(config.methods);
   return config;
 }
 
