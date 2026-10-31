@@ -4,7 +4,7 @@ use std::io::Write;
 use std::path::Path;
 use tauri::AppHandle;
 
-use crate::paths::{get_config_dir, get_config_path};
+use crate::paths::{ensure_private_dir, get_config_dir, get_config_path};
 
 /// Bump on incompatible config.yaml changes. Keep in sync with
 /// CURRENT_SCHEMA_VERSION in auth/core/auth_config.h.
@@ -321,10 +321,8 @@ fn write_config_file(app: &AppHandle, yaml_content: &str) -> Result<(), String> 
     let config_dir = get_config_dir(app)?;
     let config_path = get_config_path(app)?;
 
-    if !config_dir.exists() {
-        fs::create_dir_all(&config_dir)
-            .map_err(|e| format!("Failed to create config directory: {}", e))?;
-    }
+    ensure_private_dir(&config_dir)
+        .map_err(|e| format!("Failed to create config directory: {}", e))?;
 
     // Temp file in the same dir so the rename is atomic: a crash mid-write
     // can't truncate config.yaml.

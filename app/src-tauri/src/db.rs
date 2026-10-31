@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
 
-use crate::paths::{get_config_dir, get_data_dir, get_db_path};
+use crate::paths::{
+    ensure_private_dir, ensure_private_file, get_config_dir, get_data_dir, get_db_path,
+};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Model {
@@ -98,12 +100,12 @@ fn migrations() -> Migrations<'static> {
 /// Opens biopass.db, runs pending migrations, and seeds built-in models.
 pub fn open(app: &AppHandle) -> Result<Connection, String> {
     let config_dir = get_config_dir(app)?;
-    if !config_dir.exists() {
-        std::fs::create_dir_all(&config_dir)
-            .map_err(|e| format!("Failed to create config directory: {}", e))?;
-    }
+    ensure_private_dir(&config_dir)
+        .map_err(|e| format!("Failed to create config directory: {}", e))?;
 
+    // Create it 0600 before SQLite does (it would use the umask).
     let db_path = get_db_path(app)?;
+    ensure_private_file(&db_path).map_err(|e| format!("Failed to create database file: {}", e))?;
     let mut conn =
         Connection::open(&db_path).map_err(|e| format!("Failed to open database: {}", e))?;
     conn.busy_timeout(Duration::from_secs(2))

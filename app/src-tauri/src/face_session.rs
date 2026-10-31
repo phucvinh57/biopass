@@ -12,7 +12,7 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::config::{load_config, BiopassConfig};
 use crate::db;
-use crate::paths::get_faces_dir;
+use crate::paths::{ensure_private_dir, get_faces_dir};
 
 const PREVIEW_EVENT: &str = "face-preview-frame";
 const FRAME_INTERVAL_MS: u64 = 33; // ~30fps ceiling
@@ -418,10 +418,7 @@ fn capture(app: &AppHandle, slot: &Slot) -> Result<String, String> {
     let sess = guard.as_ref().ok_or("No active preview session")?;
 
     let faces_dir = get_faces_dir(app)?;
-    if !faces_dir.exists() {
-        std::fs::create_dir_all(&faces_dir)
-            .map_err(|e| format!("Failed to create faces directory: {e}"))?;
-    }
+    ensure_private_dir(&faces_dir).map_err(|e| format!("Failed to create faces directory: {e}"))?;
 
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

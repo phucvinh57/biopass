@@ -28,6 +28,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(PreviewState::default())
         .setup(|app| {
+            paths::restrict_private_paths(app.handle());
+
             #[cfg(target_os = "linux")]
             {
                 // The webview needs no browser permissions: the camera preview
