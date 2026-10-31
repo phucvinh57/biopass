@@ -57,6 +57,7 @@ if(BUILD_TESTS)
     add_subdirectory(test/config_validation)
     add_subdirectory(test/user_paths)
     add_subdirectory(test/ir_presence)
+    add_subdirectory(test/face_image_name)
 endif()
 
 install(

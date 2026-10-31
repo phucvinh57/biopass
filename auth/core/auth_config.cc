@@ -256,6 +256,18 @@ static int mkdir_p(const std::string& path) {
   return 0;
 }
 
+bool hasImageExtension(const std::string& name) {
+  const size_t dot = name.rfind('.');
+  if (dot == std::string::npos || dot == 0)
+    return false;
+  std::string ext = name.substr(dot + 1);
+  for (char& ch : ext) {
+    if (ch >= 'A' && ch <= 'Z')
+      ch = static_cast<char>(ch - 'A' + 'a');
+  }
+  return ext == "jpg" || ext == "jpeg" || ext == "png";
+}
+
 std::vector<std::string> listFaces(const std::string& username) {
   std::vector<std::string> faces;
   const std::optional<UserPaths> user = resolveUser(username);
@@ -275,17 +287,8 @@ std::vector<std::string> listFaces(const std::string& username) {
   struct dirent* entry;
   while ((entry = readdir(dp)) != nullptr) {
     std::string name(entry->d_name);
-    if (name.size() > 4) {
-      std::string ext = name.substr(name.size() - 4);
-      if (ext == ".jpg" || ext == ".JPG" || ext == ".png" || ext == ".PNG" || ext == ".bmp" ||
-          ext == ".BMP" || ext == ".tga" || ext == ".TGA") {
-        faces.push_back(dir + "/" + name);
-      } else if (name.size() > 5) {
-        std::string ext5 = name.substr(name.size() - 5);
-        if (ext5 == ".jpeg" || ext5 == ".JPEG") {
-          faces.push_back(dir + "/" + name);
-        }
-      }
+    if (hasImageExtension(name)) {
+      faces.push_back(dir + "/" + name);
     }
   }
   closedir(dp);

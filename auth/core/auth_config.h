@@ -126,6 +126,11 @@ std::optional<BiopassConfig> parseConfig(const std::string& text);
 // missing, unreadable, not a regular file or rejected by parseConfig().
 std::optional<BiopassConfig> readConfig(const std::string& username);
 
+// Whether a faces/ entry name is a face image: .jpg, .jpeg or .png (ASCII
+// case-insensitive) after a non-empty stem. The app's face.rs
+// has_image_extension must accept the same names; both are tested against
+// auth/test/face_image_name/cases.txt.
+bool hasImageExtension(const std::string& name);
 // Image files in the user's faces/ dir, sorted. Empty for an unknown user.
 std::vector<std::string> listFaces(const std::string& username);
 // Creates faces/, debugs/ and logs/ (0700) under a data dir (see
