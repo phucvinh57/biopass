@@ -11,7 +11,6 @@ enum AuthResult { Success, Failure, Retry, Unavailable };
 
 struct AuthConfig {
   bool debug = false;
-  bool antispoof = false;
 };
 
 struct IAuthMethod {

@@ -13,10 +13,6 @@ typedef enum {
   AUTH_RETRY = 3,
 } FingerprintAuthResult;
 
-typedef struct {
-  int retries;
-} FingerprintAuthConfig;
-
 typedef void (*EnrollProgressCallback)(bool done, const char* status, void* user_data);
 
 void* fingerprint_auth_new(void);

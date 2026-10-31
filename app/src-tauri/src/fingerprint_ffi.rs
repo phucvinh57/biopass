@@ -1,12 +1,6 @@
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct FingerprintAuthConfig {
-    pub retries: i32,
-}
-
 #[link(name = "biopass_fingerprint")]
 extern "C" {
     fn fingerprint_auth_new() -> *mut std::ffi::c_void;
