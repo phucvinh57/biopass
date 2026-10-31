@@ -1,7 +1,7 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Camera, Circle, Square, Trash2 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useWatch } from "react-hook-form";
 import { toast } from "sonner";
 import { cmd } from "@/commands";
@@ -24,14 +24,16 @@ export function FaceCapture() {
     console.error(err);
   });
 
-  async function loadFaceImages() {
+  // Stable identity: the effect below depends on it, and a new function per
+  // render would reload (and re-render) forever.
+  const loadFaceImages = useCallback(async () => {
     try {
       const images = await cmd.face.listImages();
       setFaceImages(images);
     } catch (err) {
       console.error("Failed to load face images:", err);
     }
-  }
+  }, []);
 
   useEffect(() => {
     loadFaceImages();
