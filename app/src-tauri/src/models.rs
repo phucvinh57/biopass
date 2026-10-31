@@ -9,7 +9,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter};
 
-use crate::config::load_config;
+use crate::config::{load_config, BiopassConfig};
 use crate::db::{self, Model};
 use crate::paths::{ensure_private_dir, get_data_dir};
 
@@ -539,6 +539,22 @@ pub fn add_model_from_file(
     )
 }
 
+/// Delete protection: a model stays referenced while a disabled method (or
+/// disabled anti-spoofing) still names it, so re-enabling never resolves to a
+/// deleted model. Same rule as `referencedModelIds(config, { includeDisabled:
+/// true })` in app/src/lib/models.ts.
+fn is_model_referenced(config: &BiopassConfig, id: &str) -> bool {
+    let face = &config.methods.face;
+    !id.is_empty()
+        && [
+            &face.detection.model_id,
+            &face.recognition.model_id,
+            &face.anti_spoofing.model.model_id,
+        ]
+        .iter()
+        .any(|m| m.as_str() == id)
+}
+
 #[tauri::command]
 pub fn delete_model(app: AppHandle, id: String) -> Result<(), String> {
     let conn = db::open(&app)?;
@@ -549,10 +565,7 @@ pub fn delete_model(app: AppHandle, id: String) -> Result<(), String> {
     }
 
     let config = load_config(app.clone())?;
-    let in_use = config.methods.face.detection.model_id == id
-        || config.methods.face.recognition.model_id == id
-        || config.methods.face.anti_spoofing.model.model_id == id;
-    if in_use {
+    if is_model_referenced(&config, &id) {
         return Err("Model is currently in use and cannot be deleted".to_string());
     }
 
@@ -580,6 +593,22 @@ pub fn rename_model(app: AppHandle, id: String, name: String) -> Result<Model, S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn delete_protection_counts_disabled_methods() {
+        let mut config = crate::config::BiopassConfig::default();
+        config.methods.face.enable = false;
+        config.methods.face.anti_spoofing.enable = false;
+        config.methods.face.detection.model_id = "det".into();
+        config.methods.face.recognition.model_id = "rec".into();
+        config.methods.face.anti_spoofing.model.model_id = "spoof".into();
+        for id in ["det", "rec", "spoof"] {
+            assert!(is_model_referenced(&config, id), "{id}");
+        }
+        assert!(!is_model_referenced(&config, "other"));
+        config.methods.face.anti_spoofing.model.model_id = String::new();
+        assert!(!is_model_referenced(&config, ""));
+    }
 
     #[test]
     fn model_urls_must_be_https() {

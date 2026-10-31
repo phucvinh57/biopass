@@ -1,6 +1,7 @@
 import { toast } from "sonner";
 import { z } from "zod";
 import { cmd } from "@/commands";
+import { referencedModelIds } from "@/lib/models";
 import type { BiopassConfig } from "@/types/config";
 
 // Mirrors kMinThreshold/kMaxThreshold in auth/core/auth_config.h. The helper
@@ -121,20 +122,11 @@ export async function validateConfig(config: BiopassConfig): Promise<boolean> {
     }
   }
 
-  const modelIdsToCheck: string[] = [];
-  if (config.methods.face.enable) {
-    if (config.methods.face.detection.model_id)
-      modelIdsToCheck.push(config.methods.face.detection.model_id);
-    if (config.methods.face.recognition.model_id)
-      modelIdsToCheck.push(config.methods.face.recognition.model_id);
-    if (
-      config.methods.face.anti_spoofing.enable &&
-      config.methods.face.anti_spoofing.model.model_id
-    ) {
-      modelIdsToCheck.push(config.methods.face.anti_spoofing.model.model_id);
-    }
-  }
-  for (const modelId of modelIdsToCheck) {
+  // Only the models authentication would load: a missing file under a
+  // disabled method must not block saving.
+  for (const modelId of referencedModelIds(config, {
+    includeDisabled: false,
+  })) {
     const model = modelsById.get(modelId);
     if (!model) continue;
     try {
