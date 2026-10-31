@@ -9,11 +9,12 @@ pre-commit:
     - name: Clang Format
       root: auth/
       glob: "*.{cc,h}"
-      run: |
-        for file in {staged_files}; do
-          clang-format -i "$file"
-          git add "$file"
-        done
+      # Let lefthook re-stage the formatted files. A `git add` inside the job
+      # runs from auth/ with git's hook GIT_DIR set, which in a linked
+      # worktree makes git treat auth/ as the top level and stage the file
+      # at the wrong path (e.g. pam/pam.cc instead of auth/pam/pam.cc).
+      run: clang-format -i {staged_files}
+      stage_fixed: true
 
     - name: Rust Format
       root: app/src-tauri/
