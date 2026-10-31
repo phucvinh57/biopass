@@ -46,6 +46,7 @@ target_link_libraries(biopass_onnx PUBLIC
 # Shared face utilities (camera capture, debug image I/O).
 add_library(biopass_face_common STATIC
     common/camera_capture.cc
+    common/capture_policy.cc
     common/pixel_convert.cc
     common/debug_image_io.cc
     common/frame_darkness.cc

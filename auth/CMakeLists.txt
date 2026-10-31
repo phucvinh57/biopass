@@ -60,6 +60,7 @@ if(BUILD_TESTS)
     add_subdirectory(test/ir_presence)
     add_subdirectory(test/face_image_name)
     add_subdirectory(test/first_line)
+    add_subdirectory(test/capture_policy)
 endif()
 
 install(
