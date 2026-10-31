@@ -4,6 +4,8 @@
 #include <cmath>
 #include <stdexcept>
 
+#include "antispoof_output.h"
+
 namespace biopass {
 
 namespace {
@@ -12,18 +14,6 @@ namespace {
 // 1.5 x the longer side of the face box, so it sees hair, ears and the
 // face/background boundary rather than a tight face crop.
 constexpr float kMiniFASv2CropScale = 1.5f;
-
-int argmax(const float* data, int size) {
-  int max_index = 0;
-  float max_val = data[0];
-  for (int i = 1; i < size; i++) {
-    if (data[i] > max_val) {
-      max_val = data[i];
-      max_index = i;
-    }
-  }
-  return max_index;
-}
 
 }  // namespace
 
@@ -88,10 +78,8 @@ SpoofResult FaceAntiSpoofing::inference(const ImageRGB& frame, const Box& face_b
   const float* logits = output_tensors[0].GetTensorData<float>();
 
   if (this->architecture == AntiSpoofArchitecture::MobileNetV3) {
-    // Index 0: Spoof, Index 1: Real
-    int spoof_cls = argmax(logits, 2);
-    float score = logits[spoof_cls];
-    return SpoofResult(score, spoof_cls == 0 && score >= this->threshold);
+    const AntiSpoofDecision decision = decodeMobileNetV3Output(logits, 2, this->threshold);
+    return SpoofResult(decision.score, decision.spoof);
   }
 
   // minifasv2: logits[0] = real_logit, logits[1] = spoof_logit
