@@ -48,6 +48,7 @@ if(BUILD_TESTS)
     add_subdirectory(test/fprint_signal)
     add_subdirectory(test/auth_manager)
     add_subdirectory(test/helper_exit)
+    add_subdirectory(test/helper_argv)
 endif()
 
 install(

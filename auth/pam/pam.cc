@@ -11,7 +11,9 @@
 #include <unistd.h>
 
 #include <string>
+#include <vector>
 
+#include "helper_argv.h"
 #include "helper_status.h"
 
 namespace {
@@ -143,14 +145,21 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t* pamh, int flags, int argc, cons
     status_pipe[1] = -1;
   }
 
-  // Formatted before fork(): snprintf isn't async-signal-safe, and the PAM
-  // caller may be multithreaded.
-  char status_fd_arg[16] = "";
-  if (status_pipe[1] >= 0) {
-    snprintf(status_fd_arg, sizeof(status_fd_arg), "%d", status_pipe[1]);
+  // Built before fork(): allocation isn't async-signal-safe, and the PAM
+  // caller may be multithreaded. No exception may cross into the C caller.
+  std::vector<std::string> arg_strings;
+  std::vector<char*> args;
+  try {
+    arg_strings = biopass::buildHelperArgv(pUsername, service, status_pipe[1]);
+    for (std::string& arg : arg_strings) {
+      args.push_back(arg.data());
+    }
+    args.push_back(nullptr);
+  } catch (...) {
+    args.clear();
   }
 
-  pid_t pid = fork();
+  pid_t pid = args.empty() ? -1 : fork();
   if (pid < 0) {
     if (status_pipe[0] >= 0) {
       close(status_pipe[0]);
@@ -169,22 +178,7 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t* pamh, int flags, int argc, cons
     // or config (e.g. libcamera IPA modules and proxy workers) it loads.
     char* const helper_env[] = {const_cast<char*>("PATH=/usr/sbin:/usr/bin:/sbin:/bin"), nullptr};
 
-    const char* args[9];
-    int n = 0;
-    args[n++] = "biopass-helper";
-    args[n++] = "auth";
-    args[n++] = "--username";
-    args[n++] = pUsername;
-    if (service != nullptr && service[0] != '\0') {
-      args[n++] = "--service";
-      args[n++] = service;
-    }
-    if (status_fd_arg[0] != '\0') {
-      args[n++] = "--status-fd";
-      args[n++] = status_fd_arg;
-    }
-    args[n] = nullptr;
-    execve("/usr/bin/biopass-helper", const_cast<char* const*>(args), helper_env);
+    execve("/usr/bin/biopass-helper", args.data(), helper_env);
 
     // execve failed. No perror(): stdio is inherited from the PAM caller,
     // which may parse it as a strict line protocol (GNOME Shell's polkit
