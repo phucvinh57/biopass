@@ -7,8 +7,6 @@
     "core:default",
     "opener:default",
     "dialog:allow-open",
-    "fs:allow-download-write",
-    "core:path:default",
     {
       "identifier": "fs:allow-read",
       "allow": [
