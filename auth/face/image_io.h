@@ -8,7 +8,7 @@
 #include "image.h"
 
 // Encoding and decoding through stb. This and stb_impl.cc are the only
-// translation units that include stb.
+// library translation units that include stb.
 
 // Enrolled faces are small crops; this only stops absurd files.
 inline constexpr size_t kMaxImageFileBytes = 32u << 20;
