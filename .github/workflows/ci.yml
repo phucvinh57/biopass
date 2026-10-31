@@ -72,8 +72,8 @@ jobs:
           path: auth/build
           key: ci-${{ runner.os }}-auth-${{ hashFiles('auth/BundleLibcamera.cmake', 'auth/PatchLibcameraNoCrypto.cmake', 'auth/Dependencies.cmake') }}
 
-      - name: Build auth
-        run: make build-auth BUILD_TYPE=Release
+      - name: Build auth and run C++ unit tests
+        run: make test-auth BUILD_TYPE=Release
 
       - uses: oven-sh/setup-bun@v2
 

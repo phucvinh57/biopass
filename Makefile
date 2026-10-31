@@ -6,13 +6,15 @@
 #         libudev-dev, libdrm-dev, libegl-dev, libgles-dev.
 #   app:  bun, rustup/cargo, tauri-cli v2, webkit2gtk, libssl-dev.
 
-.PHONY: all build build-auth build-app \
+.PHONY: all build build-auth build-app test-auth \
         package package-app \
         clean clean-auth clean-app \
         install-deps
 
 BUILD_TYPE   ?= Release
 AUTH_BUILD   := auth/build
+# Extra CMake flags, e.g. CMAKE_ARGS=-DBUILD_TESTS=ON
+CMAKE_ARGS   ?=
 APP_DIR      := app
 VERSION      ?= $(shell git describe --tags --always 2>/dev/null || echo "0.1.0")
 
@@ -29,10 +31,15 @@ build-auth:
 	      -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) \
 	      -DCMAKE_WARN_DEPRECATED=OFF \
 	      -DCMAKE_ERROR_DEPRECATED=OFF \
-	      -DPROJECT_VERSION=$(VERSION)
+	      -DPROJECT_VERSION=$(VERSION) \
+	      $(CMAKE_ARGS)
 	@echo "==> [auth] Building…"
 	cmake --build $(AUTH_BUILD) --config $(BUILD_TYPE) --parallel
 
+# Builds auth with BUILD_TESTS=ON and runs the unit tests registered with ctest.
+test-auth:
+	$(MAKE) build-auth CMAKE_ARGS="$(CMAKE_ARGS) -DBUILD_TESTS=ON"
+	ctest --test-dir $(AUTH_BUILD) --output-on-failure
 
 clean-auth:
 	@echo "==> [auth] Cleaning build directory…"
@@ -70,6 +77,7 @@ help:
 	@echo "  Targets:"
 	@echo "    build          Build both auth and app (default)"
 	@echo "    build-auth     Configure + build the C++ PAM module only"
+	@echo "    test-auth      Build auth with tests and run them (ctest)"
 	@echo "    build-app      Install JS deps + build the Tauri app only"
 	@echo "    package        Build + package everything into combined Linux bundles"
 	@echo "    package-app    Show Tauri combined bundle output paths"
