@@ -9,6 +9,7 @@
 #include <CLI/CLI.hpp>
 #include <algorithm>
 #include <ctime>
+#include <exception>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -287,7 +288,16 @@ int main(int argc, char** argv) {
     }
     // Only methods that start scanning report, so skipped runs stay silent.
     biopass::setStatusFd(statusFd);
-    return biopass::exitCode(authenticate(username, pamService));
+    // An unexpected exception (config, model loading, thread start) would
+    // otherwise abort with a core dump. Fail closed with AuthErr instead.
+    try {
+      return biopass::exitCode(authenticate(username, pamService));
+    } catch (const std::exception& e) {
+      spdlog::error("Biopass: authentication threw: {}", e.what());
+    } catch (...) {
+      spdlog::error("Biopass: authentication threw");
+    }
+    return biopass::exitCode(biopass::HelperExit::AuthErr);
   }
 
   spdlog::error("No valid subcommand provided");
