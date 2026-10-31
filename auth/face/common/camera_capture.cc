@@ -600,6 +600,12 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
     if (!buffer) {
       return false;
     }
+    // An errored or cancelled buffer holds partial or stale data.
+    if (buffer->metadata().status != libcamera::FrameMetadata::FrameSuccess) {
+      spdlog::debug("FaceAuth: Dropping frame with status {} from '{}'",
+                    static_cast<int>(buffer->metadata().status), camera_label_);
+      return false;
+    }
     const auto it = mappings_.find(buffer);
     if (it == mappings_.end()) {
       return false;
