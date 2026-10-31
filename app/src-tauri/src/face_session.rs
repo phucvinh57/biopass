@@ -143,7 +143,7 @@ pub fn start_face_preview(app: AppHandle, camera: Option<String>) -> Result<(), 
                         Ok(g) => g,
                         Err(_) => break,
                     };
-                    let io_ref: &mut ChildIO = &mut *io_guard;
+                    let io_ref: &mut ChildIO = &mut io_guard;
                     let send_err = io_ref.stdin.write_all(b"FRAME\n").is_err()
                         || io_ref.stdin.flush().is_err();
                     if send_err {
