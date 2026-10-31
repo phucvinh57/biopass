@@ -11,7 +11,7 @@ use tauri::{AppHandle, Emitter};
 
 use crate::config::load_config;
 use crate::db::{self, Model};
-use crate::paths::get_data_dir;
+use crate::paths::{ensure_private_dir, get_data_dir};
 
 const VALID_TASKS: [&str; 3] = ["detection", "recognition", "anti_spoofing"];
 const ANTI_SPOOFING_ARCHITECTURES: [&str; 2] = ["mobilenetv3", "minifasv2"];
@@ -40,8 +40,7 @@ struct DownloadProgress {
 
 fn models_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = get_data_dir(app)?.join("models");
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| format!("Failed to create models directory: {}", e))?;
+    ensure_private_dir(&dir).map_err(|e| format!("Failed to create models directory: {}", e))?;
     Ok(dir)
 }
 

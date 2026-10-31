@@ -58,16 +58,23 @@ pub fn ensure_private_file(file: &Path) -> io::Result<()> {
     }
 }
 
-/// Tightens the biometric data and app DB a looser older version left
-/// behind. Best effort: logs and goes on.
+/// Tightens what a looser older version left behind (old releases made the
+/// data tree 0755): the data dir and its faces/, debugs/ (face captures),
+/// logs/ and models/, the config dir and the DB. Best effort: logs and goes
+/// on.
 pub fn restrict_private_paths(app: &AppHandle) {
-    let paths = [
-        (get_faces_dir(app), 0o700),
-        (get_config_dir(app), 0o700),
-        (get_db_path(app), 0o600),
-    ];
+    let mut paths = Vec::new();
+    if let Ok(data) = get_data_dir(app) {
+        for sub in ["faces", "debugs", "logs", "models"] {
+            paths.push((data.join(sub), 0o700));
+        }
+        paths.push((data, 0o700));
+    }
+    if let Ok(config) = get_config_dir(app) {
+        paths.push((config.join(DB_FILE), 0o600));
+        paths.push((config, 0o700));
+    }
     for (path, max) in paths {
-        let Ok(path) = path else { continue };
         match restrict_mode(&path, max) {
             Ok(()) => {}
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
@@ -77,8 +84,8 @@ pub fn restrict_private_paths(app: &AppHandle) {
 }
 
 /// Clears the mode bits of `path` outside `max`. A symlink is left alone
-/// (not followed), and so is a path we don't own: only its owner may chmod
-/// it, and the app runs as the user.
+/// (not followed), and so is a path we don't own (e.g. root-owned from an
+/// old helper): only its owner may chmod it, so that is logged, not failed.
 fn restrict_mode(path: &Path, max: u32) -> io::Result<()> {
     let meta = fs::symlink_metadata(path)?;
     if meta.file_type().is_symlink() {
@@ -89,7 +96,14 @@ fn restrict_mode(path: &Path, max: u32) -> io::Result<()> {
         return Ok(());
     }
     match fs::set_permissions(path, fs::Permissions::from_mode(mode & max)) {
-        Err(e) if e.kind() == io::ErrorKind::PermissionDenied => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
+            eprintln!(
+                "Leaving {} as {:o}: not ours to chmod ({e})",
+                path.display(),
+                mode
+            );
+            Ok(())
+        }
         other => other,
     }
 }
@@ -118,8 +132,9 @@ mod tests {
         let tmp = temp_dir("mkdir");
         let faces = tmp.path().join("data").join("faces");
         ensure_private_dir(&faces).unwrap();
-        assert_eq!(mode(&faces), 0o700);
-        assert_eq!(mode(&tmp.path().join("data")), 0o700);
+        // The umask may clear owner bits too; only group/other must be clear.
+        assert_eq!(mode(&faces) & 0o077, 0);
+        assert_eq!(mode(&tmp.path().join("data")) & 0o077, 0);
     }
 
     #[test]
@@ -155,7 +170,7 @@ mod tests {
         let tmp = temp_dir("file-new");
         let db = tmp.path().join("biopass.db");
         ensure_private_file(&db).unwrap();
-        assert_eq!(mode(&db), 0o600);
+        assert_eq!(mode(&db) & 0o077, 0);
         assert_eq!(fs::metadata(&db).unwrap().len(), 0);
     }
 
