@@ -51,6 +51,7 @@ if(BUILD_TESTS)
     add_subdirectory(test/helper_argv)
     add_subdirectory(test/helper_wait)
     add_subdirectory(test/config_limits)
+    add_subdirectory(test/config_validation)
     add_subdirectory(test/ir_presence)
 endif()
 

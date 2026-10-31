@@ -20,8 +20,72 @@ constexpr size_t kMaxConfigBytes = 1 << 20;
 
 }  // namespace
 
-void clampStrategyLimits(MethodsConfig& methods) {
-  FaceMethodConfig& face = methods.face;
+namespace {
+
+const std::vector<std::string> kSupportedMethods = {"face", "fingerprint"};
+
+// NaN fails both comparisons, so it is out of range too.
+bool thresholdInRange(float t) { return t >= kMinThreshold && t <= kMaxThreshold; }
+
+// Keeps known methods once each, in the user's order, then appends any the
+// user left out.
+std::vector<std::string> normalizeOrder(const std::vector<std::string>& order) {
+  std::vector<std::string> out;
+  for (const auto& method : order) {
+    if (std::find(kSupportedMethods.begin(), kSupportedMethods.end(), method) !=
+            kSupportedMethods.end() &&
+        std::find(out.begin(), out.end(), method) == out.end()) {
+      out.push_back(method);
+    }
+  }
+  for (const auto& method : kSupportedMethods) {
+    if (std::find(out.begin(), out.end(), method) == out.end()) {
+      out.push_back(method);
+    }
+  }
+  return out;
+}
+
+// Drops empty and repeated entries, keeping the first of each.
+std::vector<std::string> dedupeServices(const std::vector<std::string>& services) {
+  std::vector<std::string> out;
+  for (const auto& service : services) {
+    if (!service.empty() && std::find(out.begin(), out.end(), service) == out.end()) {
+      out.push_back(service);
+    }
+  }
+  return out;
+}
+
+// A threshold outside [0, 1] can only loosen or break a check: recognition
+// matches when cosine similarity > threshold (-2 lets any face in),
+// anti-spoofing flags a spoof when its probability >= threshold (above 1 or
+// NaN never does), detection keeps boxes whose score >= threshold. None of
+// them has a safe value to clamp to, so face is turned off and PAM falls
+// through to the next module. The anti-spoofing threshold only counts when
+// anti-spoofing is on.
+bool faceThresholdsValid(const FaceMethodConfig& face) {
+  return thresholdInRange(face.detection.threshold) &&
+         thresholdInRange(face.recognition.threshold) &&
+         (!face.anti_spoofing.enable || thresholdInRange(face.anti_spoofing.model.threshold));
+}
+
+}  // namespace
+
+void validateConfig(BiopassConfig& config) {
+  StrategyConfig& strategy = config.strategy;
+  if (strategy.execution_mode != "sequential") {
+    strategy.execution_mode = "parallel";
+  }
+  strategy.order = normalizeOrder(strategy.order);
+  strategy.ignore_services = dedupeServices(strategy.ignore_services);
+
+  FaceMethodConfig& face = config.methods.face;
+  if (face.enable && !faceThresholdsValid(face)) {
+    spdlog::warn("Biopass: a face threshold is outside [{}, {}], face is disabled", kMinThreshold,
+                 kMaxThreshold);
+    face.enable = false;
+  }
   face.retries = std::min(face.retries, kMaxFaceRetries);
   face.retry_delay = std::min(face.retry_delay, kMaxRetryDelayMs);
   face.anti_spoofing.ir_warmup_delay_ms =
@@ -29,7 +93,7 @@ void clampStrategyLimits(MethodsConfig& methods) {
   face.anti_spoofing.ir_presence_timeout_ms =
       std::clamp(face.anti_spoofing.ir_presence_timeout_ms, 0, kMaxIrPresenceTimeoutMs);
 
-  FingerprintMethodConfig& fp = methods.fingerprint;
+  FingerprintMethodConfig& fp = config.methods.fingerprint;
   fp.retries = std::min(fp.retries, kMaxFingerprintRetries);
   if (fp.timeout == 0 || fp.timeout > kMaxFingerprintTimeoutMs) {
     fp.timeout = kMaxFingerprintTimeoutMs;
@@ -85,8 +149,6 @@ std::optional<BiopassConfig> readConfig(const std::string& username) {
     }
     config.schema_version = schema_version;
 
-    static const std::vector<std::string> supported_methods = {"face", "fingerprint"};
-
     if (yaml["strategy"]) {
       const auto& s = yaml["strategy"];
       if (s["debug"])
@@ -102,38 +164,12 @@ std::optional<BiopassConfig> readConfig(const std::string& username) {
         if (s["ignore_services"].IsSequence()) {
           for (const auto& item : s["ignore_services"]) {
             if (item.IsScalar()) {
-              const auto service = item.as<std::string>();
-              if (service.empty()) {
-                continue;
-              }
-              if (std::find(config.strategy.ignore_services.begin(),
-                            config.strategy.ignore_services.end(),
-                            service) == config.strategy.ignore_services.end()) {
-                config.strategy.ignore_services.push_back(service);
-              }
+              config.strategy.ignore_services.push_back(item.as<std::string>());
             }
           }
         }
       }
     }
-    std::vector<std::string> normalized_order;
-    for (const auto& method : config.strategy.order) {
-      if (std::find(supported_methods.begin(), supported_methods.end(), method) ==
-          supported_methods.end()) {
-        continue;
-      }
-      if (std::find(normalized_order.begin(), normalized_order.end(), method) ==
-          normalized_order.end()) {
-        normalized_order.push_back(method);
-      }
-    }
-    for (const auto& method : supported_methods) {
-      if (std::find(normalized_order.begin(), normalized_order.end(), method) ==
-          normalized_order.end()) {
-        normalized_order.push_back(method);
-      }
-    }
-    config.strategy.order = std::move(normalized_order);
 
     if (yaml["methods"]) {
       const auto& m = yaml["methods"];
@@ -208,7 +244,7 @@ std::optional<BiopassConfig> readConfig(const std::string& username) {
     spdlog::error("Biopass: Failed to parse config: {}, using defaults", e.what());
   }
 
-  clampStrategyLimits(config.methods);
+  validateConfig(config);
   return config;
 }
 

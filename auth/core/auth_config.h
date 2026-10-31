@@ -100,10 +100,22 @@ inline constexpr int kMaxIrPresenceTimeoutMs = 10000;
 inline constexpr uint32_t kMaxFingerprintRetries = 5;
 inline constexpr uint32_t kMaxFingerprintTimeoutMs = 10000;
 
-// Clamps retries, delays and timeouts into [0, max]. fingerprint.timeout 0
-// used to mean "wait forever"; it now means the maximum. readConfig() calls
-// this on every config it returns.
-void clampStrategyLimits(MethodsConfig& methods);
+// Thresholds are probabilities or cosine similarities in [0, 1].
+inline constexpr float kMinThreshold = 0.0f;
+inline constexpr float kMaxThreshold = 1.0f;
+
+// Puts a config into the ranges the helper relies on. readConfig() calls it
+// on every config it returns.
+// - A face threshold outside [kMinThreshold, kMaxThreshold] (or NaN) turns
+//   face off: there is no safe value to clamp it to. The anti-spoofing
+//   threshold only counts while anti-spoofing is on.
+// - order keeps each known method once and appends the missing ones;
+//   ignore_services drops empty and repeated names; an unknown
+//   execution_mode means "parallel".
+// - Retries, delays and timeouts are clamped into [0, max].
+//   fingerprint.timeout 0 used to mean "wait forever"; it now means the
+//   maximum.
+void validateConfig(BiopassConfig& config);
 
 std::string getConfigPath(const std::string& username);
 // nullopt when config.yaml is missing, unreadable or not a regular file.
