@@ -21,6 +21,7 @@
 #include <utility>
 #include <vector>
 
+#include "camera_lifecycle.h"
 #include "pixel_convert.h"
 
 namespace biopass {
@@ -394,7 +395,7 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
 
   ~LibcameraCaptureSession() override { close(); }
 
-  bool isOpen() const override { return started_; }
+  bool isOpen() const override { return lifecycle_.isStarted(); }
 
   ImageRGB capture() override {
     if (!isOpen()) {
@@ -480,7 +481,7 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
       spdlog::error("FaceAuth: Failed to acquire camera '{}'", camera_label_);
       return false;
     }
-    acquired_ = true;
+    lifecycle_.markAcquired();
 
     if (camera_->configure(config_.get()) != 0) {
       spdlog::error("FaceAuth: Failed to configure camera '{}'", camera_label_);
@@ -529,12 +530,13 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
       camera_->requestCompleted.disconnect(&connection_token_);
       return false;
     }
-    started_ = true;
+    lifecycle_.markStarted();
 
     for (auto& request : requests_) {
       if (camera_->queueRequest(request.get()) < 0) {
+        // The camera is running and owns the requests already queued; close()
+        // (via the destructor) stops it before they are freed.
         spdlog::error("FaceAuth: Failed to queue initial request for '{}'", camera_label_);
-        started_ = false;
         return false;
       }
     }
@@ -611,10 +613,14 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
     return convertFrame(pixel_format_, data, bytes_used, width_, height_, stride_, out);
   }
 
+  // Safe to call more than once.
   void close() {
-    if (started_) {
-      camera_->stop();
-      started_ = false;
+    if (lifecycle_.needsStop()) {
+      const int ret = camera_->stop();
+      if (ret < 0) {
+        spdlog::error("FaceAuth: Failed to stop camera '{}': {}", camera_label_, ret);
+      }
+      lifecycle_.markStopped(ret == 0);
     }
     camera_->requestCompleted.disconnect(&connection_token_);
     {
@@ -625,11 +631,20 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
       munmap(mapping.base, mapping.size);
     }
     mappings_.clear();
-    requests_.clear();
-    allocator_.reset();
-    if (acquired_) {
+    if (lifecycle_.canFreeBuffers()) {
+      requests_.clear();
+      allocator_.reset();
+    } else {
+      // libcamera may still hold these; leaking beats a use-after-free.
+      for (auto& request : requests_) {
+        (void)request.release();
+      }
+      requests_.clear();
+      (void)allocator_.release();
+    }
+    if (lifecycle_.needsRelease()) {
       camera_->release();
-      acquired_ = false;
+      lifecycle_.markReleased();
     }
   }
 
@@ -663,8 +678,7 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
   std::deque<libcamera::Request*> completed_;
   int connection_token_ = 0;
 
-  bool acquired_ = false;
-  bool started_ = false;
+  CameraLifecycle lifecycle_;
 };
 
 }  // namespace
