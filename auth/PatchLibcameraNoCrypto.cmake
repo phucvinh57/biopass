@@ -1,16 +1,10 @@
 # Patch step for the bundled libcamera (see BundleLibcamera.cmake).
 #
-# libcamera's src/libcamera/meson.build auto-detects gnutls, then libcrypto,
-# purely to verify IPA module signatures. There is no meson option to turn this
-# off, and whichever crypto lib the build host has gets linked; libcrypto.so.3
-# then breaks the module on OpenSSL 4 systems (issue #176). Replace both
-# lookups with a not-found dependency so libcamera never links a crypto
-# library. Without one, signatures can never verify and every IPA runs
-# isolated in a proxy worker process.
-#
-# src/meson.build also signs IPA modules whenever the `openssl` program is on
-# the build host. With no crypto library that is pointless and makes libcamera
-# log "Public key not valid" on every start, so drop that lookup too.
+# libcamera auto-links gnutls or libcrypto (no meson option) only to verify
+# IPA signatures; libcrypto.so.3 then breaks on OpenSSL 4 systems (#176).
+# Force both lookups to not-found, so every IPA runs isolated in a proxy.
+# Also drop the `openssl` signing lookup, which is pointless without a crypto
+# lib and logs "Public key not valid" on every start.
 #
 # Usage: cmake -DLIBCAMERA_SOURCE_DIR=<dir> -P PatchLibcameraNoCrypto.cmake
 # Idempotent; fails loudly if a libcamera bump changes the patched lines.

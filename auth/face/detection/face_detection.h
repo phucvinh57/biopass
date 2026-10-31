@@ -1,11 +1,9 @@
 #ifndef FACE_DET_H
 #define FACE_DET_H
 
-// CPP native
 #include <string>
 #include <vector>
 
-// Image utilities (replaces OpenCV)
 #include "image_utils.h"
 #include "onnx_session.h"
 

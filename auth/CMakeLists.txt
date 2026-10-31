@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
-# Resolve version from the environment (CI) or -DPROJECT_VERSION (Makefile),
-# before project() clears the variable, otherwise fall back to a default.
+# Read the version (env in CI, -DPROJECT_VERSION from Makefile) before
+# project() clears it.
 if(DEFINED ENV{PROJECT_VERSION})
     set(BIOPASS_VERSION $ENV{PROJECT_VERSION})
 elseif(PROJECT_VERSION)
@@ -13,7 +13,6 @@ project(biopass)
 set(PROJECT_VERSION ${BIOPASS_VERSION})
 message(STATUS "Project version: ${PROJECT_VERSION}")
 
-# Require C++17
 set(CMAKE_CXX_STANDARD          17)
 set(CMAKE_CXX_STANDARD_REQUIRED YES)
 
@@ -21,21 +20,17 @@ set(CMAKE_CXX_STANDARD_REQUIRED YES)
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
 set(CMAKE_SKIP_BUILD_RPATH FALSE)
-# Dependencies Configuration
 include(Dependencies.cmake)
 
-# Export Face Includes dynamically from Source
 set(FaceDetection_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/face/detection)
 set(FaceRecognition_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/face/recognition)
 set(FaceAntiSpoof_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/face/antispoofing)
 
-# Application Directories
 add_subdirectory(core)
 add_subdirectory(face)
 add_subdirectory(fingerprint)
 add_subdirectory(pam)
 
-# Testing Directories
 option(BUILD_TESTS "Build test configurations" OFF)
 if(BUILD_TESTS)
     add_subdirectory(test/camera)
@@ -56,7 +51,6 @@ install(
     LIBRARY DESTINATION "/lib/security"
 )
 
-# Install ONNX Runtime libraries
 install(
     DIRECTORY ${ONNXRUNTIME_LIB_DIR}/
     DESTINATION "/usr/lib/biopass"

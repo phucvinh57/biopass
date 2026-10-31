@@ -3,12 +3,11 @@ add_library(${PAM} SHARED
     pam.cc
 )
 
-# The PAM module is now lightweight and only needs basic PAM headers
+# The PAM module only forks biopass-helper; all heavy logic lives there.
 target_link_libraries(${PAM}
     pam
 )
 
-# New helper binary that contains the actual heavy ML logic
 add_executable(biopass-helper
     helper.cc
 )
@@ -35,5 +34,4 @@ target_link_libraries(biopass-helper
     spdlog::spdlog_header_only
 )
 
-# Install rules
 install(TARGETS biopass-helper RUNTIME DESTINATION "/usr/bin")

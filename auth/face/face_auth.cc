@@ -18,9 +18,8 @@ namespace biopass {
 
 bool FaceAuth::isAvailable() const { return checkCameraAvailability(face_config_.camera); }
 
-// Opens the IR session only when the IR presence check is about to run. A
-// failed open leaves ir_camera_session_ null; checkAntiSpoof() then falls back
-// to a one-shot capture per attempt.
+// A failed open leaves ir_camera_session_ null; checkAntiSpoof() then falls
+// back to a one-shot capture per attempt.
 void FaceAuth::ensureIrSession() {
   if (face_config_.anti_spoofing.ir_camera.has_value() &&
       !face_config_.anti_spoofing.ir_camera->empty() &&
@@ -182,7 +181,6 @@ AuthResult FaceAuth::authenticate(const std::string& username, const AuthConfig&
     return AuthResult::Failure;
   }
 
-  // Match against all enrolled faces — succeed if any match.
   spdlog::debug("FaceAuth: Recognition | threshold={:.3f} enrolled_count={}",
                 face_config_.recognition.threshold, enrolledFaces.size());
   for (const auto& facePath : enrolledFaces) {

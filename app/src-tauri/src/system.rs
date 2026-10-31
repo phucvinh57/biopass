@@ -49,7 +49,6 @@ pub fn list_video_devices() -> Result<Vec<VideoDeviceInfo>, String> {
         });
     }
 
-    // Sort naturally video0, video1, video2...
     devices.sort_by_key(|a| video_device_sort_key(&a.path));
 
     Ok(devices)

@@ -55,9 +55,8 @@ std::vector<int> nms(const std::vector<RawDet>& dets, float iou_threshold) {
 
 std::vector<RawDet> non_max_suppression(const float* output, int num_preds, int pred_dim,
                                         float conf_thres, float iou_thres, int max_det) {
-  // YOLOv8-face output shape: [1, pred_dim, num_preds]
-  // pred_dim=20: 4 (xywh) + 1 (face class) + 15 (5 keypoints * 3)
-  // We use index 4 as the face class score (nc=1 for face-only models)
+  // YOLOv8-face output: [1, pred_dim, num_preds], pred_dim = 4 (xywh) +
+  // 1 (face score, index 4) + 15 (5 keypoints * 3).
   int nc = 1;
 
   std::vector<RawDet> candidates;

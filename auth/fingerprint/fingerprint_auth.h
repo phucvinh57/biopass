@@ -8,11 +8,7 @@
 
 namespace biopass {
 
-/**
- * Fingerprint authentication method.
- * Placeholder implementation - returns Unavailable until fingerprint auth is
- * implemented.
- */
+// Fingerprint auth via fprintd over D-Bus.
 class FingerprintAuth : public IAuthMethod {
  public:
   explicit FingerprintAuth(const FingerprintMethodConfig& config) : config_(config) {}

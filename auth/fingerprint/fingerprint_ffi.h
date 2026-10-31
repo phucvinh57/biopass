@@ -4,10 +4,7 @@
 extern "C" {
 #endif
 
-/**
- * FFI Interface for FingerprintAuth
- * This provides C-compatible functions for calling from Rust
- */
+// C interface to FingerprintAuth for the Rust app.
 
 typedef enum {
   AUTH_SUCCESS = 0,
@@ -20,9 +17,6 @@ typedef struct {
   int retries;
 } FingerprintAuthConfig;
 
-/**
- * Callback for enrollment progress
- */
 typedef void (*EnrollProgressCallback)(bool done, const char* status, void* user_data);
 
 void* fingerprint_auth_new(void);

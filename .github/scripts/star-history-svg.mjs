@@ -1,9 +1,7 @@
 #!/usr/bin/env bun
-// Renders static star-history SVGs (light + dark) for phucvinh57/biopass by
-// pulling stargazer timestamps directly from the GitHub REST API. This
-// replaces the api.star-history.com embed, which now requires the viewer's
-// own token to resolve stargazer timestamps for this repo (and whose shared
-// token pool is frequently rate-limited anyway).
+// Renders light + dark star-history SVGs from the GitHub REST API. Replaces
+// the api.star-history.com embed, which needs the viewer's own token and is
+// often rate-limited.
 
 const OWNER = "phucvinh57";
 const REPO = "biopass";
@@ -44,10 +42,8 @@ async function fetchStarTimestamps() {
 const DAY_MS = 86_400_000;
 const dayStart = (d) => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
 
-// Collapses raw star timestamps into one cumulative-count point per calendar
-// day, anchored with a zero point the day before the first star and a final
-// point at today. Bucketing by day (rather than plotting one point per star)
-// keeps the path light and the curve smooth even for repos with star bursts.
+// One cumulative point per day, plus a zero point before the first star and
+// a final point at today. Daily buckets keep the path small and smooth.
 function buildDailyPoints(timestamps) {
   const today = dayStart(new Date());
   if (timestamps.length === 0) {
@@ -95,9 +91,8 @@ function computeMilestones(points, maxCount) {
   return milestones;
 }
 
-// Smooths a polyline by drawing quadratic Beziers between the midpoints of
-// consecutive points, using each real data point as the control point. This
-// stays visually close to the raw (monotonic) data with no spline overshoot.
+// Quadratic Beziers between midpoints, with each data point as the control
+// point: smooth, with no overshoot on monotonic data.
 function smoothPath(coords) {
   if (coords.length < 3) {
     return coords.map((c, i) => `${i === 0 ? "M" : "L"}${c.x.toFixed(2)},${c.y.toFixed(2)}`).join(" ");

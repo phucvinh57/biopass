@@ -32,7 +32,6 @@ std::vector<Detection> FaceDetection::inference(const ImageRGB& image) {
     int x2 = std::min(image.width, (int)d.x2);
     int y2 = std::min(image.height, (int)d.y2);
 
-    // Ensure the box has positive area after clipping
     if (x2 - x1 <= 0 || y2 - y1 <= 0) {
       continue;
     }

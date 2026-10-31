@@ -5,9 +5,8 @@ use tauri::AppHandle;
 
 use crate::paths::{get_config_dir, get_config_path};
 
-/// Bumped whenever the on-disk config.yaml shape changes in a way that isn't
-/// forward/backward compatible. Mirrors CURRENT_SCHEMA_VERSION in
-/// auth/core/auth_config.h - keep both in sync.
+/// Bump on incompatible config.yaml changes. Keep in sync with
+/// CURRENT_SCHEMA_VERSION in auth/core/auth_config.h.
 pub const CURRENT_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -109,9 +108,8 @@ fn get_default_config() -> BiopassConfig {
                     threshold: 0.5,
                 },
                 anti_spoofing: AntiSpoofingConfig {
-                    // Off until a model is validated on real camera crops:
-                    // the bundled checkpoints reject real faces (#76).
-                    // Mirrors AntiSpoofingConfig::enable in auth_config.h.
+                    // Off: the bundled checkpoints reject real faces (#76). Keep in sync
+                    // with AntiSpoofingConfig::enable in auth_config.h.
                     enable: false,
                     model: AntiSpoofingModelConfig {
                         model_id: "mobilenetv3-antispoof".to_string(),
@@ -132,9 +130,8 @@ fn get_default_config() -> BiopassConfig {
     }
 }
 
-/// Parses config.yaml content, falling back to defaults on a parse error or a
-/// schema_version that doesn't match CURRENT_SCHEMA_VERSION -- mirrors the
-/// defaults+warn fallback in auth/core/auth_config.cc's readConfig().
+/// Falls back to defaults on a parse error or schema_version mismatch, like
+/// readConfig() in auth/core/auth_config.cc.
 fn parse_config(content: &str) -> BiopassConfig {
     match serde_yaml::from_str::<BiopassConfig>(content) {
         Ok(config) if config.schema_version == CURRENT_SCHEMA_VERSION => config,
@@ -182,9 +179,8 @@ pub fn save_config(app: AppHandle, config: BiopassConfig) -> Result<(), String> 
     let yaml_content =
         serde_yaml::to_string(&config).map_err(|e| format!("Failed to serialize config: {}", e))?;
 
-    // Write to a temp file in the same directory (so the rename below is an
-    // atomic same-filesystem operation) then persist over the real path, so a
-    // crash mid-write can never leave config.yaml truncated/corrupt.
+    // Temp file in the same dir so the rename is atomic: a crash mid-write
+    // can't truncate config.yaml.
     let mut tmp_file = tempfile::NamedTempFile::new_in(&config_dir)
         .map_err(|e| format!("Failed to create temporary config file: {}", e))?;
     tmp_file

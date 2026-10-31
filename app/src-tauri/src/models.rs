@@ -41,9 +41,8 @@ fn models_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-/// Anti-spoofing models need an architecture: the auth side picks
-/// preprocessing and output decoding from it. Other tasks have a single
-/// implementation and take none.
+/// Only anti-spoofing models take an architecture; auth picks preprocessing
+/// and output decoding from it.
 fn validate_task(task: &str, architecture: Option<&str>) -> Result<(), String> {
     if !VALID_TASKS.contains(&task) {
         return Err(format!(
@@ -104,10 +103,8 @@ fn unique_model_id(conn: &Connection, base: &str) -> Result<String, String> {
     Err("Failed to allocate a unique model id".to_string())
 }
 
-/// ONNX has no fixed magic number, but a serialized ModelProto is a protobuf
-/// message whose first field (ir_version, field 1, varint) means real .onnx
-/// files begin with byte 0x08. This is a heuristic guard against obviously
-/// wrong content (HTML error pages, JSON, etc.), not a full parse.
+/// Heuristic, not a parse: a serialized ModelProto starts with ir_version
+/// (field 1, varint), i.e. byte 0x08. Rejects HTML error pages, JSON, etc.
 fn looks_like_onnx(bytes: &[u8]) -> bool {
     matches!(bytes.first(), Some(0x08))
 }

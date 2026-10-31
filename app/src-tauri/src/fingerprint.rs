@@ -83,7 +83,7 @@ pub async fn remove_fingerprint(
     Ok(())
 }
 
-/// Add fingerprint (legacy, kept for compatibility)
+/// Legacy, kept for compatibility.
 #[tauri::command]
 pub async fn add_fingerprint(
     app: AppHandle,
@@ -97,7 +97,7 @@ pub async fn add_fingerprint(
     enroll_fingerprint(app, username, finger).await
 }
 
-/// Delete fingerprint (legacy, kept for compatibility)
+/// Legacy, kept for compatibility.
 #[tauri::command]
 pub fn delete_fingerprint(app: AppHandle, finger: String) -> Result<(), String> {
     let username = std::env::var("USER")

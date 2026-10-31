@@ -14,15 +14,11 @@ enum class ExecutionMode {
   Parallel     // Run all methods concurrently, succeed on first success
 };
 
-/**
- * Manages multiple authentication methods and their execution.
- */
 class AuthManager {
  public:
   AuthManager() = default;
   ~AuthManager() = default;
 
-  // Non-copyable, movable
   AuthManager(const AuthManager&) = delete;
   AuthManager& operator=(const AuthManager&) = delete;
   AuthManager(AuthManager&&) = default;

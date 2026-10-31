@@ -47,13 +47,9 @@ BiopassConfig readConfig(const std::string& username) {
   try {
     YAML::Node yaml = YAML::LoadFile(config_path);
 
-    // Schema gate: this side never migrates config.yaml (only the Tauri app
-    // writes it), so an absent/mismatched schema_version is treated exactly
-    // like a missing/corrupt file -- fall back to defaults. A defaulted
-    // config's model_ids won't resolve against biopass.db either, so
-    // ModelRegistry::resolveModel() returns nullopt and
-    // ensureModelsLoaded() safely reports Unavailable, letting PAM fall
-    // through to normal system auth instead of locking anyone out.
+    // Schema mismatch = defaults (only the app migrates). Default model_ids
+    // don't resolve, so face auth reports Unavailable and PAM falls through
+    // to normal auth instead of locking anyone out.
     int schema_version = yaml["schema_version"] ? yaml["schema_version"].as<int>() : 0;
     if (schema_version != kCurrentSchemaVersion) {
       spdlog::warn(
@@ -195,10 +191,6 @@ BiopassConfig readConfig(const std::string& username) {
   return config;
 }
 
-// ---------------------------------------------------------------------------
-// Directory / path helpers
-// ---------------------------------------------------------------------------
-
 static int mkdir_p(const std::string& path) {
   size_t pos = 0;
   std::string dir;
@@ -277,11 +269,8 @@ int setupConfig(const std::string& username) {
   if (mkdir_p(dataDir + "/logs") != 0)
     return 1;
 
-  // PAM auth flows run this as root, which leaves freshly created
-  // directories owned by root:root; a later user-invoked run (the desktop
-  // app capturing a preview, or a dev testing biopass-helper directly) then
-  // can't write into them. Hand the whole subtree back to the target user
-  // so root- and user-invoked runs never fight over ownership.
+  // PAM runs this as root; chown the tree back so later user-run
+  // processes (the app, a dev running biopass-helper) can still write.
   fixOwnership(dataDir, username);
   fixOwnership(dataDir + "/faces", username);
   fixOwnership(dataDir + "/debugs", username);

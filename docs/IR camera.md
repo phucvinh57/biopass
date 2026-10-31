@@ -1,6 +1,6 @@
 # IR Camera Guide
 
-Biopass uses infrared (IR) camera for face anti-spoofing, rather than relying only on the RGB anti-spoofing AI model. This is usually configured as a Linux video device path such as `/dev/video2`. If your devices supports IR camera, you can turn on this option by using the configuration UI.
+Biopass can use an infrared (IR) camera for face anti-spoofing, in addition to the RGB anti-spoofing model. It is configured in the app as a video device path such as `/dev/video2`.
 
 ## Requirements
 
@@ -18,7 +18,7 @@ List video devices:
 ls -l /dev/video*
 ```
 
-If `v4l2-ctl` is available, it is usually easier to identify the correct device with:
+`v4l2-ctl` makes it easier to identify:
 
 ```bash
 v4l2-ctl --list-devices
@@ -26,15 +26,13 @@ v4l2-ctl --list-devices
 
 Look for the device node that belongs to your IR sensor, for example `/dev/video2`.
 
-Biopass captures through libcamera; you can also identify devices with `cam -l` (from `libcamera-tools`) or the bundled `camera_capture_test --list-devices` / `--list-formats /dev/videoN` debug tool.
+Biopass captures through libcamera, so `cam -l` (from `libcamera-tools`) or the bundled `camera_capture_test --list-devices` / `--list-formats /dev/videoN` debug tool also work.
 
 ## 2. Enable It In Biopass
 
-Open the Biopass desktop app and go to the face settings.
+In the app's face settings, anti-spoofing section:
 
-In the anti-spoofing section:
-
-1. Enable face anti-spoofing if you want to use the AI anti-spoofing model too.
+1. Enable face anti-spoofing if you also want the AI model.
 2. Set `IR Camera` to the correct `/dev/video*` device.
 3. Save your configuration.
 
@@ -42,9 +40,7 @@ If you only want IR-based anti-spoofing, selecting the `IR Camera` device is eno
 
 ## 3. If The IR Emitter Stays Off On Linux
 
-On some Linux systems, the IR camera is detected but the IR light emitter does not turn on automatically. In that case, use [`linux-enable-ir-emitter`](https://github.com/EmixamPP/linux-enable-ir-emitter).
-
-To install it:
+If the IR camera is detected but its emitter does not light up, use [`linux-enable-ir-emitter`](https://github.com/EmixamPP/linux-enable-ir-emitter):
 
 ```bash
 VERSION=6.1.2
@@ -53,13 +49,13 @@ wget https://github.com/EmixamPP/linux-enable-ir-emitter/releases/download/$VERS
 sudo tar -C / --no-same-owner -m -h -vxzf $DIST
 ```
 
-Then, configure your IR emitter: 
+Configure the emitter:
 
 ```bash
 sudo linux-enable-ir-emitter configure
 ```
 
-After successfully triggering your IR emitter, run:
+Once it works, enable it at boot:
 
 ```bash
 sudo systemctl enable --now linux-enable-ir-emitter
@@ -67,8 +63,4 @@ sudo systemctl enable --now linux-enable-ir-emitter
 
 ## 4. If The IR Presence Check Fails Intermittently
 
-Some IR emitters blink rapidly, so an individual captured frame can be over-exposed
-(all-white) or under-exposed (all-dark) and yield no detectable face. Biopass retries
-the IR presence check (capture + detection) for up to `anti_spoofing.ir_presence_timeout_ms`
-milliseconds (default `1500`) in `config.yaml` before giving up, so a single bad frame
-should no longer fail the check. If failures persist, try increasing this value.
+Some IR emitters blink, so a single frame can be all-white or all-dark with no detectable face. Biopass retries the IR presence check (capture + detection) for up to `anti_spoofing.ir_presence_timeout_ms` (default `1500`) in `config.yaml`. If failures persist, increase it.

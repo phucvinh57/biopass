@@ -1,31 +1,20 @@
-# ==============================================================================
-# Bundled libcamera
-#
-# libcamera has an unstable C++ ABI and bumps its soname (libcamera.so.0.X)
-# every minor release, so linking against whatever the build host happens to
-# have installed makes the resulting binary fragile across distros/versions.
-# Instead we build a pinned libcamera from source and bundle the result into
-# the package, the same way ONNX Runtime is already bundled.
-#
-# Pipelines: uvcvideo for USB/IR webcams, plus simple with its SoftISP IPA for
-# MIPI laptop cameras without a hardware ISP (e.g. Intel IPU6, issue #169).
-# ==============================================================================
+# Bundled libcamera. Its C++ ABI is unstable and its soname changes every
+# minor release, so we build a pinned version and ship it (like ONNX Runtime).
+# Pipelines: uvcvideo for USB/IR webcams; simple + SoftISP for MIPI cameras
+# without a hardware ISP (e.g. Intel IPU6, #169).
 
 include(ExternalProject)
 
 set(LIBCAMERA_VERSION "v0.7.0")
 
-# libcamera compiles absolute paths into libcamera.so to find its IPA modules,
-# IPA proxy workers and IPA tuning files at runtime. Build it for the final
-# package layout (must match app/src-tauri/tauri.conf.json) and install into a
-# DESTDIR staging tree, so the paths are right once the package is installed:
+# libcamera compiles in absolute IPA paths, so build for the final package
+# layout (must match app/src-tauri/tauri.conf.json), staged via DESTDIR:
 #   libcamera.so.X.Y   /usr/lib/biopass/                  (ld.so.conf.d/biopass.conf)
 #   IPA modules        /usr/lib/biopass/libcamera/ipa/     (libdir/libcamera/ipa)
 #   proxy workers      /usr/lib/biopass/libcamera/         (libexecdir/libcamera)
 #   IPA tuning files   /usr/share/biopass/libcamera/ipa/   (datadir/libcamera/ipa)
 #   configuration      /etc/biopass/libcamera/             (sysconfdir/libcamera)
-# Private data/sysconf dirs keep a system libcamera of another version from
-# feeding us its tuning or configuration files.
+# Private data/sysconf dirs keep a system libcamera's files out.
 set(LIBCAMERA_PREFIX     "/usr")
 set(LIBCAMERA_LIBDIR     "lib/biopass")
 set(LIBCAMERA_DATADIR    "share/biopass")
@@ -34,7 +23,7 @@ set(LIBCAMERA_SYSCONFDIR "/etc/biopass")
 set(LIBCAMERA_STAGING "${CMAKE_BINARY_DIR}/libcamera")
 set(LIBCAMERA_ROOT    "${LIBCAMERA_STAGING}${LIBCAMERA_PREFIX}")
 set(LIBCAMERA_SODIR   "${LIBCAMERA_ROOT}/${LIBCAMERA_LIBDIR}")
-# libcamera installs headers to <prefix>/include/libcamera/libcamera/*.h.
+# Headers land in <prefix>/include/libcamera/libcamera/*.h.
 set(LIBCAMERA_INCDIR  "${LIBCAMERA_ROOT}/include/libcamera")
 file(MAKE_DIRECTORY "${LIBCAMERA_INCDIR}")
 
@@ -65,10 +54,10 @@ target_include_directories(libcamera_bundled INTERFACE ${LIBCAMERA_INCDIR})
 target_link_libraries(libcamera_bundled INTERFACE
     ${LIBCAMERA_SODIR}/libcamera.so ${LIBCAMERA_SODIR}/libcamera-base.so)
 
-# Derive the soname suffix from the pinned version (v0.7.0 -> 0.7).
+# v0.7.0 -> 0.7
 string(REGEX REPLACE "^v?([0-9]+)\\.([0-9]+).*" "\\1.\\2" LIBCAMERA_SOVER "${LIBCAMERA_VERSION}")
 
-# Stage the files Tauri bundles into the package (see tauri.conf.json):
+# Files Tauri bundles (see tauri.conf.json):
 #   libcamera.so.X.Y, libcamera-base.so.X.Y      -> /usr/lib/biopass/
 #   libcamera/ipa/ipa_soft_simple.so             -> /usr/lib/biopass/libcamera/ipa/
 #   libcamera/soft_ipa_proxy                     -> /usr/lib/biopass/libcamera/
@@ -86,7 +75,7 @@ ExternalProject_Add_Step(libcamera_ext stage_bundle
         ${LIBCAMERA_BUNDLE_DIR}/ipa/simple/uncalibrated.yaml
     COMMAND ${CMAKE_COMMAND} -E make_directory
             "${LIBCAMERA_BUNDLE_DIR}/libcamera/ipa" "${LIBCAMERA_BUNDLE_DIR}/ipa/simple"
-    # `cmake -E copy` follows the staging symlinks, so these land as real files named by soname.
+    # `cmake -E copy` follows symlinks: real files named by soname.
     COMMAND ${CMAKE_COMMAND} -E copy "${LIBCAMERA_SODIR}/libcamera.so.${LIBCAMERA_SOVER}"
             "${LIBCAMERA_BUNDLE_DIR}/libcamera.so.${LIBCAMERA_SOVER}"
     COMMAND ${CMAKE_COMMAND} -E copy "${LIBCAMERA_SODIR}/libcamera-base.so.${LIBCAMERA_SOVER}"

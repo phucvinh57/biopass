@@ -47,17 +47,11 @@ std::string todayDateString() {
   return std::string(buf);
 }
 
-// This process's stdout/stderr are inherited from whatever spawned the PAM
-// stack, and PAM callers routinely treat those fds as a structured control
-// channel rather than a log stream -- e.g. GNOME Shell's polkit auth agent
-// reads polkit-agent-helper-1's inherited output as a strict line protocol
-// (SUCCESS / FAILURE / PAM_PROMPT_ECHO_OFF ...). biopass-helper is forked
-// from that same process tree, so *any* line it writes there, even a single
-// warning, is garbage to that parser and derails the caller's state machine
-// (observed as GNOME Shell logging "Unknown line ... from helper" and
-// retrying authentication in a tight loop -- `pkexec id` never returning).
-// So: never write to stdout/stderr here, regardless of level. Verbose output
-// only goes to a per-day file, and only when Debug Mode is on.
+// Never write to stdout/stderr here: they are inherited from the PAM caller,
+// which may parse them as a line protocol (e.g. GNOME Shell's polkit agent
+// reads polkit-agent-helper-1's output). Any stray line breaks its state
+// machine and makes it retry auth in a tight loop (`pkexec id` hangs).
+// Logs go only to a per-day file, and only in Debug Mode.
 void setupBiopassLogger(const std::string& username, bool debug) {
   std::vector<spdlog::sink_ptr> sinks;
 
@@ -70,8 +64,7 @@ void setupBiopassLogger(const std::string& username, bool debug) {
       sinks.push_back(file_sink);
       biopass::fixOwnership(log_path, username);
     } catch (const spdlog::spdlog_ex&) {
-      // Can't log this failure anywhere safe (see above) -- fall through
-      // with no sinks; log calls become no-ops rather than risk stdout/stderr.
+      // Nowhere safe to report this; run with no sinks.
     }
   }
 
@@ -114,33 +107,23 @@ int cropFace(const std::string& inputPath, const std::string& outputPath,
   return 0;
 }
 
-// Long-running session that streams JPEG frames to stdout and accepts
-// commands on stdin. Protocol (line-based for commands, length-prefixed for
-// frame payloads):
-//
-//   FRAME              -> server captures a frame, encodes JPEG, and writes:
-//                         OK <byte_count>\n<bytes>
-//                         or  ERR <message>\n
-//   CAPTURE <path>     -> server captures, runs face detection + crop, saves
-//                         to <path>. Writes OK\n / NO_FACE\n / ERR <msg>\n
-//   QUIT               -> server cleans up and exits
-//
-// The session keeps the camera open across commands so streaming preview and
-// user-triggered capture share the same V4L2 handle (cameras are usually
-// single-consumer).
+// Streams JPEG frames over stdout, reads commands on stdin:
+//   FRAME          -> OK <byte_count>\n<bytes> | ERR <msg>\n
+//   CAPTURE <path> -> detect + crop face to <path>: OK\n | NO_FACE\n | ERR <msg>\n
+//   QUIT           -> exit
+// The camera stays open across commands so preview and capture share one
+// handle (cameras are usually single-consumer).
 int previewSession(const std::string& cameraPath, const std::string& modelPath, int jpegQuality) {
   std::optional<std::string> deviceOpt;
   if (!cameraPath.empty()) {
     deviceOpt = cameraPath;
   }
 
-  // stdout is the protocol channel; spdlog's default logger writes there, and
-  // a single stray log line (e.g. forwarded libcamera output) desyncs every
-  // response that follows. Send logs to stderr instead.
+  // stdout is the protocol channel; one stray log line desyncs it.
   spdlog::set_default_logger(std::make_shared<spdlog::logger>(
       "biopass", std::make_shared<spdlog::sinks::stderr_sink_mt>()));
 
-  // Silence libcamera's info-level setup noise while we set up.
+  // Silence libcamera's info-level setup noise.
   spdlog::set_level(spdlog::level::err);
   auto session = biopass::openCameraSession(deviceOpt);
   spdlog::set_level(spdlog::level::info);
@@ -222,8 +205,7 @@ int captureAndCropFace(const std::string& cameraPath, const std::string& outputP
     deviceOpt = cameraPath;
   }
 
-  // Silence libcamera's info-level setup noise during enumeration; errors
-  // still propagate.
+  // Silence libcamera's info-level setup noise.
   spdlog::set_level(spdlog::level::err);
   ImageRGB image = biopass::captureImage(deviceOpt);
   spdlog::set_level(spdlog::level::info);
@@ -261,7 +243,6 @@ int authenticate(const std::string& username, const std::string& service) {
   const char* pUsername = username.c_str();
 
   if (!biopass::configExists(pUsername)) {
-    // User has not configured biopass — skip this module transparently
     return 2;  // PAM_IGNORE
   }
   biopass::BiopassConfig config = biopass::readConfig(pUsername);
@@ -297,14 +278,13 @@ int authenticate(const std::string& username, const std::string& service) {
     }
   }
 
-  // If no methods are enabled, ignore this module and let PAM jump to the next one
   if (numOfMethods == 0) {
     return 2;  // PAM_IGNORE
   }
 
   int retval = manager.authenticate(pUsername);
 
-  if (retval == 0 /* PAM_SUCCESS is usually 0 */) {
+  if (retval == 0) {
     return 0;  // PAM_SUCCESS
   } else {
     return 1;  // PAM_AUTH_ERR
@@ -372,10 +352,9 @@ int main(int argc, char** argv) {
   if (app.got_subcommand(auth_cmd)) {
     if (username.empty()) {
       spdlog::info("{}", app.help());
-      return 2;  // PAM_IGNORE logic / error
+      return 2;  // PAM_IGNORE
     }
-    // Only methods that actually start scanning report anything, so skipped
-    // runs (no config, ignored service, nothing enrolled) stay silent.
+    // Only methods that start scanning report, so skipped runs stay silent.
     biopass::setStatusFd(statusFd);
     return authenticate(username, pamService);
   }

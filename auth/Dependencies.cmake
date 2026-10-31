@@ -1,7 +1,3 @@
-# ==============================================================================
-# Dependency Management
-# ==============================================================================
-
 # ONNX Runtime
 set(ONNXRUNTIME_VERSION "1.19.2")
 include(FetchContent)
@@ -24,13 +20,11 @@ set(ONNXRUNTIME_INCLUDE_DIRS "${ONNXRUNTIME_ROOT}/include")
 set(ONNXRUNTIME_LIB_DIR "${ONNXRUNTIME_ROOT}/lib")
 find_library(ONNXRUNTIME_LIB onnxruntime PATHS ${ONNXRUNTIME_LIB_DIR} NO_DEFAULT_PATH)
 
-# libturbojpeg (system package via pkg-config; stable soname)
+# libturbojpeg: system package (stable soname)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(TURBOJPEG REQUIRED IMPORTED_TARGET libturbojpeg)
 
-# libcamera (camera capture) is built from source at a pinned version and
-# bundled into the package instead of linked against the system's copy -- see
-# BundleLibcamera.cmake for why. Provides the `libcamera_bundled` target.
+# libcamera: built from source and bundled; provides `libcamera_bundled`.
 include(${CMAKE_CURRENT_LIST_DIR}/BundleLibcamera.cmake)
 
 FetchContent_Declare(
@@ -41,7 +35,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(stb)
 set(STB_INCLUDE_DIRS "${stb_SOURCE_DIR}")
 
-# yaml-cpp for config parsing
+# yaml-cpp
 set(YAML_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(YAML_CPP_BUILD_CONTRIB OFF CACHE BOOL "" FORCE)
 set(YAML_CPP_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
@@ -54,10 +48,10 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(yaml-cpp)
 
-# CLI11 for command line parsing
+# CLI11
 find_package(CLI11 REQUIRED)
 
-# spdlog for logging
+# spdlog
 FetchContent_Declare(
     spdlog
     GIT_REPOSITORY https://github.com/gabime/spdlog.git
@@ -65,10 +59,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(spdlog)
 
-# sqlite3 (amalgamation, vendored) for read-only access to biopass.db (model
-# registry) from the PAM helper. Pinned by hash rather than depending on the
-# distro's sqlite3, consistent with the yaml-cpp/spdlog/onnxruntime pinning
-# above -- this runs inside a security-sensitive PAM module.
+# sqlite3 amalgamation, pinned by hash: read by the PAM helper (biopass.db).
 set(SQLITE3_VERSION "3460100")
 FetchContent_Declare(
     sqlite3_amalgamation

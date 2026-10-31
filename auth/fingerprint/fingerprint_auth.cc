@@ -43,8 +43,6 @@ void on_verify_status(GDBusConnection* connection, const gchar* sender_name,
     ctx->result = AuthResult::Success;
     g_main_loop_quit(ctx->loop);
   } else if (res_str == "verify-no-match") {
-    // If not done, we continue waiting (retry).
-    // If done, it's a failure.
     if (done) {
       ctx->result = AuthResult::Failure;
       g_main_loop_quit(ctx->loop);
@@ -55,9 +53,8 @@ void on_verify_status(GDBusConnection* connection, const gchar* sender_name,
     g_main_loop_quit(ctx->loop);
   } else {
     // Retry scan, swipe too short, etc.
-    // We stay in the loop unless done is true
     if (done) {
-      ctx->result = AuthResult::Retry;  // Or Failure
+      ctx->result = AuthResult::Retry;
       g_main_loop_quit(ctx->loop);
     }
   }
@@ -106,14 +103,10 @@ bool FingerprintAuth::isAvailable() const {
 
   bool available = false;
   if (ret) {
-    // If we got a device path, it's potentially available.
-    // We could check if there are enrolled fingers here, but strictly speaking
-    // the hardware IS available. The specific user might not be enrolled (handled
-    // in authenticate).
+    // Enrollment is checked per user in authenticate().
     available = true;
     g_variant_unref(ret);
   } else {
-    // Usually means no device found
     if (error)
       g_error_free(error);
   }
@@ -242,7 +235,7 @@ AuthResult FingerprintAuth::authenticate(const std::string& username, const Auth
     if (error)
       g_error_free(error);
     cleanup();
-    return AuthResult::Unavailable;  // Or Failure
+    return AuthResult::Unavailable;
   }
 
   GVariantIter* iter;
@@ -258,8 +251,7 @@ AuthResult FingerprintAuth::authenticate(const std::string& username, const Auth
   if (!has_fingers) {
     spdlog::error("FingerprintAuth: User {} has no enrolled fingerprints.", username);
     cleanup();
-    return AuthResult::Unavailable;  // Should we return Failure? Unavailable seems appropriate if
-                                     // not set up.
+    return AuthResult::Unavailable;
   }
 
   GVariant* claim_ret =
@@ -276,7 +268,7 @@ AuthResult FingerprintAuth::authenticate(const std::string& username, const Auth
   g_variant_unref(claim_ret);
   device_claimed = true;
 
-  // "any" is typically used to accept any enrolled finger
+  // "any" accepts any enrolled finger
   GVariant* verify_ret = g_dbus_proxy_call_sync(device, "VerifyStart", g_variant_new("(s)", "any"),
                                                 G_DBUS_CALL_FLAGS_NONE, -1, nullptr, &error);
 
@@ -306,7 +298,6 @@ AuthResult FingerprintAuth::authenticate(const std::string& username, const Auth
       connection, FPRINT_SERVICE, FPRINT_DEVICE_INTERFACE, "VerifyStatus", dev_path_str.c_str(),
       nullptr, G_DBUS_SIGNAL_FLAGS_NONE, on_verify_status, &ctx, nullptr);
 
-  // Poll cancel token every 50ms (prevent hanging forever)
   cancel_poll_source_id = g_timeout_add(50, on_cancel_timeout, &ctx);
 
   if (config_.timeout > 0) {
@@ -522,7 +513,6 @@ bool FingerprintAuth::enroll(const std::string& username, const std::string& fin
       ctx->success = true;
       g_main_loop_quit(ctx->loop);
     } else if (res_str == "enroll-stage-passed") {
-      // Normal progress, continue
       if (done) {
         ctx->success = true;
         g_main_loop_quit(ctx->loop);
@@ -627,7 +617,7 @@ bool FingerprintAuth::removeFinger(const std::string& username, const std::strin
   }
   g_variant_unref(claim_ret);
 
-  // DeleteEnrolledFinger expects only the finger name (s), not (username, finger_name)
+  // Takes only the finger name, not (username, finger_name)
   GVariant* delete_ret = g_dbus_proxy_call_sync(device, "DeleteEnrolledFinger",
                                                 g_variant_new("(s)", finger_name.c_str()),
                                                 G_DBUS_CALL_FLAGS_NONE, -1, nullptr, &error);

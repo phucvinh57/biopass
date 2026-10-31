@@ -24,7 +24,6 @@ bool checkAntispoofByIRCamera(const std::string& device_path, FaceDetection* det
     return false;
   }
 
-  // Optional extra delay after warmup frames to let IR LEDs and auto-exposure stabilise.
   if (warmup_delay_ms > 0) {
     spdlog::debug("FaceAuth: IR presence check — sleeping {}ms for camera stabilisation",
                   warmup_delay_ms);
@@ -69,13 +68,8 @@ bool checkAntispoofByIRCamera(const std::string& device_path, FaceDetection* det
     try {
       std::vector<Detection> detections = detector->inference(frame);
 
-      // TODO: This is a face presence check only, NOT a real liveness detector.
-      // The YOLO model only checks for any face-shaped bounding box in the IR frame.
-      // An attacker holding a printed photo or displaying a photo on a screen will
-      // pass this check once the IR camera capture succeeds. A real anti-spoofing
-      // solution requires a specialized IR liveness model (e.g. texture analysis,
-      // depth verification, or dedicated IR liveness classification).
-      // Tracked in upcoming issue.
+      // TODO: presence check only, not liveness (see header); needs a real IR
+      // liveness model.
       if (detections.empty()) {
         spdlog::debug(
             "FaceAuth: IR presence check — attempt {} no face bounding box detected (device='{}')",

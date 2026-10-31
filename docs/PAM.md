@@ -10,7 +10,7 @@
     ```bash
     sudo pam-auth-update
     ```
-3. Enable `Biopass` option. If `Fingerprint authentication` is selected, please disable it if you have enabled fingerprint auth in Biopass.
+3. Select `Biopass`. If you use fingerprint in Biopass, deselect `Fingerprint authentication`.
 4. Test in a new terminal:
     ```bash
     sudo -k
@@ -19,15 +19,11 @@
 
 ## Fedora/RHEL
 
-Fedora-based OS (Fedora, RHEL, CentOS, Rocky, Alma ...) use `authselect`, not `pam-auth-update`.
-
-Follow your distro's `authselect` workflow and test in a new terminal before closing the current root session.
+Fedora-based distros (Fedora, RHEL, CentOS, Rocky, Alma, ...) use `authselect`, not `pam-auth-update`. Follow your distro's `authselect` workflow and test in a new terminal before closing the current root session.
 
 ## Arch Linux
 
-Arch Linux does not use `pam-auth-update` nor `authselect` by default. Configure PAM manually.
-
-Keep a root terminal open while testing. Incorrect PAM configuration can lock you out.
+Arch uses neither `pam-auth-update` nor `authselect` by default; configure PAM manually. Keep a root terminal open while testing: incorrect PAM configuration can lock you out.
 
 1. Verify the PAM module is installed:
     ```bash
