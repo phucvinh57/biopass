@@ -1,5 +1,4 @@
 #include <CLI/CLI.hpp>
-
 #include <exception>
 #include <iostream>
 #include <string>
