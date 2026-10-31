@@ -10,6 +10,7 @@ use crate::paths::{get_config_dir, get_config_path};
 pub const CURRENT_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(default)]
 pub struct BiopassConfig {
     pub schema_version: u32,
     pub strategy: StrategyConfig,
@@ -18,6 +19,7 @@ pub struct BiopassConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(default)]
 pub struct StrategyConfig {
     pub debug: bool,
     pub execution_mode: String,
@@ -26,12 +28,14 @@ pub struct StrategyConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(default)]
 pub struct MethodsConfig {
     pub face: FaceMethodConfig,
     pub fingerprint: FingerprintMethodConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(default)]
 pub struct FaceMethodConfig {
     pub enable: bool,
     pub retries: u32,
@@ -43,24 +47,28 @@ pub struct FaceMethodConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(default)]
 pub struct DetectionConfig {
     pub model_id: String,
     pub threshold: f32,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(default)]
 pub struct RecognitionConfig {
     pub model_id: String,
     pub threshold: f32,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(default)]
 pub struct AntiSpoofingModelConfig {
     pub model_id: String,
     pub threshold: f32,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(default)]
 pub struct AntiSpoofingConfig {
     pub enable: bool,
     pub model: AntiSpoofingModelConfig,
@@ -70,6 +78,7 @@ pub struct AntiSpoofingConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(default)]
 pub struct FingerprintMethodConfig {
     pub enable: bool,
     pub retries: u32,
@@ -130,6 +139,36 @@ fn get_default_config() -> BiopassConfig {
     }
 }
 
+// Missing fields take these defaults (#[serde(default)] on each struct), so a
+// config that lacks a field keeps the rest of the user's values. Unknown
+// fields are ignored on load and dropped by save_config.
+impl Default for BiopassConfig {
+    fn default() -> Self {
+        get_default_config()
+    }
+}
+
+macro_rules! default_from_config {
+    ($($ty:ty => $($field:ident).+;)*) => {
+        $(impl Default for $ty {
+            fn default() -> Self {
+                get_default_config().$($field).+
+            }
+        })*
+    };
+}
+
+default_from_config! {
+    StrategyConfig => strategy;
+    MethodsConfig => methods;
+    FaceMethodConfig => methods.face;
+    DetectionConfig => methods.face.detection;
+    RecognitionConfig => methods.face.recognition;
+    AntiSpoofingConfig => methods.face.anti_spoofing;
+    AntiSpoofingModelConfig => methods.face.anti_spoofing.model;
+    FingerprintMethodConfig => methods.fingerprint;
+}
+
 // Mirror the kMax* clamps in auth/core/auth_config.h and the maxima in
 // app/src/app/configuration/-components/validation.ts.
 const MAX_FACE_RETRIES: u32 = 10;
@@ -160,30 +199,51 @@ fn clamp_limits(methods: &mut MethodsConfig) {
     }
 }
 
-/// Falls back to defaults on a parse error or schema_version mismatch, so the
-/// UI has something to show and save. (The helper's readConfig() in
-/// auth/core/auth_config.cc ignores such a config instead.)
-fn parse_config(content: &str) -> BiopassConfig {
-    match serde_yaml::from_str::<BiopassConfig>(content) {
-        Ok(mut config) if config.schema_version == CURRENT_SCHEMA_VERSION => {
-            clamp_limits(&mut config.methods);
-            config
-        }
-        Ok(config) => {
-            eprintln!(
-                "Warning: config.yaml schema_version {} does not match expected {}; using defaults",
-                config.schema_version, CURRENT_SCHEMA_VERSION
-            );
-            get_default_config()
-        }
-        Err(e) => {
-            eprintln!(
-                "Warning: failed to parse config.yaml ({}); using defaults",
-                e
-            );
-            get_default_config()
-        }
+/// Parses config.yaml. A config the app can't read is an error, never
+/// defaults: the UI must not show (and then save) defaults over it.
+///
+/// - YAML that doesn't parse, isn't a mapping, or has a value of the wrong
+///   type: error.
+/// - schema_version newer than ours: error, so an older app can't downgrade
+///   a config written by a newer helper.
+/// - schema_version older than ours or missing (pre-v2): defaults. The helper
+///   ignores such a config ("only the app migrates"), and the v2 migration
+///   drops the old settings. Nothing is written until the user saves.
+fn parse_config(content: &str) -> Result<BiopassConfig, String> {
+    let value: serde_yaml::Value = serde_yaml::from_str(content)
+        .map_err(|e| format!("config.yaml is not valid YAML: {}", e))?;
+    if value.is_null() {
+        return Ok(get_default_config());
     }
+    if !value.is_mapping() {
+        return Err("config.yaml is not a YAML mapping".to_string());
+    }
+
+    let schema_version = match value.get("schema_version") {
+        None => 0,
+        Some(v) => v
+            .as_u64()
+            .ok_or_else(|| "config.yaml schema_version is not a number".to_string())?,
+    };
+    let current = u64::from(CURRENT_SCHEMA_VERSION);
+    if schema_version > current {
+        return Err(format!(
+            "config.yaml has schema_version {}, newer than this app's {}; update Biopass",
+            schema_version, current
+        ));
+    }
+    if schema_version < current {
+        eprintln!(
+            "Warning: config.yaml schema_version {} is older than {}; using defaults",
+            schema_version, current
+        );
+        return Ok(get_default_config());
+    }
+
+    let mut config: BiopassConfig = serde_yaml::from_value(value)
+        .map_err(|e| format!("config.yaml has an invalid value: {}", e))?;
+    clamp_limits(&mut config.methods);
+    Ok(config)
 }
 
 #[tauri::command]
@@ -197,21 +257,57 @@ pub fn load_config(app: AppHandle) -> Result<BiopassConfig, String> {
     let content = fs::read_to_string(&config_path)
         .map_err(|e| format!("Failed to read config file: {}", e))?;
 
-    Ok(parse_config(&content))
+    parse_config(&content)
 }
 
 #[tauri::command]
 pub fn save_config(app: AppHandle, config: BiopassConfig) -> Result<(), String> {
-    let config_dir = get_config_dir(&app)?;
+    let yaml_content =
+        serde_yaml::to_string(&config).map_err(|e| format!("Failed to serialize config: {}", e))?;
+    write_config_file(&app, &yaml_content)
+}
+
+/// Returns `content` (None: no config yet) with only `appearance` changed.
+/// Works on the raw YAML so the user's other values, including fields this
+/// app doesn't know, are kept. Errors instead of replacing a config it can't
+/// parse.
+fn with_appearance(content: Option<&str>, appearance: &str) -> Result<String, String> {
+    let mut value = match content {
+        Some(text) => serde_yaml::from_str::<serde_yaml::Value>(text)
+            .map_err(|e| format!("config.yaml is not valid YAML: {}", e))?,
+        None => serde_yaml::to_value(get_default_config())
+            .map_err(|e| format!("Failed to serialize config: {}", e))?,
+    };
+    let map = value
+        .as_mapping_mut()
+        .ok_or_else(|| "config.yaml is not a YAML mapping".to_string())?;
+    map.insert("appearance".into(), appearance.into());
+    serde_yaml::to_string(&value).map_err(|e| format!("Failed to serialize config: {}", e))
+}
+
+#[tauri::command]
+pub fn set_appearance(app: AppHandle, appearance: String) -> Result<(), String> {
     let config_path = get_config_path(&app)?;
+    let content = if config_path.exists() {
+        Some(
+            fs::read_to_string(&config_path)
+                .map_err(|e| format!("Failed to read config file: {}", e))?,
+        )
+    } else {
+        None
+    };
+    let yaml_content = with_appearance(content.as_deref(), &appearance)?;
+    write_config_file(&app, &yaml_content)
+}
+
+fn write_config_file(app: &AppHandle, yaml_content: &str) -> Result<(), String> {
+    let config_dir = get_config_dir(app)?;
+    let config_path = get_config_path(app)?;
 
     if !config_dir.exists() {
         fs::create_dir_all(&config_dir)
             .map_err(|e| format!("Failed to create config directory: {}", e))?;
     }
-
-    let yaml_content =
-        serde_yaml::to_string(&config).map_err(|e| format!("Failed to serialize config: {}", e))?;
 
     // Temp file in the same dir so the rename is atomic: a crash mid-write
     // can't truncate config.yaml.
@@ -264,7 +360,7 @@ mod tests {
         config.methods.fingerprint.timeout = 0;
         let yaml = serde_yaml::to_string(&config).unwrap();
 
-        let loaded = parse_config(&yaml);
+        let loaded = parse_config(&yaml).unwrap();
         let face = &loaded.methods.face;
         assert_eq!(face.retries, 10);
         assert_eq!(face.retry_delay, 5000);
@@ -280,7 +376,7 @@ mod tests {
         let mut config = get_default_config();
         config.methods.face.anti_spoofing.ir_warmup_delay_ms = -5;
         let yaml = serde_yaml::to_string(&config).unwrap();
-        let loaded = parse_config(&yaml);
+        let loaded = parse_config(&yaml).unwrap();
         assert_eq!(loaded.methods.face.anti_spoofing.ir_warmup_delay_ms, 0);
         assert_eq!(
             loaded.methods.face,
@@ -324,11 +420,105 @@ mod tests {
         config.methods.face.anti_spoofing.model.threshold = 0.6;
         let yaml = serde_yaml::to_string(&config).unwrap();
 
-        assert_eq!(parse_config(&yaml), config);
+        assert_eq!(parse_config(&yaml).unwrap(), config);
+    }
+
+    fn custom_config() -> BiopassConfig {
+        let mut config = get_default_config();
+        config.strategy.debug = true;
+        config.methods.face.enable = false;
+        config.methods.face.retries = 3;
+        config.appearance = "dark".to_string();
+        config
     }
 
     #[test]
-    fn unparseable_config_falls_back_to_defaults() {
-        assert_eq!(parse_config("not: [valid"), get_default_config());
+    fn missing_field_takes_its_default_only() {
+        let mut yaml: serde_yaml::Value =
+            serde_yaml::from_str(&serde_yaml::to_string(&custom_config()).unwrap()).unwrap();
+        let face = yaml["methods"]["face"].as_mapping_mut().unwrap();
+        face.remove("retries");
+        face.remove("detection");
+        let yaml = serde_yaml::to_string(&yaml).unwrap();
+
+        let loaded = parse_config(&yaml).unwrap();
+        let defaults = get_default_config();
+        assert_eq!(loaded.methods.face.retries, defaults.methods.face.retries);
+        assert_eq!(
+            loaded.methods.face.detection,
+            defaults.methods.face.detection
+        );
+        // Everything else keeps the user's values.
+        assert!(!loaded.methods.face.enable);
+        assert!(loaded.strategy.debug);
+        assert_eq!(loaded.appearance, "dark");
+    }
+
+    #[test]
+    fn unknown_field_does_not_reject_the_config() {
+        let yaml = serde_yaml::to_string(&custom_config()).unwrap() + "added_later: 1\n";
+        assert_eq!(parse_config(&yaml).unwrap(), custom_config());
+    }
+
+    #[test]
+    fn unparseable_config_is_an_error() {
+        assert!(parse_config("not: [valid").is_err());
+        assert!(parse_config("just a string").is_err());
+    }
+
+    #[test]
+    fn wrong_value_type_is_an_error() {
+        let yaml = serde_yaml::to_string(&custom_config())
+            .unwrap()
+            .replace("retries: 3", "retries: three");
+        assert!(parse_config(&yaml).is_err());
+    }
+
+    #[test]
+    fn newer_schema_is_an_error() {
+        let mut config = custom_config();
+        config.schema_version = CURRENT_SCHEMA_VERSION + 1;
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        assert!(parse_config(&yaml).is_err());
+    }
+
+    #[test]
+    fn older_schema_is_replaced_by_defaults() {
+        let mut config = custom_config();
+        config.schema_version = CURRENT_SCHEMA_VERSION - 1;
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        assert_eq!(parse_config(&yaml).unwrap(), get_default_config());
+
+        // No schema_version: a pre-v2 config, which the helper also ignores.
+        let unversioned = "appearance: dark\nmodels: []\n";
+        assert_eq!(parse_config(unversioned).unwrap(), get_default_config());
+        assert_eq!(parse_config("").unwrap(), get_default_config());
+    }
+
+    #[test]
+    fn set_appearance_changes_only_appearance() {
+        let yaml = serde_yaml::to_string(&custom_config()).unwrap() + "added_later: 1\n";
+        let updated = with_appearance(Some(&yaml), "light").unwrap();
+
+        let mut expected: serde_yaml::Value = serde_yaml::from_str(&yaml).unwrap();
+        expected["appearance"] = "light".into();
+        assert_eq!(
+            serde_yaml::from_str::<serde_yaml::Value>(&updated).unwrap(),
+            expected
+        );
+    }
+
+    #[test]
+    fn set_appearance_leaves_an_unparseable_config_alone() {
+        assert!(with_appearance(Some("not: [valid"), "dark").is_err());
+        assert!(with_appearance(Some("just a string"), "dark").is_err());
+    }
+
+    #[test]
+    fn set_appearance_without_a_config_writes_defaults() {
+        let written = with_appearance(None, "dark").unwrap();
+        let mut expected = get_default_config();
+        expected.appearance = "dark".to_string();
+        assert_eq!(parse_config(&written).unwrap(), expected);
     }
 }
