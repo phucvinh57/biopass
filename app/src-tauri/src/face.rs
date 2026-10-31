@@ -11,13 +11,16 @@ pub fn list_faces(app: AppHandle) -> Result<Vec<String>, String> {
     if !faces_dir.exists() {
         return Ok(vec![]);
     }
+    face_files_in(&faces_dir)
+}
 
+fn face_files_in(faces_dir: &Path) -> Result<Vec<String>, String> {
     let entries =
-        fs::read_dir(&faces_dir).map_err(|e| format!("Failed to read faces directory: {}", e))?;
+        fs::read_dir(faces_dir).map_err(|e| format!("Failed to read faces directory: {}", e))?;
 
     let mut files: Vec<String> = entries
         .filter_map(|e| e.ok())
-        .filter(|e| has_face_extension(&e.path()))
+        .filter(|e| is_face_file(&e.path()))
         .map(|e| e.path().to_string_lossy().to_string())
         .collect();
 
@@ -38,9 +41,6 @@ fn resolve_face_file(faces_dir: &Path, path: &Path) -> Result<PathBuf, String> {
     let invalid = || format!("Not a face image: {}", path.display());
 
     let name = path.file_name().ok_or_else(invalid)?;
-    if !has_face_extension(path) {
-        return Err(invalid());
-    }
     let parent = path.parent().ok_or_else(invalid)?;
     let parent = fs::canonicalize(parent).map_err(|_| invalid())?;
     let faces_dir = fs::canonicalize(faces_dir).map_err(|_| invalid())?;
@@ -49,16 +49,17 @@ fn resolve_face_file(faces_dir: &Path, path: &Path) -> Result<PathBuf, String> {
     }
 
     let target = faces_dir.join(name);
-    let meta = fs::symlink_metadata(&target).map_err(|_| invalid())?;
-    if !meta.file_type().is_file() {
+    if !is_face_file(&target) {
         return Err(invalid());
     }
     Ok(target)
 }
 
-fn has_face_extension(path: &Path) -> bool {
+/// A face image is a regular (non-symlink) .jpg/.png file.
+fn is_face_file(path: &Path) -> bool {
     path.extension()
         .is_some_and(|ext| ext == "jpg" || ext == "png")
+        && fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_file())
 }
 
 #[cfg(test)]
@@ -140,6 +141,21 @@ mod tests {
         let txt = tmp.faces().join("a.txt");
         fs::write(&txt, b"x").unwrap();
         assert!(resolve_face_file(&tmp.faces(), &txt).is_err());
+    }
+
+    #[test]
+    fn lists_only_regular_image_files() {
+        let tmp = TempDir::new("list");
+        fs::write(tmp.faces().join("a.jpg"), b"x").unwrap();
+        fs::write(tmp.faces().join("b.txt"), b"x").unwrap();
+        fs::create_dir(tmp.faces().join("d.jpg")).unwrap();
+        let outside = tmp.0.join("secret.png");
+        fs::write(&outside, b"x").unwrap();
+        std::os::unix::fs::symlink(&outside, tmp.faces().join("link.png")).unwrap();
+
+        let listed = face_files_in(&tmp.faces()).unwrap();
+        let expected = tmp.faces().join("a.jpg").to_string_lossy().to_string();
+        assert_eq!(listed, vec![expected]);
     }
 
     #[test]
