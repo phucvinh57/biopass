@@ -19,6 +19,7 @@
 #include "face_auth.h"
 #include "fingerprint_auth.h"
 #include "image_utils.h"
+#include "status_reporter.h"
 #include "stb_image_write.h"
 
 using biopass::Detection;
@@ -343,9 +344,12 @@ int main(int argc, char** argv) {
 
   std::string username;
   std::string pamService;
+  int statusFd = -1;
   auto auth_cmd = app.add_subcommand("auth", "Authenticate a user with Biopass");
   auth_cmd->add_option("--username,-u", username, "Username for authentication")->required();
   auth_cmd->add_option("--service,-s", pamService, "PAM service name");
+  auth_cmd->add_option("--status-fd", statusFd,
+                       "Inherited fd for status lines relayed to the PAM conversation");
 
   try {
     app.parse(argc, argv);
@@ -370,6 +374,9 @@ int main(int argc, char** argv) {
       spdlog::info("{}", app.help());
       return 2;  // PAM_IGNORE logic / error
     }
+    // Only methods that actually start scanning report anything, so skipped
+    // runs (no config, ignored service, nothing enrolled) stay silent.
+    biopass::setStatusFd(statusFd);
     return authenticate(username, pamService);
   }
 
