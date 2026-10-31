@@ -1,9 +1,9 @@
 #include "debug_image_io.h"
 
+#include <spdlog/spdlog.h>
+
 #include <chrono>
 #include <string>
-
-#include <spdlog/spdlog.h>
 
 #include "auth_config.h"
 
@@ -13,7 +13,6 @@ void saveFailedFace(const std::string& username, const ImageRGB& face, const std
   setupConfig(username);
   auto now = std::chrono::system_clock::now().time_since_epoch();
   auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
-  
 
   const std::string failed_face_path =
       getDebugPath(username) + "/" + reason + "." + std::to_string(ms) + ".jpg";

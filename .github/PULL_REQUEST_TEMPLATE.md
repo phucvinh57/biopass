@@ -12,7 +12,19 @@ Explain who is affected and what behavior changes.
 
 ## Verification
 
-List the commands, distros, desktop environments, PAM flows, or package types you tested.
+List the commands, distros, desktop environments, PAM flows, or package types you tested. Paste or link the output (test results, screenshots, logs).
+
+## Risk
+
+- [ ] Low: docs, UI copy, styling, tests
+- [ ] Medium: app logic, Rust/Tauri commands, face/fingerprint pipeline
+- [ ] High: PAM module or helper, install/remove scripts, PAM config, packaging, CI/release workflows
+
+What could break, and for whom?
+
+## How to revert
+
+Is `git revert` enough, or does a revert also need a new release, a config migration, or users to re-run `pam-auth-update`?
 
 ## Distro notes
 
