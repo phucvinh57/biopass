@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant, SystemTime};
 
 use futures_util::StreamExt;
 use rusqlite::TransactionBehavior;
@@ -17,7 +17,11 @@ const VALID_TASKS: [&str; 3] = ["detection", "recognition", "anti_spoofing"];
 const ANTI_SPOOFING_ARCHITECTURES: [&str; 2] = ["mobilenetv3", "minifasv2"];
 const PROGRESS_EVENT: &str = "model-download-progress";
 const DEFAULT_MODELS_EVENT: &str = "default-models-updated";
-const DEFAULT_MODELS_URL: &str = "https://github.com/phucvinh57/biopass/releases/latest/download";
+const RELEASES_URL: &str = "https://github.com/phucvinh57/biopass/releases";
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+const READ_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_USER_MODEL_BYTES: u64 = 1 << 30;
+const STALE_TEMP_AGE: Duration = Duration::from_secs(10 * 60);
 const PROGRESS_THROTTLE_MS: u128 = 150;
 const MAX_NAME_LEN: usize = 200;
 
@@ -191,21 +195,20 @@ fn verify_sha256(actual_hex: &str, expected_hex: &str) -> Result<(), String> {
     }
 }
 
-/// A built-in model counts as installed only if it is non-empty and matches
-/// its pinned hash; anything else gets downloaded again.
-fn is_installed(path: &Path, expected_sha256: &str) -> bool {
-    if !std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.len() > 0) {
+/// A built-in model counts as installed only if it has its pinned size and
+/// hash; anything else (missing, 0-byte, partial, different) is downloaded
+/// again.
+fn is_installed(path: &Path, expected_sha256: &str, expected_size: u64) -> bool {
+    if !std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.len() == expected_size) {
         return false;
     }
     sha256_hex(path).is_ok_and(|h| verify_sha256(&h, expected_sha256).is_ok())
 }
 
-/// Moves a fully written temp file (same directory) over `dest`: fsync the
-/// data, rename, then fsync the directory so the rename survives a crash.
+/// Renames an already-synced temp file (same directory) over `dest`, then
+/// fsyncs the directory so the rename survives a crash. The data sync
+/// happens earlier so callers holding a DB write lock only pay for this.
 fn install_file(tmp: tempfile::NamedTempFile, dest: &Path) -> Result<(), String> {
-    tmp.as_file()
-        .sync_all()
-        .map_err(|e| format!("Failed to sync model file: {}", e))?;
     tmp.persist(dest)
         .map_err(|e| format!("Failed to save model file: {}", e))?;
     if let Some(dir) = dest.parent() {
@@ -216,24 +219,103 @@ fn install_file(tmp: tempfile::NamedTempFile, dest: &Path) -> Result<(), String>
     Ok(())
 }
 
-/// Streams `url` into a temp file in `dir`, hashing as it goes. Rejects
-/// empty bodies and anything that does not start like an ONNX model. The
-/// temp file is deleted on any error (dropped), so nothing partial is left.
+fn sync_temp(tmp: &tempfile::NamedTempFile) -> Result<(), String> {
+    tmp.as_file()
+        .sync_all()
+        .map_err(|e| format!("Failed to sync model file: {}", e))
+}
+
+/// Deletes `.tmp*` files a crashed download left in the models directory.
+/// Best effort. Only regular files (symlinks are not followed) untouched for
+/// STALE_TEMP_AGE, so a download still in progress keeps its file.
+fn sweep_stale_temps(dir: &Path, now: SystemTime) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if !entry.file_name().to_string_lossy().starts_with(".tmp") {
+            continue;
+        }
+        // DirEntry::file_type/metadata do not follow symlinks.
+        if !entry.file_type().is_ok_and(|t| t.is_file()) {
+            continue;
+        }
+        let stale = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .is_ok_and(|t| now.duration_since(t).is_ok_and(|age| age >= STALE_TEMP_AGE));
+        if stale {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// https only, redirects included, so an unpinned user model can't be
+/// downgraded to plain http by a redirect. No overall timeout (big models
+/// on slow links are fine), but a stalled connection fails.
+fn http_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .https_only(true)
+        .connect_timeout(CONNECT_TIMEOUT)
+        .read_timeout(READ_TIMEOUT)
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))
+}
+
+fn check_size(bytes: u64, max_bytes: u64) -> Result<(), String> {
+    if bytes > max_bytes {
+        return Err(format!("Model is larger than the {} byte limit", max_bytes));
+    }
+    Ok(())
+}
+
+enum DownloadError {
+    NotFound,
+    Failed(String),
+}
+
+impl From<DownloadError> for String {
+    fn from(e: DownloadError) -> String {
+        match e {
+            DownloadError::NotFound => "Download failed with status 404 Not Found".to_string(),
+            DownloadError::Failed(e) => e,
+        }
+    }
+}
+
+/// Streams `url` into a temp file in `dir`, hashing as it goes, and fsyncs
+/// it. Rejects bodies over `max_bytes`, empty bodies and anything that does
+/// not start like an ONNX model. The temp file is deleted on any error
+/// (dropped), so nothing partial is left.
 async fn download_to_temp(
+    client: &reqwest::Client,
     url: &str,
     dir: &Path,
+    max_bytes: u64,
     mut on_progress: impl FnMut(u64, Option<u64>),
-) -> Result<(tempfile::NamedTempFile, String), String> {
-    let response = reqwest::get(url)
+) -> Result<(tempfile::NamedTempFile, String), DownloadError> {
+    let fail = DownloadError::Failed;
+    let response = client
+        .get(url)
+        .send()
         .await
-        .map_err(|e| format!("Failed to start download: {}", e))?;
+        .map_err(|e| fail(format!("Failed to start download: {}", e)))?;
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Err(DownloadError::NotFound);
+    }
     if !response.status().is_success() {
-        return Err(format!("Download failed with status {}", response.status()));
+        return Err(fail(format!(
+            "Download failed with status {}",
+            response.status()
+        )));
     }
     let total = response.content_length();
+    if let Some(total) = total {
+        check_size(total, max_bytes).map_err(fail)?;
+    }
 
     let mut tmp = tempfile::NamedTempFile::new_in(dir)
-        .map_err(|e| format!("Failed to create temp file: {}", e))?;
+        .map_err(|e| fail(format!("Failed to create temp file: {}", e)))?;
     let mut hasher = Sha256::new();
     let mut downloaded: u64 = 0;
     let mut last_emit = Instant::now();
@@ -241,17 +323,20 @@ async fn download_to_temp(
     let mut stream = response.bytes_stream();
 
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| format!("Download error: {}", e))?;
+        let chunk = chunk.map_err(|e| fail(format!("Download error: {}", e)))?;
         if !header_checked && !chunk.is_empty() {
             header_checked = true;
             if !looks_like_onnx(&chunk) {
-                return Err("Downloaded file does not look like a valid ONNX model".to_string());
+                return Err(fail(
+                    "Downloaded file does not look like a valid ONNX model".to_string(),
+                ));
             }
         }
-        tmp.write_all(&chunk)
-            .map_err(|e| format!("Failed to write model file: {}", e))?;
-        hasher.update(&chunk);
         downloaded += chunk.len() as u64;
+        check_size(downloaded, max_bytes).map_err(fail)?;
+        tmp.write_all(&chunk)
+            .map_err(|e| fail(format!("Failed to write model file: {}", e)))?;
+        hasher.update(&chunk);
 
         if last_emit.elapsed().as_millis() >= PROGRESS_THROTTLE_MS {
             on_progress(downloaded, total);
@@ -261,9 +346,20 @@ async fn download_to_temp(
     on_progress(downloaded, total);
 
     if !header_checked {
-        return Err("Downloaded file is empty".to_string());
+        return Err(fail("Downloaded file is empty".to_string()));
     }
+    sync_temp(&tmp).map_err(fail)?;
     Ok((tmp, hex_encode(hasher.finalize())))
+}
+
+/// Built-ins come from this app version's own release first, so the pins
+/// always match. Dev builds (e.g. 1.4.1-116-g74b2960) have no such release
+/// (404) and fall back to the latest one.
+fn default_model_urls(version: &str, filename: &str) -> [String; 2] {
+    [
+        format!("{RELEASES_URL}/download/{version}/{filename}"),
+        format!("{RELEASES_URL}/latest/download/{filename}"),
+    ]
 }
 
 /// Plain http lets anyone on the path swap the model the PAM module will run.
@@ -291,16 +387,23 @@ pub async fn add_model_from_url(
     // Progress only: the real id is claimed after the download.
     let id = slugify(&name);
 
-    let (tmp, sha256) = download_to_temp(&url, &dir, |downloaded, total| {
-        let _ = app.emit(
-            PROGRESS_EVENT,
-            DownloadProgress {
-                id: id.clone(),
-                downloaded,
-                total,
-            },
-        );
-    })
+    let client = http_client()?;
+    let (tmp, sha256) = download_to_temp(
+        &client,
+        &url,
+        &dir,
+        MAX_USER_MODEL_BYTES,
+        |downloaded, total| {
+            let _ = app.emit(
+                PROGRESS_EVENT,
+                DownloadProgress {
+                    id: id.clone(),
+                    downloaded,
+                    total,
+                },
+            );
+        },
+    )
     .await?;
 
     register_user_model(
@@ -314,37 +417,92 @@ pub async fn add_model_from_url(
     )
 }
 
+/// Downloads `known` unless it is already installed. Returns whether it
+/// downloaded.
+async fn ensure_builtin(
+    client: &reqwest::Client,
+    dir: &Path,
+    known: &'static db::KnownModel,
+) -> Result<bool, String> {
+    let dest = dir.join(known.filename);
+    let check = dest.clone();
+    let installed = tauri::async_runtime::spawn_blocking(move || {
+        is_installed(&check, known.sha256, known.size)
+    })
+    .await
+    .unwrap_or(false);
+    if installed {
+        return Ok(false);
+    }
+
+    let fail = |e: String| format!("Failed to download {}: {}", known.display_name, e);
+    let mut fetched = None;
+    for url in default_model_urls(env!("CARGO_PKG_VERSION"), known.filename) {
+        match download_to_temp(client, &url, dir, known.size, |_, _| {}).await {
+            Ok(r) => {
+                fetched = Some(r);
+                break;
+            }
+            Err(DownloadError::NotFound) => continue,
+            Err(e) => return Err(fail(e.into())),
+        }
+    }
+    let (tmp, sha256) = fetched.ok_or_else(|| fail(DownloadError::NotFound.into()))?;
+    // On mismatch `tmp` is dropped, which deletes it.
+    verify_sha256(&sha256, known.sha256).map_err(fail)?;
+    install_file(tmp, &dest)?;
+    Ok(true)
+}
+
 /// Downloads any built-in model missing from the user's models directory.
-/// db::open registers them on the next read. Returns the downloaded names.
+/// db::open registers them on the next read. Returns the downloaded names;
+/// if any model fails, the others are still tried and all errors returned.
 #[tauri::command]
 pub async fn ensure_default_models(app: AppHandle) -> Result<Vec<String>, String> {
     let dir = models_dir(&app)?;
+    let sweep_dir = dir.clone();
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        sweep_stale_temps(&sweep_dir, SystemTime::now())
+    })
+    .await;
+
+    let held_by_user: Vec<&str> = {
+        let conn = db::open(&app)?;
+        let mut held = Vec::new();
+        for known in db::KNOWN_MODELS {
+            if db::is_user_model(&conn, known.slug)? {
+                held.push(known.slug);
+            }
+        }
+        held
+    };
+    let client = http_client()?;
     let mut downloaded = Vec::new();
+    let mut errors = Vec::new();
 
     for known in db::KNOWN_MODELS {
-        let dest = dir.join(known.filename);
-        let check = dest.clone();
-        let installed =
-            tauri::async_runtime::spawn_blocking(move || is_installed(&check, known.sha256))
-                .await
-                .unwrap_or(false);
-        if installed {
+        if held_by_user.contains(&known.slug) {
+            eprintln!(
+                "models: skipping built-in {}: id '{}' belongs to a user model",
+                known.display_name, known.slug
+            );
             continue;
         }
-        let url = format!("{DEFAULT_MODELS_URL}/{}", known.filename);
-        let fail = |e: String| format!("Failed to download {}: {}", known.display_name, e);
-        let (tmp, sha256) = download_to_temp(&url, &dir, |_, _| {})
-            .await
-            .map_err(fail)?;
-        // On mismatch `tmp` is dropped, which deletes it.
-        verify_sha256(&sha256, known.sha256).map_err(fail)?;
-        install_file(tmp, &dest)?;
-
-        downloaded.push(known.display_name.to_string());
-        let _ = app.emit(DEFAULT_MODELS_EVENT, ());
+        match ensure_builtin(&client, &dir, known).await {
+            Ok(true) => {
+                downloaded.push(known.display_name.to_string());
+                let _ = app.emit(DEFAULT_MODELS_EVENT, ());
+            }
+            Ok(false) => {}
+            Err(e) => errors.push(e),
+        }
     }
 
-    Ok(downloaded)
+    if errors.is_empty() {
+        Ok(downloaded)
+    } else {
+        Err(errors.join("; "))
+    }
 }
 
 #[tauri::command]
@@ -368,6 +526,7 @@ pub fn add_model_from_file(
         File::open(&src).map_err(|e| format!("Failed to open source file: {}", e))?;
     std::io::copy(&mut src_file, tmp.as_file_mut())
         .map_err(|e| format!("Failed to copy model file: {}", e))?;
+    sync_temp(&tmp)?;
 
     let checksum = sha256_file(tmp.path())?;
     register_user_model(
@@ -445,21 +604,80 @@ mod tests {
     }
 
     #[test]
-    fn installed_requires_non_empty_file_with_pinned_hash() {
+    fn installed_requires_pinned_size_and_hash() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("m.onnx");
-        assert!(!is_installed(&path, ABC_SHA256), "missing file");
+        let installed = |p: &Path| is_installed(p, ABC_SHA256, 3);
+        assert!(!installed(&path), "missing file");
 
         std::fs::write(&path, b"").unwrap();
-        assert!(!is_installed(&path, ABC_SHA256), "0-byte file");
+        assert!(!installed(&path), "0-byte file");
 
         std::fs::write(&path, b"ab").unwrap();
-        assert!(!is_installed(&path, ABC_SHA256), "partial file");
+        assert!(!installed(&path), "partial file");
+
+        std::fs::write(&path, b"abd").unwrap();
+        assert!(!installed(&path), "same size, other content");
 
         std::fs::write(&path, b"abc").unwrap();
-        assert!(is_installed(&path, ABC_SHA256));
+        assert!(installed(&path));
 
-        assert!(!is_installed(dir.path(), ABC_SHA256), "directory");
+        assert!(!installed(dir.path()), "directory");
+    }
+
+    #[test]
+    fn size_cap_allows_up_to_the_limit() {
+        assert!(check_size(0, 3).is_ok());
+        assert!(check_size(3, 3).is_ok());
+        assert!(check_size(4, 3).is_err());
+        assert!(check_size(MAX_USER_MODEL_BYTES, MAX_USER_MODEL_BYTES).is_ok());
+        assert!(check_size(MAX_USER_MODEL_BYTES + 1, MAX_USER_MODEL_BYTES).is_err());
+    }
+
+    #[test]
+    fn default_model_urls_try_own_release_then_latest() {
+        assert_eq!(
+            default_model_urls("1.4.2", "minifas_v2.onnx"),
+            [
+                "https://github.com/phucvinh57/biopass/releases/download/1.4.2/minifas_v2.onnx",
+                "https://github.com/phucvinh57/biopass/releases/latest/download/minifas_v2.onnx",
+            ]
+        );
+        for url in default_model_urls(env!("CARGO_PKG_VERSION"), "m.onnx") {
+            assert!(require_https(&url).is_ok(), "{url}");
+        }
+    }
+
+    #[test]
+    fn sweep_removes_only_stale_regular_temp_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let old = SystemTime::now() - STALE_TEMP_AGE - Duration::from_secs(60);
+        let make = |name: &str, mtime: Option<SystemTime>| {
+            let path = dir.path().join(name);
+            let f = File::create(&path).unwrap();
+            if let Some(t) = mtime {
+                f.set_modified(t).unwrap();
+            }
+            path
+        };
+        let stale = make(".tmpAbC123", Some(old));
+        let fresh = make(".tmpXyZ789", None);
+        let model = make("old-model.onnx", Some(old));
+        let target = outside.path().join("target");
+        File::create(&target).unwrap().set_modified(old).unwrap();
+        let link = dir.path().join(".tmpLink00");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        std::fs::create_dir(dir.path().join(".tmpDir000")).unwrap();
+
+        sweep_stale_temps(dir.path(), SystemTime::now());
+
+        assert!(!stale.exists(), "stale temp file");
+        assert!(fresh.exists(), "in-progress temp file");
+        assert!(model.exists(), "model file");
+        assert!(link.symlink_metadata().is_ok(), "symlink");
+        assert!(target.exists(), "symlink target");
+        assert!(dir.path().join(".tmpDir000").is_dir(), "directory");
     }
 
     #[test]
@@ -511,6 +729,12 @@ mod tests {
             assert_eq!(
                 sha256_hex(&path).unwrap(),
                 known.sha256,
+                "{}",
+                known.filename
+            );
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().len(),
+                known.size,
                 "{}",
                 known.filename
             );

@@ -25,9 +25,10 @@ pub struct KnownModel {
     pub display_name: &'static str,
     pub task: &'static str,
     pub architecture: Option<&'static str>,
-    /// Hex SHA-256 of the release asset. Same as the Git LFS oid of
-    /// auth/face/models/<filename>; update both together.
+    /// Hex SHA-256 and byte size of the release asset: the Git LFS `oid`
+    /// and `size` of auth/face/models/<filename>. Update them together.
     pub sha256: &'static str,
+    pub size: u64,
 }
 
 /// Built-in models. The app downloads any that are missing on startup
@@ -40,6 +41,7 @@ pub const KNOWN_MODELS: &[KnownModel] = &[
         task: "detection",
         architecture: None,
         sha256: "3e81709ceaae911db2dd23bed39aa1fc980b6320e8a8bbf8b587b2a8feaa5a5a",
+        size: 12667296,
     },
     KnownModel {
         slug: "edgeface-s-gamma-05",
@@ -48,6 +50,7 @@ pub const KNOWN_MODELS: &[KnownModel] = &[
         task: "recognition",
         architecture: None,
         sha256: "cdc2ced431b4bf071c92f2fe8bb6ed4b5017be4175b4375eaa6e14b255f831ce",
+        size: 14847458,
     },
     KnownModel {
         slug: "edgeface-xs-gamma-06",
@@ -56,6 +59,7 @@ pub const KNOWN_MODELS: &[KnownModel] = &[
         task: "recognition",
         architecture: None,
         sha256: "619ffe6f9df592e250e900ed135c2de3d620f6bc0a913f7d0432fa0735073a53",
+        size: 7319208,
     },
     KnownModel {
         slug: "mobilenetv3-antispoof",
@@ -64,6 +68,7 @@ pub const KNOWN_MODELS: &[KnownModel] = &[
         task: "anti_spoofing",
         architecture: Some("mobilenetv3"),
         sha256: "a90d32b1f217658d1eb1ea05d9248d07fbd05c8ee41b4baa4c36b5cde30d40f4",
+        size: 12152984,
     },
     KnownModel {
         slug: "minifas-v2",
@@ -72,6 +77,7 @@ pub const KNOWN_MODELS: &[KnownModel] = &[
         task: "anti_spoofing",
         architecture: Some("minifasv2"),
         sha256: "af2381b88f38769222ed93379e12444e2a50814575de1c46170de570c55a42b6",
+        size: 1912594,
     },
 ];
 
@@ -177,6 +183,13 @@ pub fn get_model(conn: &Connection, id: &str) -> Result<Option<Model>, String> {
     conn.query_row(&query, params![id], row_to_model)
         .optional()
         .map_err(|e| format!("Failed to query model '{}': {}", id, e))
+}
+
+/// True when a user model already holds `id`. Old versions could hand a
+/// built-in's slug to a user model, whose file then sits at the built-in's
+/// path; the built-in download must not overwrite it.
+pub fn is_user_model(conn: &Connection, id: &str) -> Result<bool, String> {
+    Ok(get_model(conn, id)?.is_some_and(|m| m.source == "user"))
 }
 
 pub fn resolve_model_path(conn: &Connection, id: &str) -> Result<Option<String>, String> {
@@ -406,5 +419,21 @@ mod tests {
         assert_eq!(unique.len(), ADDERS, "duplicate ids: {ids:?}");
         let conn = Connection::open(&db_path).unwrap();
         assert_eq!(list_models(&conn, None).unwrap().len(), ADDERS);
+    }
+
+    #[test]
+    fn is_user_model_only_for_user_rows() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrations().to_latest(&mut conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO models (id, name, task, path, source, installed_at) VALUES \
+                 ('yolov8n-face', 'Mine', 'detection', '/m/yolov8n-face.onnx', 'user', 0), \
+                 ('edgeface-s-gamma-05', 'E', 'recognition', '/m/e.onnx', 'builtin', 0);",
+        )
+        .unwrap();
+
+        assert!(is_user_model(&conn, "yolov8n-face").unwrap());
+        assert!(!is_user_model(&conn, "edgeface-s-gamma-05").unwrap());
+        assert!(!is_user_model(&conn, "minifas-v2").unwrap());
     }
 }
