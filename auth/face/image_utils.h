@@ -22,36 +22,42 @@ struct ImageRGB {
   int height = 0;
   std::vector<uint8_t> data;  // size = width * height * 3
 
+  // Larger than any camera frame or enrolled photo. Keeps every
+  // width * height * 3 index below INT_MAX and stops absurd allocations.
+  static constexpr int kMaxDim = 16384;
+
+  // 0 for a size that is non-positive or above kMaxDim on either side.
   static size_t byteSize(int w, int h) {
-    if (w <= 0 || h <= 0)
+    if (w <= 0 || h <= 0 || w > kMaxDim || h > kMaxDim)
       return 0;
-    const size_t ws = static_cast<size_t>(w);
-    const size_t hs = static_cast<size_t>(h);
-    if (ws > std::numeric_limits<size_t>::max() / hs / 3)
-      return 0;
-    return ws * hs * 3;
+    return static_cast<size_t>(w) * static_cast<size_t>(h) * 3;
   }
 
+  // A size byteSize() rejects gives an empty 0x0 image.
   ImageRGB() = default;
-  ImageRGB(int w, int h)
-      : width(std::max(0, w)), height(std::max(0, h)), data(byteSize(width, height), 0) {}
-  ImageRGB(int w, int h, const uint8_t* src) : width(std::max(0, w)), height(std::max(0, h)) {
-    const size_t bytes = byteSize(width, height);
-    if (bytes == 0 || !src) {
-      width = 0;
-      height = 0;
+  ImageRGB(int w, int h) {
+    const size_t bytes = byteSize(w, h);
+    if (bytes == 0)
       return;
-    }
-    data.resize(bytes);
-    std::memcpy(data.data(), src, bytes);
+    width = w;
+    height = h;
+    data.assign(bytes, 0);
+  }
+  ImageRGB(int w, int h, const uint8_t* src) {
+    const size_t bytes = byteSize(w, h);
+    if (bytes == 0 || !src)
+      return;
+    width = w;
+    height = h;
+    data.assign(src, src + bytes);
   }
 
   bool empty() const { return data.empty(); }
   uint8_t* ptr() { return data.data(); }
   const uint8_t* ptr() const { return data.data(); }
 
-  uint8_t& at(int y, int x, int c) { return data[(y * width + x) * 3 + c]; }
-  const uint8_t& at(int y, int x, int c) const { return data[(y * width + x) * 3 + c]; }
+  uint8_t& at(int y, int x, int c) { return data[index(y, x, c)]; }
+  const uint8_t& at(int y, int x, int c) const { return data[index(y, x, c)]; }
 
   ImageRGB crop(int x1, int y1, int x2, int y2) const {
     x1 = std::max(0, x1);
@@ -74,13 +80,19 @@ struct ImageRGB {
     out.data = data;
     return out;
   }
+
+ private:
+  size_t index(int y, int x, int c) const {
+    return (static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)) * 3 +
+           static_cast<size_t>(c);
+  }
 };
 
 // Bilinear.
 inline ImageRGB resizeImage(const ImageRGB& src, int tw, int th) {
-  if (src.empty())
-    return {};
   ImageRGB dst(tw, th);
+  if (src.empty() || dst.empty())
+    return {};
   float sx = (float)src.width / tw;
   float sy = (float)src.height / th;
   for (int y = 0; y < th; y++) {
@@ -109,14 +121,17 @@ inline ImageRGB resizeImage(const ImageRGB& src, int tw, int th) {
 
 // Fit inside tw x th keeping aspect ratio, pad with pad_val.
 inline ImageRGB imageLetterbox(const ImageRGB& src, int tw, int th, uint8_t pad_val = 114) {
-  if (src.empty())
+  ImageRGB out(tw, th);
+  if (src.empty() || out.empty())
     return {};
   float scale = std::min((float)tw / src.width, (float)th / src.height);
-  int nw = (int)std::round(src.width * scale);
-  int nh = (int)std::round(src.height * scale);
+  // A very thin source would round its short side to 0; keep at least 1 px.
+  int nw = std::clamp((int)std::round(src.width * scale), 1, tw);
+  int nh = std::clamp((int)std::round(src.height * scale), 1, th);
   ImageRGB resized = resizeImage(src, nw, nh);
+  if (resized.empty())
+    return {};
 
-  ImageRGB out(tw, th);
   std::memset(out.data.data(), pad_val, out.data.size());
 
   int dx = (tw - nw) / 2;
@@ -136,6 +151,8 @@ inline ImageRGB resizeImageArea(const ImageRGB& src, int tw, int th) {
   if (src.empty() || tw <= 0 || th <= 0)
     return {};
   ImageRGB dst(tw, th);
+  if (dst.empty())
+    return {};
 
   double sx = (double)src.width / tw;
   double sy = (double)src.height / th;
@@ -208,6 +225,8 @@ inline ImageRGB resizeImageLanczos4(const ImageRGB& src, int tw, int th) {
   if (src.empty() || tw <= 0 || th <= 0)
     return {};
   ImageRGB dst(tw, th);
+  if (dst.empty())
+    return {};
 
   double sx = (double)src.width / tw;
   double sy = (double)src.height / th;
@@ -257,24 +276,27 @@ inline int reflect101Index(int i, int n) {
 
 // Letterbox to imgsz x imgsz (Lanczos4 up, Area down), reflect-101 padding.
 inline ImageRGB imageLetterboxReflect101(const ImageRGB& src, int imgsz) {
-  if (src.empty() || imgsz <= 0)
+  ImageRGB out(imgsz, imgsz);
+  if (src.empty() || out.empty())
     return {};
 
   int old_h = src.height;
   int old_w = src.width;
   double ratio = (double)imgsz / std::max(old_h, old_w);
-  int scaled_h = (int)(old_h * ratio);
-  int scaled_w = (int)(old_w * ratio);
+  // A very thin source would truncate its short side to 0; keep at least 1 px.
+  int scaled_h = std::clamp((int)(old_h * ratio), 1, imgsz);
+  int scaled_w = std::clamp((int)(old_w * ratio), 1, imgsz);
 
   ImageRGB resized = (ratio > 1.0) ? resizeImageLanczos4(src, scaled_w, scaled_h)
                                    : resizeImageArea(src, scaled_w, scaled_h);
+  if (resized.empty())
+    return {};
 
   int delta_w = imgsz - scaled_w;
   int delta_h = imgsz - scaled_h;
   int top = delta_h / 2;
   int left = delta_w / 2;
 
-  ImageRGB out(imgsz, imgsz);
   for (int y = 0; y < imgsz; y++) {
     int sy = reflect101Index(y - top, scaled_h);
     for (int x = 0; x < imgsz; x++) {
@@ -290,17 +312,25 @@ inline ImageRGB imageLetterboxReflect101(const ImageRGB& src, int imgsz) {
 // src/inference/preprocess.py.
 inline ImageRGB imageSquareCropReflect101(const ImageRGB& src, int x1, int y1, int x2, int y2,
                                           float scale) {
-  int w = x2 - x1;
-  int h = y2 - y1;
-  if (src.empty() || w <= 0 || h <= 0 || scale <= 0)
+  // Box maths in double: int corners near INT_MAX must not overflow.
+  const double w = (double)x2 - x1;
+  const double h = (double)y2 - y1;
+  if (src.empty() || !(w > 0) || !(h > 0) || !(scale > 0))
     return {};
 
-  int max_dim = std::max(w, h);
-  double center_x = x1 + w / 2.0;
-  double center_y = y1 + h / 2.0;
-  int x = (int)(center_x - max_dim * (double)scale / 2);
-  int y = (int)(center_y - max_dim * (double)scale / 2);
-  int size = (int)(max_dim * (double)scale);
+  const double max_dim = std::max(w, h);
+  const double side = max_dim * (double)scale;
+  // The output is side x side; past the image size limit it can't be built.
+  if (!(side < ImageRGB::kMaxDim + 1.0))
+    return {};
+  const double fx = x1 + w / 2.0 - side / 2;
+  const double fy = y1 + h / 2.0 - side / 2;
+  // A box that far out has no pixels in the frame.
+  if (fx <= -side || fy <= -side || fx >= src.width || fy >= src.height)
+    return {};
+  int x = (int)fx;
+  int y = (int)fy;
+  int size = (int)side;
 
   ImageRGB inside = src.crop(x, y, x + size, y + size);
   if (inside.empty() || size <= 0)

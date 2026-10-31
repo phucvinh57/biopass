@@ -377,7 +377,7 @@ bool convertFrame(const libcamera::PixelFormat& pixel_format, const uint8_t* dat
     return greyToRgb(data, bytes_used, width, height, stride, out);
   }
   if (pixel_format == libcamera::formats::MJPEG) {
-    return mjpegToRgb(data, bytes_used, out);
+    return mjpegToRgb(data, bytes_used, width, height, out);
   }
   if (const auto layout = packedRgbLayout(pixel_format)) {
     return packedRgbToRgb(data, bytes_used, width, height, stride, *layout, out);
