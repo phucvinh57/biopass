@@ -11,6 +11,7 @@
 
 #include "image_utils.h"
 #include "pixel_convert.h"
+#include "utils.h"
 
 namespace {
 
@@ -230,6 +231,35 @@ void checkMjpeg() {
 
 // Raw converters must refuse a frame size ImageRGB can't hold instead of
 // writing into an empty image.
+bool clampsTo(float x1, float y1, float x2, float y2, int ex1, int ey1, int ex2, int ey2) {
+  const biopass::RawDet d{x1, y1, x2, y2, 0.9f, 0};
+  const auto box = biopass::clampBoxToImage(d, 640, 480);
+  return box && box->x1 == ex1 && box->y1 == ey1 && box->x2 == ex2 && box->y2 == ey2;
+}
+
+bool rejected(float x1, float y1, float x2, float y2) {
+  const biopass::RawDet d{x1, y1, x2, y2, 0.9f, 0};
+  return !biopass::clampBoxToImage(d, 640, 480);
+}
+
+void checkDetectionBoxes() {
+  const float inf = std::numeric_limits<float>::infinity();
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  expect(clampsTo(10.7f, 20.2f, 100.9f, 200.5f, 10, 20, 100, 200),
+         "box inside the frame truncates like before");
+  expect(clampsTo(-30.f, -0.5f, 50.f, 60.f, 0, 0, 50, 60), "box past top-left is clamped");
+  expect(clampsTo(600.f, 400.f, 700.f, 1e9f, 600, 400, 640, 480),
+         "box past bottom-right is clamped");
+  expect(rejected(700.f, 10.f, 800.f, 50.f), "box right of the frame is rejected");
+  expect(rejected(-50.f, -50.f, -1.f, -1.f), "box above-left of the frame is rejected");
+  expect(rejected(10.f, 10.f, 10.5f, 50.f), "box under one pixel wide is rejected");
+  expect(rejected(50.f, 50.f, 10.f, 10.f), "inverted box is rejected");
+  expect(rejected(nan, 10.f, 50.f, 50.f), "NaN box is rejected");
+  expect(rejected(10.f, 10.f, inf, 50.f), "infinite box is rejected");
+  expect(clampsTo(-3e38f, -3e38f, 3e38f, 3e38f, 0, 0, 640, 480),
+         "huge finite box is clamped to the frame, not cast out of int range");
+}
+
 void checkRawConvertLimits() {
   const int w = ImageRGB::kMaxDim + 2;
   const std::vector<uint8_t> row(static_cast<size_t>(w) * 4, 0x80);
@@ -254,6 +284,7 @@ int main() {
   checkHugeBox();
   checkMjpeg();
   checkRawConvertLimits();
+  checkDetectionBoxes();
 
   std::printf("%s\n", g_failures == 0 ? "All checks passed" : "Some checks FAILED");
   return g_failures == 0 ? 0 : 1;

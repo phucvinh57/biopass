@@ -111,4 +111,21 @@ void scale_boxes(const std::vector<int>& img1_shape, std::vector<RawDet>& dets,
   }
 }
 
+std::optional<PixelBox> clampBoxToImage(const RawDet& det, int width, int height) {
+  if (!std::isfinite(det.x1) || !std::isfinite(det.y1) || !std::isfinite(det.x2) ||
+      !std::isfinite(det.y2) || width <= 0 || height <= 0) {
+    return std::nullopt;
+  }
+  // Clamp in float: casting a float outside int's range is undefined.
+  const auto clampTo = [](float v, int hi) {
+    return static_cast<int>(std::clamp(v, 0.0f, static_cast<float>(hi)));
+  };
+  const PixelBox box{clampTo(det.x1, width), clampTo(det.y1, height), clampTo(det.x2, width),
+                     clampTo(det.y2, height)};
+  if (box.x2 - box.x1 <= 0 || box.y2 - box.y1 <= 0) {
+    return std::nullopt;
+  }
+  return box;
+}
+
 }  // namespace biopass
