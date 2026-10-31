@@ -30,7 +30,9 @@ AntiSpoofDecision decodeMobileNetV3Output(const float* data, size_t size, float 
 }
 
 AntiSpoofDecision decodeMiniFasV2Output(const float* data, size_t size, float threshold) {
-  (void)size;
+  if (data == nullptr || size != 2 || !std::isfinite(data[0]) || !std::isfinite(data[1])) {
+    return AntiSpoofDecision{false, true, 1.0f};
+  }
   // Numerically stable 2-class softmax.
   const float max_logit = std::max(data[0], data[1]);
   const float exp_real = std::exp(data[0] - max_logit);

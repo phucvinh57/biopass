@@ -76,12 +76,12 @@ SpoofResult FaceAntiSpoofing::inference(const ImageRGB& frame, const Box& face_b
   auto output_tensors = this->session.run(input_data, input_shape);
 
   const float* logits = output_tensors[0].GetTensorData<float>();
+  const size_t count = output_tensors[0].GetTensorTypeAndShapeInfo().GetElementCount();
 
   if (this->architecture == AntiSpoofArchitecture::MobileNetV3) {
     // The bundled mobilenetv3_antispoof.onnx ends in a Softmax; its output
     // tensor is named "logits" but already holds probabilities. User-imported
     // models are labelled mobilenetv3 too, so check rather than assume.
-    const size_t count = output_tensors[0].GetTensorTypeAndShapeInfo().GetElementCount();
     const AntiSpoofDecision decision = decodeMobileNetV3Output(logits, count, this->threshold);
     if (!decision.valid) {
       spdlog::error(
@@ -92,7 +92,13 @@ SpoofResult FaceAntiSpoofing::inference(const ImageRGB& frame, const Box& face_b
     return SpoofResult(decision.score, decision.spoof);
   }
 
-  const AntiSpoofDecision decision = decodeMiniFasV2Output(logits, 2, this->threshold);
+  const AntiSpoofDecision decision = decodeMiniFasV2Output(logits, count, this->threshold);
+  if (!decision.valid) {
+    spdlog::error(
+        "FaceAntiSpoofing: MiniFASv2 output is not 2 finite logits ({} values). Treating face as "
+        "spoof.",
+        count);
+  }
   return SpoofResult(decision.score, decision.spoof);
 }
 

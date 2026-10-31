@@ -83,6 +83,22 @@ void testMiniFasV2ValidOutputs() {
   expect(decodeMiniFas({-3.0f, 5.0f}).valid, "minifasv2: finite logits are valid");
 }
 
+void expectMiniFasFailClosed(const std::vector<float>& out, size_t size, const char* what) {
+  const AntiSpoofDecision d = decodeMiniFasV2Output(out.data(), size, kThreshold);
+  expect(!d.valid && d.spoof && d.score == 1.0f, what);
+}
+
+void testMiniFasV2InvalidOutputsFailClosed() {
+  expectMiniFasFailClosed({NAN, 0.0f}, 2, "minifasv2: NaN real logit fails closed");
+  expectMiniFasFailClosed({0.0f, NAN}, 2, "minifasv2: NaN spoof logit fails closed");
+  expectMiniFasFailClosed({INFINITY, 0.0f}, 2, "minifasv2: +inf real logit fails closed");
+  expectMiniFasFailClosed({-INFINITY, 0.0f}, 2, "minifasv2: -inf real logit fails closed");
+  expectMiniFasFailClosed({0.0f, INFINITY}, 2, "minifasv2: +inf spoof logit fails closed");
+  expectMiniFasFailClosed({5.0f, -5.0f}, 1, "minifasv2: one value fails closed");
+  expectMiniFasFailClosed({5.0f, -5.0f, 0.0f}, 3, "minifasv2: three values fail closed");
+  expectMiniFasFailClosed({}, 0, "minifasv2: empty output fails closed");
+}
+
 }  // namespace
 
 int main() {
@@ -90,6 +106,7 @@ int main() {
   testScoreIsSpoofProbability();
   testInvalidOutputsFailClosed();
   testMiniFasV2ValidOutputs();
+  testMiniFasV2InvalidOutputsFailClosed();
   if (g_failures > 0) {
     std::printf("%d failure(s)\n", g_failures);
     return 1;
