@@ -1,6 +1,6 @@
 [package]
 name = "biopass"
-version = "1.4.1-116-g74b2960"
+version = "1.4.2"
 description = "Biometric Authentication System"
 authors = ["phucvinh57"]
 edition = "2021"
