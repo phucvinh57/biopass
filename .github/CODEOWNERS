@@ -1,0 +1,13 @@
+# High-risk paths: a human code owner must approve (enable "Require review from Code Owners"
+# in branch protection). Everything else is unowned and follows the normal review rule.
+
+/auth/pam/                    @phucvinh57
+/auth/core/                   @phucvinh57
+/app/src-tauri/scripts/       @phucvinh57
+/app/src-tauri/tauri.conf.json @phucvinh57
+/app/src-tauri/capabilities/  @phucvinh57
+/auth/BundleLibcamera.cmake   @phucvinh57
+/Makefile                     @phucvinh57
+/.github/                     @phucvinh57
+/CLAUDE.md                    @phucvinh57
+/REVIEW.md                    @phucvinh57
