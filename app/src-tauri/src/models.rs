@@ -137,7 +137,7 @@ fn hex_encode(bytes: impl AsRef<[u8]>) -> String {
         .collect()
 }
 
-fn sha256_file(path: &Path) -> Result<String, String> {
+fn sha256_hex(path: &Path) -> Result<String, String> {
     let mut file = File::open(path).map_err(|e| format!("Failed to open model file: {}", e))?;
     let mut hasher = Sha256::new();
     let mut buf = [0u8; 8192];
@@ -150,7 +150,97 @@ fn sha256_file(path: &Path) -> Result<String, String> {
         }
         hasher.update(&buf[..n]);
     }
-    Ok(format!("sha256:{}", hex_encode(hasher.finalize())))
+    Ok(hex_encode(hasher.finalize()))
+}
+
+fn sha256_file(path: &Path) -> Result<String, String> {
+    Ok(format!("sha256:{}", sha256_hex(path)?))
+}
+
+fn verify_sha256(actual_hex: &str, expected_hex: &str) -> Result<(), String> {
+    if actual_hex.eq_ignore_ascii_case(expected_hex) {
+        Ok(())
+    } else {
+        Err(format!(
+            "checksum mismatch: expected sha256 {}, got {}",
+            expected_hex, actual_hex
+        ))
+    }
+}
+
+/// A built-in model counts as installed only if it is non-empty and matches
+/// its pinned hash; anything else gets downloaded again.
+fn is_installed(path: &Path, expected_sha256: &str) -> bool {
+    if !std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.len() > 0) {
+        return false;
+    }
+    sha256_hex(path).is_ok_and(|h| verify_sha256(&h, expected_sha256).is_ok())
+}
+
+/// Moves a fully written temp file (same directory) over `dest`: fsync the
+/// data, rename, then fsync the directory so the rename survives a crash.
+fn install_file(tmp: tempfile::NamedTempFile, dest: &Path) -> Result<(), String> {
+    tmp.as_file()
+        .sync_all()
+        .map_err(|e| format!("Failed to sync model file: {}", e))?;
+    tmp.persist(dest)
+        .map_err(|e| format!("Failed to save model file: {}", e))?;
+    if let Some(dir) = dest.parent() {
+        File::open(dir)
+            .and_then(|d| d.sync_all())
+            .map_err(|e| format!("Failed to sync models directory: {}", e))?;
+    }
+    Ok(())
+}
+
+/// Streams `url` into a temp file in `dir`, hashing as it goes. Rejects
+/// empty bodies and anything that does not start like an ONNX model. The
+/// temp file is deleted on any error (dropped), so nothing partial is left.
+async fn download_to_temp(
+    url: &str,
+    dir: &Path,
+    mut on_progress: impl FnMut(u64, Option<u64>),
+) -> Result<(tempfile::NamedTempFile, String), String> {
+    let response = reqwest::get(url)
+        .await
+        .map_err(|e| format!("Failed to start download: {}", e))?;
+    if !response.status().is_success() {
+        return Err(format!("Download failed with status {}", response.status()));
+    }
+    let total = response.content_length();
+
+    let mut tmp = tempfile::NamedTempFile::new_in(dir)
+        .map_err(|e| format!("Failed to create temp file: {}", e))?;
+    let mut hasher = Sha256::new();
+    let mut downloaded: u64 = 0;
+    let mut last_emit = Instant::now();
+    let mut header_checked = false;
+    let mut stream = response.bytes_stream();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("Download error: {}", e))?;
+        if !header_checked && !chunk.is_empty() {
+            header_checked = true;
+            if !looks_like_onnx(&chunk) {
+                return Err("Downloaded file does not look like a valid ONNX model".to_string());
+            }
+        }
+        tmp.write_all(&chunk)
+            .map_err(|e| format!("Failed to write model file: {}", e))?;
+        hasher.update(&chunk);
+        downloaded += chunk.len() as u64;
+
+        if last_emit.elapsed().as_millis() >= PROGRESS_THROTTLE_MS {
+            on_progress(downloaded, total);
+            last_emit = Instant::now();
+        }
+    }
+    on_progress(downloaded, total);
+
+    if !header_checked {
+        return Err("Downloaded file is empty".to_string());
+    }
+    Ok((tmp, hex_encode(hasher.finalize())))
 }
 
 /// Plain http lets anyone on the path swap the model the PAM module will run.
@@ -180,67 +270,21 @@ pub async fn add_model_from_url(
         unique_model_id(&conn, &slugify(&name))?
     };
 
-    let response = reqwest::get(&url)
-        .await
-        .map_err(|e| format!("Failed to start download: {}", e))?;
-    if !response.status().is_success() {
-        return Err(format!("Download failed with status {}", response.status()));
-    }
-    let total = response.content_length();
+    let (tmp, sha256) = download_to_temp(&url, &dir, |downloaded, total| {
+        let _ = app.emit(
+            PROGRESS_EVENT,
+            DownloadProgress {
+                id: id.clone(),
+                downloaded,
+                total,
+            },
+        );
+    })
+    .await?;
 
-    let mut tmp = tempfile::NamedTempFile::new_in(&dir)
-        .map_err(|e| format!("Failed to create temp file: {}", e))?;
-    let mut hasher = Sha256::new();
-    let mut downloaded: u64 = 0;
-    let mut last_emit = Instant::now();
-    let mut header_checked = false;
-    let mut stream = response.bytes_stream();
-
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| format!("Download error: {}", e))?;
-        if !header_checked && !chunk.is_empty() {
-            header_checked = true;
-            if !looks_like_onnx(&chunk) {
-                return Err("Downloaded file does not look like a valid ONNX model".to_string());
-            }
-        }
-        tmp.write_all(&chunk)
-            .map_err(|e| format!("Failed to write model file: {}", e))?;
-        hasher.update(&chunk);
-        downloaded += chunk.len() as u64;
-
-        if last_emit.elapsed().as_millis() >= PROGRESS_THROTTLE_MS {
-            let _ = app.emit(
-                PROGRESS_EVENT,
-                DownloadProgress {
-                    id: id.clone(),
-                    downloaded,
-                    total,
-                },
-            );
-            last_emit = Instant::now();
-        }
-    }
-    let _ = app.emit(
-        PROGRESS_EVENT,
-        DownloadProgress {
-            id: id.clone(),
-            downloaded,
-            total,
-        },
-    );
-
-    if !header_checked {
-        return Err("Downloaded file is empty".to_string());
-    }
-    tmp.as_file()
-        .sync_all()
-        .map_err(|e| format!("Failed to sync model file: {}", e))?;
-
-    let checksum = format!("sha256:{}", hex_encode(hasher.finalize()));
+    let checksum = format!("sha256:{sha256}");
     let final_path = dir.join(format!("{id}.onnx"));
-    tmp.persist(&final_path)
-        .map_err(|e| format!("Failed to save model file: {}", e))?;
+    install_file(tmp, &final_path)?;
 
     let conn = db::open(&app)?;
     db::upsert_model(
@@ -266,24 +310,22 @@ pub async fn ensure_default_models(app: AppHandle) -> Result<Vec<String>, String
 
     for known in db::KNOWN_MODELS {
         let dest = dir.join(known.filename);
-        if dest.exists() {
+        let check = dest.clone();
+        let installed =
+            tauri::async_runtime::spawn_blocking(move || is_installed(&check, known.sha256))
+                .await
+                .unwrap_or(false);
+        if installed {
             continue;
         }
         let url = format!("{DEFAULT_MODELS_URL}/{}", known.filename);
-        let bytes = reqwest::get(&url)
+        let fail = |e: String| format!("Failed to download {}: {}", known.display_name, e);
+        let (tmp, sha256) = download_to_temp(&url, &dir, |_, _| {})
             .await
-            .and_then(|r| r.error_for_status())
-            .map_err(|e| format!("Failed to download {}: {}", known.display_name, e))?
-            .bytes()
-            .await
-            .map_err(|e| format!("Failed to download {}: {}", known.display_name, e))?;
-
-        let mut tmp = tempfile::NamedTempFile::new_in(&dir)
-            .map_err(|e| format!("Failed to create temp file: {}", e))?;
-        tmp.write_all(&bytes)
-            .map_err(|e| format!("Failed to write model file: {}", e))?;
-        tmp.persist(&dest)
-            .map_err(|e| format!("Failed to save model file: {}", e))?;
+            .map_err(fail)?;
+        // On mismatch `tmp` is dropped, which deletes it.
+        verify_sha256(&sha256, known.sha256).map_err(fail)?;
+        install_file(tmp, &dest)?;
 
         downloaded.push(known.display_name.to_string());
         let _ = app.emit(DEFAULT_MODELS_EVENT, ());
@@ -317,13 +359,9 @@ pub fn add_model_from_file(
         File::open(&src).map_err(|e| format!("Failed to open source file: {}", e))?;
     std::io::copy(&mut src_file, tmp.as_file_mut())
         .map_err(|e| format!("Failed to copy model file: {}", e))?;
-    tmp.as_file()
-        .sync_all()
-        .map_err(|e| format!("Failed to sync model file: {}", e))?;
 
     let checksum = sha256_file(tmp.path())?;
-    tmp.persist(&final_path)
-        .map_err(|e| format!("Failed to save model file: {}", e))?;
+    install_file(tmp, &final_path)?;
 
     db::upsert_model(
         &conn,
@@ -390,5 +428,88 @@ mod tests {
         assert!(require_https("file:///tmp/m.onnx").is_err());
         assert!(require_https("example.com/m.onnx").is_err());
         assert!(require_https("https://").is_err());
+    }
+
+    const ABC_SHA256: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+
+    #[test]
+    fn sha256_must_match_pin() {
+        assert!(verify_sha256(ABC_SHA256, ABC_SHA256).is_ok());
+        assert!(verify_sha256(&ABC_SHA256.to_uppercase(), ABC_SHA256).is_ok());
+        assert!(verify_sha256(&"0".repeat(64), ABC_SHA256).is_err());
+        assert!(verify_sha256("", ABC_SHA256).is_err());
+    }
+
+    #[test]
+    fn installed_requires_non_empty_file_with_pinned_hash() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("m.onnx");
+        assert!(!is_installed(&path, ABC_SHA256), "missing file");
+
+        std::fs::write(&path, b"").unwrap();
+        assert!(!is_installed(&path, ABC_SHA256), "0-byte file");
+
+        std::fs::write(&path, b"ab").unwrap();
+        assert!(!is_installed(&path, ABC_SHA256), "partial file");
+
+        std::fs::write(&path, b"abc").unwrap();
+        assert!(is_installed(&path, ABC_SHA256));
+
+        assert!(!is_installed(dir.path(), ABC_SHA256), "directory");
+    }
+
+    #[test]
+    fn install_file_replaces_dest_and_leaves_no_temp() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("m.onnx");
+        std::fs::write(&dest, b"").unwrap();
+
+        let mut tmp = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
+        tmp.write_all(b"abc").unwrap();
+        install_file(tmp, &dest).unwrap();
+
+        assert_eq!(std::fs::read(&dest).unwrap(), b"abc");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn builtin_pins_are_sha256_hex() {
+        for known in db::KNOWN_MODELS {
+            assert_eq!(known.sha256.len(), 64, "{}", known.filename);
+            assert!(
+                known
+                    .sha256
+                    .chars()
+                    .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)),
+                "{}",
+                known.filename
+            );
+        }
+    }
+
+    /// The release ships auth/face/models/*.onnx; when the real files are
+    /// checked out (not LFS pointers), the pins must match them.
+    #[test]
+    fn builtin_pins_match_repo_models() {
+        let repo_models = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../auth/face/models");
+        for known in db::KNOWN_MODELS {
+            let path = repo_models.join(known.filename);
+            let mut head = [0u8; 1];
+            if File::open(&path)
+                .and_then(|mut f| f.read_exact(&mut head))
+                .is_err()
+            {
+                continue;
+            }
+            if !looks_like_onnx(&head) {
+                continue; // LFS pointer
+            }
+            assert_eq!(
+                sha256_hex(&path).unwrap(),
+                known.sha256,
+                "{}",
+                known.filename
+            );
+        }
     }
 }

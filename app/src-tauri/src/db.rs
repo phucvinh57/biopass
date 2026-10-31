@@ -25,6 +25,9 @@ pub struct KnownModel {
     pub display_name: &'static str,
     pub task: &'static str,
     pub architecture: Option<&'static str>,
+    /// Hex SHA-256 of the release asset. Same as the Git LFS oid of
+    /// auth/face/models/<filename>; update both together.
+    pub sha256: &'static str,
 }
 
 /// Built-in models. The app downloads any that are missing on startup
@@ -36,6 +39,7 @@ pub const KNOWN_MODELS: &[KnownModel] = &[
         display_name: "YOLOv8n Face",
         task: "detection",
         architecture: None,
+        sha256: "3e81709ceaae911db2dd23bed39aa1fc980b6320e8a8bbf8b587b2a8feaa5a5a",
     },
     KnownModel {
         slug: "edgeface-s-gamma-05",
@@ -43,6 +47,7 @@ pub const KNOWN_MODELS: &[KnownModel] = &[
         display_name: "EdgeFace S (gamma 0.5)",
         task: "recognition",
         architecture: None,
+        sha256: "cdc2ced431b4bf071c92f2fe8bb6ed4b5017be4175b4375eaa6e14b255f831ce",
     },
     KnownModel {
         slug: "edgeface-xs-gamma-06",
@@ -50,6 +55,7 @@ pub const KNOWN_MODELS: &[KnownModel] = &[
         display_name: "EdgeFace XS (gamma 0.6)",
         task: "recognition",
         architecture: None,
+        sha256: "619ffe6f9df592e250e900ed135c2de3d620f6bc0a913f7d0432fa0735073a53",
     },
     KnownModel {
         slug: "mobilenetv3-antispoof",
@@ -57,6 +63,7 @@ pub const KNOWN_MODELS: &[KnownModel] = &[
         display_name: "MobileNetV3 Anti-Spoof",
         task: "anti_spoofing",
         architecture: Some("mobilenetv3"),
+        sha256: "a90d32b1f217658d1eb1ea05d9248d07fbd05c8ee41b4baa4c36b5cde30d40f4",
     },
     KnownModel {
         slug: "minifas-v2",
@@ -64,6 +71,7 @@ pub const KNOWN_MODELS: &[KnownModel] = &[
         display_name: "MiniFASNet V2",
         task: "anti_spoofing",
         architecture: Some("minifasv2"),
+        sha256: "af2381b88f38769222ed93379e12444e2a50814575de1c46170de570c55a42b6",
     },
 ];
 
@@ -110,7 +118,8 @@ fn seed_default_models(conn: &Connection, app: &AppHandle) -> Result<(), String>
 
     for known in KNOWN_MODELS {
         let path = models_dir.join(known.filename);
-        if !path.exists() {
+        // A 0-byte file is a failed download, not a model.
+        if !std::fs::metadata(&path).is_ok_and(|m| m.is_file() && m.len() > 0) {
             continue;
         }
         conn.execute(
