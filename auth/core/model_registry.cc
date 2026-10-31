@@ -5,7 +5,16 @@
 #include <sqlite3.h>
 #include <unistd.h>
 
+#include "user_file.h"
+
 namespace biopass {
+
+namespace {
+
+// A registry of a few models is a few dozen KiB.
+constexpr size_t kMaxDbBytes = 64 << 20;
+
+}  // namespace
 
 std::string getDbPath(const std::string& username) {
   struct passwd* pw = getpwnam(username.c_str());
@@ -22,16 +31,27 @@ std::string getDbPath(const std::string& username) {
 ModelRegistry::ModelRegistry(const std::string& username) {
   const std::string db_path = getDbPath(username);
 
-  if (sqlite3_open_v2(db_path.c_str(), &db_, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+  // The db lives in the user's home: read it as the user, only if it is a
+  // regular file, then query a read-only in-memory copy. sqlite itself then
+  // opens nothing by path (no journal lookups as root either).
+  std::optional<std::string> bytes = readUserFile(username, db_path, kMaxDbBytes);
+  if (!bytes) {
+    spdlog::warn("Biopass: Model registry not found or not readable at {}", db_path);
+    return;
+  }
+  db_bytes_ = std::move(*bytes);
+
+  const auto size = static_cast<sqlite3_int64>(db_bytes_.size());
+  if (sqlite3_open_v2(":memory:", &db_, SQLITE_OPEN_READWRITE, nullptr) != SQLITE_OK ||
+      sqlite3_deserialize(db_, "main", reinterpret_cast<unsigned char*>(db_bytes_.data()), size,
+                          size, SQLITE_DESERIALIZE_READONLY) != SQLITE_OK) {
     spdlog::warn("Biopass: Failed to open model registry at {}: {}", db_path,
                  db_ ? sqlite3_errmsg(db_) : "unknown error");
     if (db_) {
       sqlite3_close(db_);
       db_ = nullptr;
     }
-    return;
   }
-  sqlite3_busy_timeout(db_, 2000);
 }
 
 ModelRegistry::~ModelRegistry() {

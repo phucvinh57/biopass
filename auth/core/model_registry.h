@@ -16,8 +16,8 @@ struct ModelInfo {
   std::string architecture;
 };
 
-// Read-only view of biopass.db's `models` table. Holds one connection;
-// reuse the instance for multiple lookups.
+// Read-only view of biopass.db's `models` table, from a snapshot of the
+// file taken at construction. Reuse the instance for multiple lookups.
 class ModelRegistry {
  public:
   explicit ModelRegistry(const std::string& username);
@@ -31,6 +31,8 @@ class ModelRegistry {
   std::optional<ModelInfo> resolveModel(const std::string& model_id) const;
 
  private:
+  // The db file's bytes; db_ reads them in place, so they outlive it.
+  std::string db_bytes_;
   sqlite3* db_ = nullptr;
 };
 

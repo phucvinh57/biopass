@@ -43,6 +43,7 @@ if(BUILD_TESTS)
     add_subdirectory(test/fs_user)
     add_subdirectory(test/helper_config)
     add_subdirectory(test/user_file)
+    add_subdirectory(test/model_registry)
 endif()
 
 install(
