@@ -20,7 +20,7 @@ Show the output; don't just claim it passes. Run what the change touches:
 | C++ | `make build-auth` and `clang-format --dry-run --Werror` on changed `auth/**/*.{cc,h}` |
 | Packaging | `make package` |
 
-Then review the diff with a fresh-context subagent or `/code-review`, and run `/security-review` for anything under `auth/pam`, `auth/core`, or `app/src-tauri/scripts`.
+Before opening or updating a PR, run `/pre-pr`. It does the checks above, a fresh-context review against REVIEW.md, and `/security-review` for high-risk paths. All AI review runs locally; GitHub CI only runs the mechanical checks.
 
 ## Rules
 

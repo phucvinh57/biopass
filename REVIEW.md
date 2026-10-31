@@ -1,6 +1,6 @@
 # Review guide
 
-Read by the AI reviewer (`.github/workflows/claude-review.yml`, `/code-review`) and by humans. Keep it short.
+Read by the local reviewer (`/pre-pr`, `/code-review`) and by humans. Keep it short.
 
 ## What counts as a failure
 
@@ -30,7 +30,7 @@ Report these as **Important**:
 - Label each finding **Important**, **Nit**, or **Pre-existing** (bug not introduced by this PR).
 - For a bug class, say so once and list all locations, so the author can fix them together.
 - Start with a one-line summary: `N important, N nits, N pre-existing` — or `No issues found.`
-- On re-review, look only at the new commits; don't repeat findings already raised. After 3 rounds on the same PR, stop and ask the author to rethink the approach instead.
+- On re-review, look only at the new changes; don't repeat findings already raised. After 3 rounds on the same change, stop and ask the author to rethink the approach instead.
 
 ## Recurring issues
 
