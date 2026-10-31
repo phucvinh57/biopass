@@ -178,5 +178,5 @@ Editing your distro PAM include file (typically `/etc/pam.d/common-auth` on Debi
 
 - **Use a VM** (strongly recommended, e.g. QEMU + KVM) so you can roll back snapshots if a module crashes or corrupts the PAM stack. Fingerprint readers usually can't be passed through to a VM.
 - **Edit PAM files as root with `sudoedit`** (e.g. `sudoedit /etc/pam.d/common-auth`) and keep them owned by root. Never `chown` them to your user: whoever can write a PAM file can make `sudo` let them in without a password.
-- **Keep a root shell open** (`sudo -i` in another terminal) while you test, so you can revert a broken change without authenticating again.
+- **Open a root shell before you edit** (`sudo -i` in another terminal; `sudo` itself goes through PAM) and keep it open while you test, so you can revert a broken change without authenticating again.
 - **Keep a rescue USB** to mount the filesystem and fix the config if you reboot into a locked system.
