@@ -1,5 +1,6 @@
-// Checks how the MobileNetV3 anti-spoofing output is turned into a spoof
-// decision (face/antispoofing/antispoof_output.h). Exits non-zero on failure.
+// Checks how the MobileNetV3 and MiniFASv2 anti-spoofing outputs are turned
+// into a spoof decision (face/antispoofing/antispoof_output.h). Exits non-zero
+// on failure.
 
 #include <cmath>
 #include <cstdio>
@@ -10,6 +11,7 @@
 namespace {
 
 using biopass::AntiSpoofDecision;
+using biopass::decodeMiniFasV2Output;
 using biopass::decodeMobileNetV3Output;
 
 int g_failures = 0;
@@ -62,12 +64,32 @@ void testInvalidOutputsFailClosed() {
   expectFailClosed({}, 0, "empty output fails closed");
 }
 
+AntiSpoofDecision decodeMiniFas(const std::vector<float>& out, float threshold = kThreshold) {
+  return decodeMiniFasV2Output(out.data(), out.size(), threshold);
+}
+
+void testMiniFasV2ValidOutputs() {
+  // Logits: index 0 = real, index 1 = spoof. softmax({0, 2})[1] = 0.8808.
+  const AntiSpoofDecision spoof = decodeMiniFas({0.0f, 2.0f});
+  expect(spoof.valid && spoof.spoof, "minifasv2: {0, 2} is spoof");
+  expect(std::fabs(spoof.score - 0.880797f) < 1e-5f, "minifasv2: score is softmax spoof prob");
+  const AntiSpoofDecision real = decodeMiniFas({2.0f, 0.0f});
+  expect(real.valid && !real.spoof, "minifasv2: {2, 0} is real");
+  expect(std::fabs(real.score - 0.119203f) < 1e-5f, "minifasv2: real score is spoof prob");
+  expect(!decodeMiniFas({0.0f, 0.0f}).spoof, "minifasv2: 0.5 below threshold is real");
+  expect(decodeMiniFas({0.0f, 0.0f}, 0.5f).spoof, "minifasv2: prob == threshold is spoof");
+  expect(decodeMiniFas({0.0f, 100.0f}).spoof, "minifasv2: large spoof logit is stable");
+  expect(!decodeMiniFas({100.0f, 0.0f}).spoof, "minifasv2: large real logit is stable");
+  expect(decodeMiniFas({-3.0f, 5.0f}).valid, "minifasv2: finite logits are valid");
+}
+
 }  // namespace
 
 int main() {
   testValidOutputs();
   testScoreIsSpoofProbability();
   testInvalidOutputsFailClosed();
+  testMiniFasV2ValidOutputs();
   if (g_failures > 0) {
     std::printf("%d failure(s)\n", g_failures);
     return 1;
