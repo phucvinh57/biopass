@@ -26,9 +26,10 @@ enum class PackedRgbLayout { kBgr24, kRgb24, kBgrx32, kRgbx32 };
 bool packedRgbToRgb(const uint8_t* src, size_t size, int width, int height, int stride,
                     PackedRgbLayout layout, ImageRGB& out);
 
-// libjpeg-turbo; false (and an empty `out`) on decode failure, a non-JPEG
-// buffer, or a JPEG whose size isn't expected_width x expected_height.
-bool mjpegToRgb(const uint8_t* src, size_t bytes_used, int expected_width, int expected_height,
-                ImageRGB& out);
+// libjpeg-turbo; decodes at the JPEG header's size, which may differ from
+// the configured frame size (some firmware pads, e.g. 1920x1088 for 1080p).
+// False (and an empty `out`) on decode failure, a non-JPEG buffer, or a
+// header over ImageRGB::kMaxDim.
+bool mjpegToRgb(const uint8_t* src, size_t bytes_used, ImageRGB& out);
 
 }  // namespace biopass

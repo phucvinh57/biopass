@@ -113,8 +113,7 @@ bool packedRgbToRgb(const uint8_t* src, size_t size, int width, int height, int 
   return true;
 }
 
-bool mjpegToRgb(const uint8_t* src, size_t bytes_used, int expected_width, int expected_height,
-                ImageRGB& out) {
+bool mjpegToRgb(const uint8_t* src, size_t bytes_used, ImageRGB& out) {
   out = ImageRGB();
   if (!src || bytes_used < 2 || src[0] != 0xFF || src[1] != 0xD8) {
     return false;
@@ -129,13 +128,13 @@ bool mjpegToRgb(const uint8_t* src, size_t bytes_used, int expected_width, int e
   if (tjDecompressHeader3(handle, const_cast<unsigned char*>(src),
                           static_cast<unsigned long>(bytes_used), &width, &height, &subsamp,
                           &colorspace) != 0 ||
-      width != expected_width || height != expected_height) {
+      width <= 0 || height <= 0) {
     tjDestroy(handle);
     return false;
   }
 
-  // The stream's own header drives the decode, so it must match the
-  // configured frame and fit the image size limit (an empty out means not).
+  // The stream's own header sizes the decode; ImageRGB caps it (an empty
+  // out means the header is over the limit).
   out = ImageRGB(width, height);
   if (out.empty()) {
     tjDestroy(handle);

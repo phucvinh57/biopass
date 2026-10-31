@@ -205,28 +205,25 @@ void checkMjpeg() {
   const std::vector<uint8_t> jpeg = encodeJpeg(16, 8);
   expect(!jpeg.empty(), "test JPEG encodes");
 
+  // The frame decodes at the size its header gives; the caller compares it
+  // with the configured size (some firmware pads, e.g. 1920x1088 for 1080p).
   ImageRGB out;
-  expect(biopass::mjpegToRgb(jpeg.data(), jpeg.size(), 16, 8, out) && out.width == 16 &&
-             out.height == 8 && consistent(out),
-         "MJPEG of the configured size decodes");
-
-  out = pattern(2, 2);
-  expect(!biopass::mjpegToRgb(jpeg.data(), jpeg.size(), 8, 8, out) && out.empty(),
-         "MJPEG wider than the configured size is rejected");
-  out = pattern(2, 2);
-  expect(!biopass::mjpegToRgb(jpeg.data(), jpeg.size(), 32, 16, out) && out.empty(),
-         "MJPEG smaller than the configured size is rejected");
+  expect(biopass::mjpegToRgb(jpeg.data(), jpeg.size(), out) && out.width == 16 && out.height == 8 &&
+             consistent(out),
+         "MJPEG decodes at its header size");
 
   std::vector<uint8_t> huge = jpeg;
   expect(patchJpegSize(huge, 40000, 40000), "test JPEG has a SOF0 header");
   out = pattern(2, 2);
-  expect(!biopass::mjpegToRgb(huge.data(), huge.size(), 40000, 40000, out) && out.empty(),
-         "MJPEG over the image size limit is rejected");
+  expect(!biopass::mjpegToRgb(huge.data(), huge.size(), out) && out.empty(),
+         "MJPEG header 40000x40000 (over the image size limit) is rejected");
+  std::vector<uint8_t> tall = jpeg;
+  patchJpegSize(tall, 16, ImageRGB::kMaxDim + 1);
   out = pattern(2, 2);
-  expect(!biopass::mjpegToRgb(huge.data(), huge.size(), 16, 8, out) && out.empty(),
-         "MJPEG header 40000x40000 on a 16x8 stream is rejected");
+  expect(!biopass::mjpegToRgb(tall.data(), tall.size(), out) && out.empty(),
+         "MJPEG header taller than the image size limit is rejected");
 
-  expect(!biopass::mjpegToRgb(jpeg.data(), 1, 16, 8, out), "truncated MJPEG is rejected");
+  expect(!biopass::mjpegToRgb(jpeg.data(), 1, out), "truncated MJPEG is rejected");
 }
 
 // Raw converters must refuse a frame size ImageRGB can't hold instead of

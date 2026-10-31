@@ -377,7 +377,7 @@ bool convertFrame(const libcamera::PixelFormat& pixel_format, const uint8_t* dat
     return greyToRgb(data, bytes_used, width, height, stride, out);
   }
   if (pixel_format == libcamera::formats::MJPEG) {
-    return mjpegToRgb(data, bytes_used, width, height, out);
+    return mjpegToRgb(data, bytes_used, out);
   }
   if (const auto layout = packedRgbLayout(pixel_format)) {
     return packedRgbToRgb(data, bytes_used, width, height, stride, *layout, out);
@@ -678,6 +678,12 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
       spdlog::error("FaceAuth: Failed to convert frame from '{}'", camera_label_);
       return false;
     }
+    // Only MJPEG can differ: it decodes at its own header size.
+    if ((out.width != width_ || out.height != height_) && !warned_frame_size_) {
+      warned_frame_size_ = true;
+      spdlog::warn("FaceAuth: Camera '{}' sends {}x{} frames, configured {}x{}", camera_label_,
+                   out.width, out.height, width_, height_);
+    }
     return true;
   }
 
@@ -754,6 +760,7 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
   libcamera::PixelFormat pixel_format_;
   int width_ = 0;
   int height_ = 0;
+  bool warned_frame_size_ = false;
   int stride_ = 0;
 
   std::unique_ptr<libcamera::FrameBufferAllocator> allocator_;
