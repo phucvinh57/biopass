@@ -28,7 +28,8 @@ You need to install CMake, Make, PAM headers, CLI11, libjpeg-turbo, and the buil
 ```bash
 sudo apt update
 sudo apt install cmake make g++ pkg-config libpam0g-dev libcli11-dev libturbojpeg0-dev \
-  meson ninja-build python3-jinja2 python3-yaml python3-ply  libudev-dev libdrm-dev
+  meson ninja-build python3-jinja2 python3-yaml python3-ply  libudev-dev libdrm-dev \
+  libegl-dev libgles-dev
 ```
 
 **For the Tauri Application:**

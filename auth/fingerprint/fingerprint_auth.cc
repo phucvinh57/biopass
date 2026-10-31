@@ -6,6 +6,8 @@
 #include <thread>
 #include <vector>
 
+#include "status_reporter.h"
+
 namespace biopass {
 
 namespace {
@@ -288,6 +290,12 @@ AuthResult FingerprintAuth::authenticate(const std::string& username, const Auth
   }
   g_variant_unref(verify_ret);
   verification_started = true;
+
+  // Announce once per session, only once the reader is actually listening.
+  if (!scan_announced_) {
+    scan_announced_ = true;
+    reportInfo("Biopass: place your finger on the fingerprint reader");
+  }
 
   ctx.loop = g_main_loop_new(nullptr, FALSE);
   ctx.debug = config.debug;
