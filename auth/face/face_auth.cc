@@ -18,6 +18,9 @@ namespace biopass {
 
 bool FaceAuth::isAvailable() const { return checkCameraAvailability(face_config_.camera); }
 
+// Opens the IR session only when the IR presence check is about to run. A
+// failed open leaves ir_camera_session_ null; checkAntiSpoof() then falls back
+// to a one-shot capture per attempt.
 void FaceAuth::ensureIrSession() {
   if (face_config_.anti_spoofing.ir_camera.has_value() &&
       !face_config_.anti_spoofing.ir_camera->empty() &&
@@ -25,6 +28,10 @@ void FaceAuth::ensureIrSession() {
     ir_camera_session_ =
         openCameraSession(*face_config_.anti_spoofing.ir_camera, CameraCaptureFormat::V4L2Grey,
                           kIrCaptureWarmupFrames, kIrCaptureTimeoutMs);
+    if (!ir_camera_session_) {
+      spdlog::warn("FaceAuth: Could not open IR camera session on '{}'",
+                   *face_config_.anti_spoofing.ir_camera);
+    }
   }
 }
 
@@ -78,7 +85,9 @@ void FaceAuth::beginAuthenticationSession() {
   if (!camera_session_) {
     camera_session_ = openCameraSession(face_config_.camera);
   }
-  ensureIrSession();
+  // The IR session is opened lazily in authenticate(), right before the
+  // anti-spoofing check: opening it here would stream IR alongside every
+  // colour capture, sharing USB bandwidth even when no face is found yet.
   ensureModelsLoaded();
 }
 

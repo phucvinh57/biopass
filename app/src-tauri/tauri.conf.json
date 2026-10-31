@@ -40,7 +40,9 @@
           "curl",
           "fprintd",
           "libwebkit2gtk-4.1-0",
-          "libturbojpeg0 | libturbojpeg"
+          "libturbojpeg0 | libturbojpeg",
+          "libegl1",
+          "libgles2"
         ],
         "postInstallScript": "scripts/deb/postinst",
         "desktopTemplate": "scripts/biopass.desktop",
@@ -53,12 +55,15 @@
           "/usr/lib/biopass/libonnxruntime.so.1": "../../auth/build/_deps/onnxruntime-src/lib/libonnxruntime.so.1.19.2",
           "/usr/lib/biopass/libcamera.so.0.7": "../../auth/build/libcamera-bundle/libcamera.so.0.7",
           "/usr/lib/biopass/libcamera-base.so.0.7": "../../auth/build/libcamera-bundle/libcamera-base.so.0.7",
+          "/usr/lib/biopass/libcamera/ipa/ipa_soft_simple.so": "../../auth/build/libcamera-bundle/libcamera/ipa/ipa_soft_simple.so",
+          "/usr/lib/biopass/libcamera/soft_ipa_proxy": "../../auth/build/libcamera-bundle/libcamera/soft_ipa_proxy",
+          "/usr/share/biopass/libcamera/ipa/simple/uncalibrated.yaml": "../../auth/build/libcamera-bundle/ipa/simple/uncalibrated.yaml",
           "/etc/ld.so.conf.d/biopass.conf": "scripts/ldconf",
           "/usr/share/pam-configs/biopass": "scripts/pam.conf"
         }
       },
       "rpm": {
-        "depends": ["fprintd", "turbojpeg"],
+        "depends": ["fprintd", "turbojpeg", "libglvnd-egl", "libglvnd-gles"],
         "postInstallScript": "scripts/rpm/postinst",
         "postRemoveScript": "scripts/rpm/postrm",
         "desktopTemplate": "scripts/biopass.desktop",
@@ -71,6 +76,9 @@
           "/usr/lib/biopass/libonnxruntime.so.1": "../../auth/build/_deps/onnxruntime-src/lib/libonnxruntime.so.1.19.2",
           "/usr/lib/biopass/libcamera.so.0.7": "../../auth/build/libcamera-bundle/libcamera.so.0.7",
           "/usr/lib/biopass/libcamera-base.so.0.7": "../../auth/build/libcamera-bundle/libcamera-base.so.0.7",
+          "/usr/lib/biopass/libcamera/ipa/ipa_soft_simple.so": "../../auth/build/libcamera-bundle/libcamera/ipa/ipa_soft_simple.so",
+          "/usr/lib/biopass/libcamera/soft_ipa_proxy": "../../auth/build/libcamera-bundle/libcamera/soft_ipa_proxy",
+          "/usr/share/biopass/libcamera/ipa/simple/uncalibrated.yaml": "../../auth/build/libcamera-bundle/ipa/simple/uncalibrated.yaml",
           "/etc/ld.so.conf.d/biopass.conf": "scripts/ldconf",
           "/usr/share/pam-configs/biopass": "scripts/pam.conf"
         }

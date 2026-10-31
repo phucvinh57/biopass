@@ -162,6 +162,12 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t* pamh, int flags, int argc, cons
       fcntl(status_pipe[1], F_SETFD, 0);
     }
 
+    // The helper runs with the PAM caller's privileges (often root), so it
+    // gets a fixed environment instead of the caller's: LD_*, LIBCAMERA_IPA_*,
+    // HOME and XDG_CONFIG_HOME would otherwise let the invoking user pick code
+    // or config (e.g. libcamera IPA modules and proxy workers) it loads.
+    char* const helper_env[] = {const_cast<char*>("PATH=/usr/sbin:/usr/bin:/sbin:/bin"), nullptr};
+
     // Run "biopass-helper auth --username <username> [--service <name>]
     //      [--status-fd <fd>]"
     const char* args[9];
@@ -179,9 +185,9 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t* pamh, int flags, int argc, cons
       args[n++] = status_fd_arg;
     }
     args[n] = nullptr;
-    execv("/usr/bin/biopass-helper", const_cast<char* const*>(args));
+    execve("/usr/bin/biopass-helper", const_cast<char* const*>(args), helper_env);
 
-    // If execv returns, it failed. Don't perror() here: this process's
+    // If execve returns, it failed. Don't perror() here: this process's
     // stdio is inherited from the PAM caller (e.g. polkit-agent-helper-1),
     // which some callers (GNOME Shell's polkit agent) parse as a strict
     // line protocol -- any unexpected line on it derails the caller's
