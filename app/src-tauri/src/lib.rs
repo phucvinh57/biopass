@@ -10,7 +10,7 @@ pub mod system;
 
 use config::{load_config, save_config, set_appearance};
 use face::{delete_face, list_faces};
-use face_session::{capture_face_in_session, start_face_preview, stop_face_preview};
+use face_session::{capture_face_in_session, start_face_preview, stop_face_preview, PreviewState};
 use fingerprint::{enroll_fingerprint, list_enrolled_fingerprints, remove_fingerprint};
 use models::{
     add_model_from_file, add_model_from_url, delete_model, ensure_default_models, list_models,
@@ -26,6 +26,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .manage(PreviewState::default())
         .setup(|app| {
             #[cfg(target_os = "linux")]
             {
