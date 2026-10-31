@@ -7,8 +7,8 @@
 
 namespace biopass {
 
-// `stride` is bytes per row (may exceed the packed width). All converters
-// return false if `size` is too small for width/height/stride.
+// Raw converters: `stride` is bytes per row (may exceed the packed width);
+// they return false if `size` is too small for width/height/stride.
 bool yuyvToRgb(const uint8_t* src, size_t size, int width, int height, int stride, ImageRGB& out);
 
 bool greyToRgb(const uint8_t* src, size_t size, int width, int height, int stride, ImageRGB& out);

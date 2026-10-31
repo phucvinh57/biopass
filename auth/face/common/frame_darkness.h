@@ -23,7 +23,8 @@ LumaStats measureLuma(const ImageRGB& image, int step = 4);
 constexpr double kCoveredMaxMeanLuma = 20.0;
 constexpr double kCoveredMaxLumaStdDev = 8.0;
 
-// Empty frames are a capture failure, not darkness, so return false.
+// True for a closed shutter / covered lens. Empty frames return false
+// (capture failure, not darkness).
 bool looksCovered(const LumaStats& stats);
 bool looksCovered(const ImageRGB& image);
 
