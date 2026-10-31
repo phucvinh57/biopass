@@ -35,8 +35,6 @@ std::unique_ptr<ICameraCaptureSession> openCameraSession(
     const std::optional<std::string>& device_path,
     CameraCaptureFormat format = CameraCaptureFormat::Default, int warmup_frames = 5,
     int capture_timeout_ms = 10000);
-ImageRGB captureImage(const std::optional<std::string>& device_path,
-                      CameraCaptureFormat format = CameraCaptureFormat::Default);
 ImageRGB captureImageByIRCamera(const std::string& device_path,
                                 int warmup_frames = kIrCaptureWarmupFrames,
                                 int capture_timeout_ms = kIrCaptureTimeoutMs);

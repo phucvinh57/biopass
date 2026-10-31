@@ -695,17 +695,6 @@ std::unique_ptr<ICameraCaptureSession> openCameraSession(
                                        capture_timeout_ms);
 }
 
-ImageRGB captureImage(const std::optional<std::string>& linux_video_device_path,
-                      CameraCaptureFormat format) {
-  auto session = openCameraSession(linux_video_device_path, format, kDefaultWarmupFrames,
-                                   kDefaultCaptureTimeoutMs);
-  if (!session) {
-    return {};
-  }
-
-  return session->capture();
-}
-
 ImageRGB captureImageByIRCamera(const std::string& device_path, int warmup_frames,
                                 int capture_timeout_ms) {
   if (device_path.empty()) {
