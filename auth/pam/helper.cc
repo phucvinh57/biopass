@@ -246,7 +246,15 @@ int main(int argc, char** argv) {
   try {
     app.parse(argc, argv);
   } catch (const CLI::ParseError& e) {
-    return app.exit(e);
+    // CLI11 exits 0 for --help/--version, which the PAM module would read as
+    // a successful authentication, so every parse stop is an error here.
+    // Text goes to stderr, never stdout (the PAM caller's channel), and the
+    // auth path prints nothing at all.
+    const bool authMode = argc > 1 && std::string(argv[1]) == "auth";
+    if (!authMode) {
+      app.exit(e, std::cerr, std::cerr);
+    }
+    return biopass::exitCode(biopass::HelperExit::AuthErr);
   }
 
   if (app.got_subcommand(preview_cmd)) {

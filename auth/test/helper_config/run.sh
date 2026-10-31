@@ -83,6 +83,51 @@ check "config symlinked to /dev/zero is ignored without reading it"
 rm -f "$cfg"
 mkfifo "$cfg"
 check "config FIFO is ignored without blocking"
+rm -f "$cfg"
+
+# $1 = expected exit, $2 = description, rest = helper args. Stdout must stay
+# empty: it belongs to the PAM caller, so not even help text may go there.
+check_args() {
+  want="$1"
+  what="$2"
+  shift 2
+  out="$home/stdout"
+  (HOME="$home" DBUS_SYSTEM_BUS_ADDRESS="unix:path=$home/no-such-bus" exec timeout 10 "$helper" "$@") \
+    >"$out" 2>/dev/null
+  rc=$?
+  if [ "$rc" -eq "$want" ] && [ ! -s "$out" ]; then
+    echo "[PASS] $what"
+  else
+    echo "[FAIL] $what (exit $rc, want $want, stdout: $(head -c 80 "$out"))"
+    failures=$((failures + 1))
+  fi
+}
+
+# User names are untrusted (typed at a login prompt). Passed as one
+# `--username=<name>` argument, as the PAM module does, any name is just a
+# user without a config (PAM_IGNORE).
+for name in --help -h --version -v --username ""; do
+  check_args 2 "user name '$name' is only a name" auth "--username=$name" --service=polkit-1
+done
+
+# Anything that stops CLI parsing (help, version, bad or missing options) is
+# not an authentication and must fail closed (PAM_AUTH_ERR), never exit 0.
+check_args 1 "auth --help fails closed" auth --help
+check_args 1 "auth -h fails closed" auth -h
+check_args 1 "auth --version fails closed" auth --version
+check_args 1 "auth -v fails closed" auth -v
+check_args 1 "--help after the user name fails closed" auth --username=x --help
+check_args 1 "unknown option fails closed" auth --username=x --bogus
+check_args 1 "missing user name fails closed" auth --service=polkit-1
+check_args 1 "top-level --help fails closed" --help
+
+# Humans still get help, on stderr; a non-zero exit is fine.
+if "$helper" --help 2>&1 >/dev/null | grep -q "auth"; then
+  echo "[PASS] --help still prints help"
+else
+  echo "[FAIL] --help still prints help"
+  failures=$((failures + 1))
+fi
 
 if [ "$failures" -eq 0 ]; then
   echo "ALL PASS"
