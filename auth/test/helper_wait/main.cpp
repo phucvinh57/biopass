@@ -166,6 +166,22 @@ int main() {
     expect(without_pipe == PAM_AUTH_ERR, "SIGCHLD ignored, no pipe: exit 0 -> PAM_AUTH_ERR");
   }
 
+  {
+    // Same, with a hung helper: it must still be killed (through its pidfd).
+    struct sigaction old_sa;
+    struct sigaction sa;
+    std::memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = SIG_IGN;
+    sigaction(SIGCHLD, &sa, &old_sa);
+    Fake f = spawn(true, hang);
+    int rc = waitFake(f, nullptr, milliseconds(200));
+    usleep(100 * 1000);
+    const bool gone = kill(f.pid, 0) != 0 && errno == ESRCH;
+    sigaction(SIGCHLD, &old_sa, nullptr);
+    expect(rc == PAM_AUTH_ERR, "SIGCHLD ignored, hung helper -> PAM_AUTH_ERR");
+    expect(gone, "SIGCHLD ignored, hung helper: killed");
+  }
+
   // A hung helper (camera or fprintd stuck) must not hold the login.
   expectKilled(spawn(true, hang), "hung helper");
   expectKilled(spawn(false, hang), "hung helper, no status pipe");

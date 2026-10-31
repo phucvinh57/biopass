@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <poll.h>
 #include <signal.h>
+#include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -100,10 +101,50 @@ inline bool relayUntilExit(pid_t pid, int status_fd, Clock::time_point deadline,
   }
 }
 
+// A pidfd pins the helper process itself, so signalling through it can never
+// hit an unrelated process that reused the pid (possible when the caller
+// ignores SIGCHLD and the kernel reaps the helper behind our back).
+struct HelperRef {
+  pid_t pid;
+  int pidfd = -1;  // -1 when pidfd_open() failed
+  int open_errno = 0;
+
+  explicit HelperRef(pid_t p) noexcept : pid(p) {
+#ifdef SYS_pidfd_open
+    pidfd = static_cast<int>(syscall(SYS_pidfd_open, p, 0));  // O_CLOEXEC is implied
+    open_errno = pidfd < 0 ? errno : 0;
+#else
+    open_errno = ENOSYS;
+#endif
+  }
+  ~HelperRef() {
+    if (pidfd >= 0) {
+      close(pidfd);
+    }
+  }
+  HelperRef(const HelperRef&) = delete;
+  HelperRef& operator=(const HelperRef&) = delete;
+
+  void sigkill() const noexcept {
+#ifdef SYS_pidfd_send_signal
+    if (pidfd >= 0) {
+      if (syscall(SYS_pidfd_send_signal, pidfd, SIGKILL, nullptr, 0) == 0 || errno != ENOSYS) {
+        return;  // Sent, or the helper is already gone (ESRCH).
+      }
+    }
+#endif
+    if (open_errno == ESRCH) {
+      return;  // Gone before we could pin it; its pid may belong to someone else now.
+    }
+    kill(pid, SIGKILL);  // Kernel without pidfds.
+  }
+};
+
 // SIGKILLs the helper and reaps it if that happens within kHelperKillGrace.
-// The helper doesn't create its own process group, so only `pid` is killed.
-inline void killAndReap(pid_t pid) noexcept {
-  kill(pid, SIGKILL);
+// The helper doesn't create its own process group, so only it is killed.
+inline void killAndReap(const HelperRef& helper) noexcept {
+  const pid_t pid = helper.pid;
+  helper.sigkill();
   const auto deadline = Clock::now() + kHelperKillGrace;
   for (;;) {
     int status = 0;
@@ -130,8 +171,10 @@ inline void killAndReap(pid_t pid) noexcept {
 // the result is PAM_AUTH_ERR: the helper may have been mid-scan, so this
 // counts as a failed attempt rather than "no method could run" (PAM_IGNORE).
 // Uses a monotonic clock, so wall-clock changes don't move the deadline.
+// Call it right after fork(): that's when the helper gets pinned by a pidfd.
 inline int waitForHelper(pid_t pid, int status_fd, std::chrono::milliseconds timeout,
                          const StatusLineFn& on_line) noexcept {
+  const detail::HelperRef helper(pid);
   const auto deadline = detail::Clock::now() + timeout;
   int result = PAM_AUTH_ERR;
   bool settled = false;
@@ -144,7 +187,7 @@ inline int waitForHelper(pid_t pid, int status_fd, std::chrono::milliseconds tim
     close(status_fd);
   }
   if (!settled) {
-    detail::killAndReap(pid);
+    detail::killAndReap(helper);
     return PAM_AUTH_ERR;
   }
   return result;
