@@ -48,3 +48,7 @@ Keep a root terminal open while testing. Incorrect PAM configuration can lock yo
     sudo -k
     sudo true
     ```
+
+## Login screen and keyring
+
+If Biopass is enabled for your login screen (GDM, SDDM, LightDM, ...), the login keyring / KWallet is not unlocked because no password is typed. See [Keyring.md](Keyring.md) for the workaround.
