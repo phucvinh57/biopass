@@ -30,6 +30,18 @@ namespace {
 constexpr int kDefaultWarmupFrames = 5;
 constexpr int kDefaultCaptureTimeoutMs = 10000;
 
+// Capture size limits. Detection letterboxes every frame to 640px and
+// recognition works on 112x112 crops, so anything beyond 720p only costs USB
+// bandwidth and conversion time. Uncompressed streams (YUYV/GREY) are capped
+// harder: 1280x720 YUYV is ~1.8 MB per frame, which a USB 2.0 webcam can only
+// deliver at a few fps (or truncates once the IR stream shares the bus), while
+// 640x480 still runs at full frame rate.
+const libcamera::Size kMaxCompressedCaptureSize(1280, 720);
+const libcamera::Size kMaxUncompressedCaptureSize(640, 480);
+// Below this width a face at arm's length gets too few pixels to recognise;
+// prefer a size above the cap over one below it.
+constexpr unsigned int kMinCaptureWidth = 640;
+
 std::string device_label(const std::optional<std::string>& linux_video_device_path) {
   return linux_video_device_path.has_value() ? *linux_video_device_path : std::string("<default>");
 }
@@ -190,8 +202,57 @@ std::string listAvailableFormats(const libcamera::StreamFormats& formats) {
   return oss.str();
 }
 
+// Mean brightness in [0, 255], sampling every 4th pixel; enough to tell a
+// lit IR frame from a dark one.
+double meanLuma(const ImageRGB& image) {
+  const size_t pixels = static_cast<size_t>(image.width) * static_cast<size_t>(image.height);
+  if (pixels == 0 || image.data.size() < pixels * 3) {
+    return 0.0;
+  }
+  const uint8_t* data = image.data.data();
+  uint64_t sum = 0;
+  size_t count = 0;
+  for (size_t i = 0; i < pixels; i += 4, ++count) {
+    sum += data[i * 3] + data[i * 3 + 1] + data[i * 3 + 2];
+  }
+  return static_cast<double>(sum) / (3.0 * static_cast<double>(count));
+}
+
+uint64_t area(const libcamera::Size& size) {
+  return static_cast<uint64_t>(size.width) * static_cast<uint64_t>(size.height);
+}
+
+// Picks the capture size for a stream: the largest size within the cap for
+// the pixel format, unless that is narrower than kMinCaptureWidth and a
+// larger size exists, in which case the smallest size above the cap wins.
+// Returns nullopt when the camera reports no discrete sizes.
+std::optional<libcamera::Size> pickCaptureSize(const std::vector<libcamera::Size>& sizes,
+                                               const libcamera::PixelFormat& pixel_format) {
+  const libcamera::Size& max_size = pixel_format == libcamera::formats::MJPEG
+                                        ? kMaxCompressedCaptureSize
+                                        : kMaxUncompressedCaptureSize;
+
+  std::optional<libcamera::Size> best_within;
+  std::optional<libcamera::Size> smallest_above;
+  for (const auto& size : sizes) {
+    if (size.width <= max_size.width && size.height <= max_size.height) {
+      if (!best_within || area(size) > area(*best_within)) {
+        best_within = size;
+      }
+    } else if (!smallest_above || area(size) < area(*smallest_above)) {
+      smallest_above = size;
+    }
+  }
+
+  if (best_within && (best_within->width >= kMinCaptureWidth || !smallest_above)) {
+    return best_within;
+  }
+  return smallest_above;
+}
+
 // Picks a pixel format for the given capture request out of what the camera
-// actually offers, in preference order, then validates the configuration.
+// actually offers, in preference order, sets a capped capture size, then
+// validates the configuration.
 bool negotiate(libcamera::CameraConfiguration& config, CameraCaptureFormat requested_format,
                const std::string& camera_label) {
   libcamera::StreamConfiguration& stream_config = config.at(0);
@@ -204,7 +265,10 @@ bool negotiate(libcamera::CameraConfiguration& config, CameraCaptureFormat reque
     // instead of failing outright.
     preference = {libcamera::formats::R8, libcamera::formats::YUYV, libcamera::formats::MJPEG};
   } else {
-    preference = {libcamera::formats::YUYV, libcamera::formats::MJPEG, libcamera::formats::R8};
+    // Prefer MJPEG for the colour stream: an uncompressed YUYV stream at a
+    // webcam's maximum size starves a USB 2.0 bus (slow frame rates or
+    // truncated frames, worse when the IR stream is open at the same time).
+    preference = {libcamera::formats::MJPEG, libcamera::formats::YUYV, libcamera::formats::R8};
   }
 
   const auto available = formats.pixelformats();
@@ -224,10 +288,25 @@ bool negotiate(libcamera::CameraConfiguration& config, CameraCaptureFormat reque
     return false;
   }
 
+  const auto sizes = formats.sizes(stream_config.pixelFormat);
+  if (const auto size = pickCaptureSize(sizes, stream_config.pixelFormat)) {
+    stream_config.size = *size;
+  } else {
+    spdlog::warn("FaceAuth: Camera '{}' reports no discrete sizes for {}; using default {}",
+                 camera_label, stream_config.pixelFormat.toString(), stream_config.size.toString());
+  }
+  const libcamera::PixelFormat requested_pixel_format = stream_config.pixelFormat;
+  const libcamera::Size requested_size = stream_config.size;
+
   const auto validation = config.validate();
   if (validation == libcamera::CameraConfiguration::Invalid) {
     spdlog::error("FaceAuth: Invalid camera configuration for '{}'", camera_label);
     return false;
+  }
+  if (validation == libcamera::CameraConfiguration::Adjusted) {
+    spdlog::warn("FaceAuth: Camera '{}' adjusted configuration from {}-{} to {}-{}", camera_label,
+                 requested_size.toString(), requested_pixel_format.toString(),
+                 stream_config.size.toString(), stream_config.pixelFormat.toString());
   }
 
   if (!isSupportedPixelFormat(stream_config.pixelFormat)) {
@@ -243,6 +322,9 @@ bool negotiate(libcamera::CameraConfiguration& config, CameraCaptureFormat reque
                  camera_label, stream_config.pixelFormat.toString());
   }
 
+  spdlog::debug("FaceAuth: Camera '{}' configured as {}-{} (available: {})", camera_label,
+                stream_config.size.toString(), stream_config.pixelFormat.toString(),
+                listAvailableFormats(formats));
   return true;
 }
 
@@ -307,19 +389,35 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
       requeue(request);
     }
 
-    libcamera::Request* request = waitForRequest(deadline, has_timeout);
-    if (!request) {
-      return {};
+    // Many IR emitters strobe, alternating lit and dark frames. A fixed
+    // warmup count lands on the same phase every time, so grey sessions
+    // sample several consecutive frames and keep the brightest one.
+    const int samples = is_grey_ ? kIrCaptureSampleFrames : 1;
+    ImageRGB best;
+    double best_mean = -1.0;
+    for (int i = 0; i < samples; ++i) {
+      libcamera::Request* request = waitForRequest(deadline, has_timeout);
+      if (!request) {
+        break;
+      }
+      ImageRGB image;
+      const bool ok = extractFrame(request, image);
+      requeue(request);
+      if (!ok) {
+        spdlog::error("FaceAuth: Failed to convert frame from '{}'", camera_label_);
+        continue;
+      }
+      const double mean = samples > 1 ? meanLuma(image) : 0.0;
+      if (mean > best_mean) {
+        best_mean = mean;
+        best = std::move(image);
+      }
     }
-
-    ImageRGB image;
-    const bool ok = extractFrame(request, image);
-    requeue(request);
-    if (!ok) {
-      spdlog::error("FaceAuth: Failed to convert frame from '{}'", camera_label_);
-      return {};
+    if (samples > 1 && !best.empty()) {
+      spdlog::debug("FaceAuth: Kept brightest of {} frames from '{}' (mean={:.1f})", samples,
+                    camera_label_, best_mean);
     }
-    return image;
+    return best;
   }
 
  private:
