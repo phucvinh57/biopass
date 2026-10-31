@@ -7,13 +7,21 @@ import { toast } from "sonner";
 import { cmd } from "@/commands";
 import { Button } from "@/components/ui/button";
 import type { BiopassConfig } from "@/types/config";
+import { usePreviewSession } from "./usePreviewSession";
 
 export function FaceCapture() {
   const previewRef = useRef<HTMLImageElement>(null);
-  const [capturing, setCapturing] = useState(false);
   const [faceImages, setFaceImages] = useState<string[]>([]);
   const camera = useWatch<BiopassConfig, "methods.face.camera">({
     name: "methods.face.camera",
+  });
+  const {
+    active: capturing,
+    start: startCamera,
+    stop,
+  } = usePreviewSession(camera, (err) => {
+    toast.error(`Failed to start camera: ${err}`);
+    console.error(err);
   });
 
   async function loadFaceImages() {
@@ -53,49 +61,8 @@ export function FaceCapture() {
     };
   }, [capturing]);
 
-  useEffect(() => {
-    return () => {
-      cmd.face.stopPreview().catch(() => {});
-    };
-  }, []);
-
-  // Restart session when camera selection changes while preview is running.
-  useEffect(() => {
-    if (!capturing) return;
-    let alive = true;
-    (async () => {
-      try {
-        await cmd.face.stopPreview();
-        await cmd.face.startPreview(camera);
-      } catch (err) {
-        if (alive) {
-          toast.error(`Failed to switch camera: ${err}`);
-          setCapturing(false);
-        }
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [camera, capturing]);
-
-  async function startCamera() {
-    try {
-      await cmd.face.startPreview(camera);
-      setCapturing(true);
-    } catch (err) {
-      toast.error(`Failed to start camera: ${err}`);
-      console.error(err);
-    }
-  }
-
-  async function stopCamera() {
-    try {
-      await cmd.face.stopPreview();
-    } catch (err) {
-      console.error("stopPreview failed:", err);
-    }
-    setCapturing(false);
+  function stopCamera() {
+    stop();
     if (previewRef.current) {
       previewRef.current.removeAttribute("src");
     }
