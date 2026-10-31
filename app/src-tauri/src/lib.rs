@@ -1,3 +1,4 @@
+pub mod blocking;
 pub mod config;
 pub mod db;
 pub mod face;

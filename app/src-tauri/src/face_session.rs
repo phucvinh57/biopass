@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use base64::{engine::general_purpose, Engine as _};
 use tauri::{AppHandle, Emitter, State};
 
+use crate::blocking::run_blocking;
 use crate::config::{load_config, BiopassConfig};
 use crate::db;
 use crate::paths::{ensure_private_dir, get_faces_dir};
@@ -454,14 +455,8 @@ fn capture(app: &AppHandle, slot: &Slot) -> Result<String, String> {
     }
 }
 
-// Runs blocking helper I/O off the main thread so the UI never freezes.
-async fn run_blocking<T: Send + 'static>(
-    f: impl FnOnce() -> Result<T, String> + Send + 'static,
-) -> Result<T, String> {
-    tauri::async_runtime::spawn_blocking(f)
-        .await
-        .map_err(|e| format!("Preview task failed: {e}"))?
-}
+// Helper I/O blocks, so it runs off the main thread and the UI never freezes.
+const TASK: &str = "Preview";
 
 #[tauri::command]
 pub async fn start_face_preview(
@@ -470,13 +465,13 @@ pub async fn start_face_preview(
     camera: Option<String>,
 ) -> Result<(), String> {
     let slot = state.0.clone();
-    run_blocking(move || start(&app, &slot, camera)).await
+    run_blocking(TASK, move || start(&app, &slot, camera)).await
 }
 
 #[tauri::command]
 pub async fn stop_face_preview(state: State<'_, PreviewState>) -> Result<(), String> {
     let slot = state.0.clone();
-    run_blocking(move || {
+    run_blocking(TASK, move || {
         // Dropping the session stops the frame loop and reaps the helper.
         let sess = lock_slot(&slot)?.take();
         drop(sess);
@@ -491,7 +486,7 @@ pub async fn capture_face_in_session(
     state: State<'_, PreviewState>,
 ) -> Result<String, String> {
     let slot = state.0.clone();
-    run_blocking(move || capture(&app, &slot)).await
+    run_blocking(TASK, move || capture(&app, &slot)).await
 }
 #[cfg(test)]
 mod tests {
