@@ -15,6 +15,64 @@ The discussion should explain the problem, the proposed solution, expected impac
 
 AI-like issues or pull requests, including generic generated text, vague impact statements, or submissions that do not show personal understanding of the change, will be closed as not planned.
 
+## Review flow
+
+Review is a stack of layers, not one gate. Each layer catches what the others miss, and the cheap ones run first so human time goes to what only humans can judge.
+
+| # | Layer | Where | Blocks merge? |
+| --- | --- | --- | --- |
+| 1 | Verification: run the checks, show the output | Your machine | Yes (no evidence, no review) |
+| 2 | AI code review against [REVIEW.md](REVIEW.md) with fresh context | Your machine (`/pre-pr`) | Yes (findings must be resolved) |
+| 3 | Security review for high-risk paths | Your machine (`/pre-pr` → `/security-review`) | Yes |
+| 4 | Mechanical checks: Biome, tsc, clang-format, rustfmt, clippy, tests, build | GitHub CI | Yes |
+| 5 | Human approval, scaled by risk | GitHub, [CODEOWNERS](.github/CODEOWNERS) | Yes |
+| 6 | Revert and fix forward | After merge | — |
+
+All AI review runs locally. GitHub CI only runs the mechanical checks.
+
+### 1. Before the pull request
+
+- **Show, don't claim.** Run the commands for the areas you touched (table in [CLAUDE.md](CLAUDE.md#verify-before-saying-done)) and paste the output in the PR's Verification section. For camera, fingerprint, or PAM behavior, include what you tested on (distro, device, VM) and logs or screenshots.
+- **Run `/pre-pr`** if you use Claude Code. It runs the checks, has a fresh-context subagent review the diff against REVIEW.md, and runs `/security-review` when the diff touches high-risk paths. If you use another tool, do the same steps by hand: verify, then have a reviewer that did not write the code read the diff against REVIEW.md.
+- **Fix or answer every Important finding.** Fix it, or write down why it does not apply. Pre-existing findings don't block your PR, but open an issue for real ones.
+- **Keep review rounds bounded.** After the first round, re-review only the new changes. After 3 rounds on the same change, stop and rethink the approach instead of looping.
+- **Keep changes small.** Small PRs are easier to review, debug, and revert.
+
+The project's [Claude Code hook](.claude/settings.json) and [lefthook](lefthook.yml) run formatters automatically, so formatting never needs review comments.
+
+### 2. On the pull request
+
+Fill in the [PR template](.github/PULL_REQUEST_TEMPLATE.md) yourself. Its **Verification**, **Risk**, and **How to revert** sections are what reviewers check first. An AI tool may help you collect facts, but you are responsible for every line.
+
+Pick the risk tier from what the change touches, not from who wrote it:
+
+| Tier | Examples | Review needed |
+| --- | --- | --- |
+| Low | Docs, UI copy, styling, tests | Green CI and one maintainer approval |
+| Medium | App logic, Tauri commands, face/fingerprint pipeline | Green CI, `/pre-pr` report, one maintainer approval |
+| High | `auth/pam`, `auth/core`, install/remove scripts, PAM config, packaging, `.github/` | Green CI, `/pre-pr` with security review, code owner approval, tested in a VM |
+
+High-risk paths are listed in [CODEOWNERS](.github/CODEOWNERS) and always need a human code owner. Bot or agent approvals never count as the required approval. If you push new commits after approval, the reviewer re-checks them. All review threads must be resolved, either fixed or closed with a short reason, before merge.
+
+If you ran an agent that wrote the PR, you are its author: you answer review comments and you own the result.
+
+### 3. After merge
+
+- **You land it, you own it.** If your change causes a regression, you are expected to help fix or revert it. This is about context, not blame.
+- **Revert first, debug second.** If a merged change breaks login, packaging, or install, revert it and investigate on a branch.
+- **Feed misses back.** When a bug gets past review, or the reviewer flags the same issue twice, add a one-line entry to REVIEW.md's "Recurring issues", or fix it at the source with a lint rule, a check, or a CLAUDE.md note.
+
+### What humans review
+
+Automation handles routine bugs and style. Humans focus on:
+
+- **Should we build this?** Direction, scope, and fit, which is why discussions come before large changes.
+- **Dangerous code.** PAM, root-run scripts, packaging, CI and release workflows.
+- **Architecture** that sets conventions others will follow.
+- **Evidence.** Does the test output, log, or screenshot actually show what the PR claims?
+
+To learn an unfamiliar part of the codebase before changing it, ask your AI tool for an explainer of that exact module. It is a faster way to build context than reading old diffs.
+
 ## 1. How to Run
 
 Biopass consists of a backend C++ authentication module and a frontend Tauri desktop application. You will need to install dependencies for both.
