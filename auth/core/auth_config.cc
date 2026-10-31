@@ -9,6 +9,8 @@
 #include <cstring>
 #include <fstream>
 
+#include "fs_user.h"
+
 namespace biopass {
 
 std::string getConfigPath(const std::string& username) {
@@ -195,13 +197,13 @@ static int mkdir_p(const std::string& path) {
     dir = path.substr(0, pos++);
     if (dir.empty())
       continue;
-    ret = mkdir(dir.c_str(), 0777);
+    ret = mkdir(dir.c_str(), 0700);
     if (ret == -1 && errno != EEXIST) {
       spdlog::error("Biopass: Failed to create directory '{}': {}", dir, strerror(errno));
       return 1;
     }
   }
-  ret = mkdir(path.c_str(), 0777);
+  ret = mkdir(path.c_str(), 0700);
   if (ret == -1 && errno != EEXIST) {
     spdlog::error("Biopass: Failed to create directory '{}': {}", path, strerror(errno));
     return 1;
@@ -243,35 +245,24 @@ std::string getDebugPath(const std::string& username) {
 
 std::string getLogPath(const std::string& username) { return user_data_dir(username) + "/logs"; }
 
-void fixOwnership(const std::string& path, const std::string& username) {
-  if (geteuid() != 0) {
-    return;
+int setupDataDirs(const std::string& dataDir) {
+  if (dataDir.empty()) {
+    return 1;
   }
-  struct passwd* pw = getpwnam(username.c_str());
-  if (pw == nullptr) {
-    return;
+  for (const char* sub : {"/faces", "/debugs", "/logs"}) {
+    if (mkdir_p(dataDir + sub) != 0) {
+      return 1;
+    }
   }
-  if (chown(path.c_str(), pw->pw_uid, pw->pw_gid) != 0) {
-    spdlog::error("Biopass: Failed to chown '{}' to {}: {}", path, username, strerror(errno));
-  }
+  return 0;
 }
 
 int setupConfig(const std::string& username) {
-  const std::string dataDir = user_data_dir(username);
-  if (mkdir_p(dataDir + "/faces") != 0)
+  ScopedFsUser as_user(username);
+  if (!as_user.ok()) {
     return 1;
-  if (mkdir_p(dataDir + "/debugs") != 0)
-    return 1;
-  if (mkdir_p(dataDir + "/logs") != 0)
-    return 1;
-
-  // PAM runs this as root; chown the tree back so later user-run
-  // processes (the app, a dev running biopass-helper) can still write.
-  fixOwnership(dataDir, username);
-  fixOwnership(dataDir + "/faces", username);
-  fixOwnership(dataDir + "/debugs", username);
-  fixOwnership(dataDir + "/logs", username);
-  return 0;
+  }
+  return setupDataDirs(user_data_dir(username));
 }
 
 }  // namespace biopass

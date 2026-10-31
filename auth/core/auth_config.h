@@ -94,9 +94,12 @@ bool configExists(const std::string& username);
 std::vector<std::string> listFaces(const std::string& username);
 std::string getDebugPath(const std::string& username);
 std::string getLogPath(const std::string& username);
+// Creates faces/, debugs/ and logs/ (0700) under the user's data dir. The
+// filesystem calls run as the user (see fs_user.h), so a symlink in that dir
+// can't make root create or chown anything outside it.
 int setupConfig(const std::string& username);
-
-// Chowns `path` to `username`'s uid/gid; no-op unless running as root.
-void fixOwnership(const std::string& path, const std::string& username);
+// Same, for an explicit data dir. Callers that run as root must hold a
+// ScopedFsUser for the owner first.
+int setupDataDirs(const std::string& dataDir);
 
 }  // namespace biopass

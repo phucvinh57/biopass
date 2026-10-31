@@ -75,6 +75,10 @@ jobs:
       - name: Build auth and run C++ unit tests
         run: make test-auth BUILD_TYPE=Release
 
+      # ctest skips this as non-root; it checks the helper's root file writes.
+      - name: Root-only C++ tests
+        run: sudo auth/build/test/fs_user/fs_user_test
+
       - uses: oven-sh/setup-bun@v2
 
       # Tauri's generate_context! needs app/dist to exist at compile time.

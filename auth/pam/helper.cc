@@ -1,3 +1,4 @@
+#include <grp.h>
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/stdout_sinks.h>
 #include <spdlog/spdlog.h>
@@ -18,6 +19,7 @@
 #include "detection/face_detection.h"
 #include "face_auth.h"
 #include "fingerprint_auth.h"
+#include "fs_user.h"
 #include "image_utils.h"
 #include "status_reporter.h"
 #include "stb_image_write.h"
@@ -56,15 +58,18 @@ void setupBiopassLogger(const std::string& username, bool debug) {
   std::vector<spdlog::sink_ptr> sinks;
 
   if (debug) {
-    biopass::setupConfig(username);
-    const std::string log_path = biopass::getLogPath(username) + "/" + todayDateString() + ".log";
-    try {
-      auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(log_path,
-                                                                           /*truncate=*/false);
-      sinks.push_back(file_sink);
-      biopass::fixOwnership(log_path, username);
-    } catch (const spdlog::spdlog_ex&) {
-      // Nowhere safe to report this; run with no sinks.
+    // The log lives in a user-writable dir: open it as the user so a planted
+    // symlink can't make root append to (or create) a file elsewhere. The
+    // sink keeps the fd, so later writes need no guard.
+    biopass::ScopedFsUser as_user(username);
+    if (as_user.ok() && biopass::setupConfig(username) == 0) {
+      const std::string log_path = biopass::getLogPath(username) + "/" + todayDateString() + ".log";
+      try {
+        sinks.push_back(std::make_shared<spdlog::sinks::basic_file_sink_mt>(log_path,
+                                                                            /*truncate=*/false));
+      } catch (const spdlog::spdlog_ex&) {
+        // Nowhere safe to report this; run with no sinks.
+      }
     }
   }
 
@@ -255,6 +260,12 @@ int main(int argc, char** argv) {
     if (username.empty()) {
       spdlog::info("{}", app.help());
       return 2;  // PAM_IGNORE
+    }
+    // ScopedFsUser switches only the filesystem uid/gid; root's supplementary
+    // groups would still grant group access. Drop them before any thread
+    // starts. Root keeps its capabilities, so nothing else changes.
+    if (geteuid() == 0 && setgroups(0, nullptr) != 0) {
+      return 1;  // PAM_AUTH_ERR: fail closed
     }
     // Only methods that start scanning report, so skipped runs stay silent.
     biopass::setStatusFd(statusFd);

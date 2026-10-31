@@ -39,6 +39,7 @@ if(BUILD_TESTS)
     add_subdirectory(test/antispoof)
     add_subdirectory(test/pixel_convert)
     add_subdirectory(test/frame_darkness)
+    add_subdirectory(test/fs_user)
 endif()
 
 install(
