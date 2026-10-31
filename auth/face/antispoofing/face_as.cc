@@ -1,5 +1,7 @@
 #include "face_as.h"
 
+#include <spdlog/spdlog.h>
+
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -78,7 +80,17 @@ SpoofResult FaceAntiSpoofing::inference(const ImageRGB& frame, const Box& face_b
   const float* logits = output_tensors[0].GetTensorData<float>();
 
   if (this->architecture == AntiSpoofArchitecture::MobileNetV3) {
-    const AntiSpoofDecision decision = decodeMobileNetV3Output(logits, 2, this->threshold);
+    // The bundled mobilenetv3_antispoof.onnx ends in a Softmax; its output
+    // tensor is named "logits" but already holds probabilities. User-imported
+    // models are labelled mobilenetv3 too, so check rather than assume.
+    const size_t count = output_tensors[0].GetTensorTypeAndShapeInfo().GetElementCount();
+    const AntiSpoofDecision decision = decodeMobileNetV3Output(logits, count, this->threshold);
+    if (!decision.valid) {
+      spdlog::error(
+          "FaceAntiSpoofing: MobileNetV3 output is not 2 probabilities ({} values); the model "
+          "must end in Softmax. Treating face as spoof.",
+          count);
+    }
     return SpoofResult(decision.score, decision.spoof);
   }
 
