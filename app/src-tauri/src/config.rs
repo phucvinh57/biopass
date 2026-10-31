@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
+use std::path::Path;
 use tauri::AppHandle;
 
 use crate::paths::{get_config_dir, get_config_path};
@@ -254,16 +255,19 @@ fn parse_config(content: &str) -> Result<BiopassConfig, String> {
 
 #[tauri::command]
 pub fn load_config(app: AppHandle) -> Result<BiopassConfig, String> {
-    let config_path = get_config_path(&app)?;
+    read_config_file(&get_config_path(&app)?)
+}
 
-    if !config_path.exists() {
+/// Errors name the file, so the user knows what to fix.
+fn read_config_file(path: &Path) -> Result<BiopassConfig, String> {
+    if !path.exists() {
         return Ok(get_default_config());
     }
 
-    let content = fs::read_to_string(&config_path)
-        .map_err(|e| format!("Failed to read config file: {}", e))?;
+    let content = fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
 
-    parse_config(&content)
+    parse_config(&content).map_err(|e| format!("{}: {}", path.display(), e))
 }
 
 #[tauri::command]
@@ -308,7 +312,8 @@ pub fn set_appearance(app: AppHandle, appearance: String) -> Result<(), String> 
     } else {
         None
     };
-    let yaml_content = with_appearance(content.as_deref(), &appearance)?;
+    let yaml_content = with_appearance(content.as_deref(), &appearance)
+        .map_err(|e| format!("{}: {}", config_path.display(), e))?;
     write_config_file(&app, &yaml_content)
 }
 
@@ -511,6 +516,18 @@ mod tests {
         let bad_appearance = "appearance: [1]\n";
         assert_eq!(parse_config(bad_appearance).unwrap(), get_default_config());
         assert_eq!(parse_config("").unwrap(), get_default_config());
+    }
+
+    #[test]
+    fn load_error_names_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+
+        assert_eq!(read_config_file(&path).unwrap(), get_default_config());
+
+        fs::write(&path, "not: [valid").unwrap();
+        let err = read_config_file(&path).unwrap_err();
+        assert!(err.contains(&path.display().to_string()), "{err}");
     }
 
     #[test]

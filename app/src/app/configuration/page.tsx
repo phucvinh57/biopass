@@ -43,9 +43,12 @@ function ConfigurationRouteComponent() {
       <div className="w-full max-w-4xl mx-auto p-6">
         <div className="rounded-md border border-destructive/50 bg-destructive/10 p-4 text-sm">
           <p className="font-medium text-destructive">
-            Failed to load config.yaml
+            Failed to load the Biopass config
           </p>
-          <p className="mt-1 text-muted-foreground">{loadError}</p>
+          {/* The error starts with the file's path. */}
+          <p className="mt-1 break-all font-mono text-muted-foreground">
+            {loadError}
+          </p>
           <p className="mt-1 text-muted-foreground">
             Fix or remove the file, then reopen this page.
           </p>
