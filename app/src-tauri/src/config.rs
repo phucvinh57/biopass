@@ -237,7 +237,13 @@ fn parse_config(content: &str) -> Result<BiopassConfig, String> {
             "Warning: config.yaml schema_version {} is older than {}; using defaults",
             schema_version, current
         );
-        return Ok(get_default_config());
+        let mut config = get_default_config();
+        // Kept so a theme saved by set_appearance before any config exists
+        // still applies.
+        if let Some(appearance) = value.get("appearance").and_then(|v| v.as_str()) {
+            config.appearance = appearance.to_string();
+        }
+        return Ok(config);
     }
 
     let mut config: BiopassConfig = serde_yaml::from_value(value)
@@ -271,13 +277,19 @@ pub fn save_config(app: AppHandle, config: BiopassConfig) -> Result<(), String> 
 /// Works on the raw YAML so the user's other values, including fields this
 /// app doesn't know, are kept. Errors instead of replacing a config it can't
 /// parse.
+///
+/// With no config (missing, empty or only comments) it writes `appearance`
+/// alone, with no schema_version: the helper keeps ignoring the file, so
+/// picking a theme doesn't turn on face login with default settings.
 fn with_appearance(content: Option<&str>, appearance: &str) -> Result<String, String> {
     let mut value = match content {
         Some(text) => serde_yaml::from_str::<serde_yaml::Value>(text)
             .map_err(|e| format!("config.yaml is not valid YAML: {}", e))?,
-        None => serde_yaml::to_value(get_default_config())
-            .map_err(|e| format!("Failed to serialize config: {}", e))?,
+        None => serde_yaml::Value::Null,
     };
+    if value.is_null() {
+        value = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+    }
     let map = value
         .as_mapping_mut()
         .ok_or_else(|| "config.yaml is not a YAML mapping".to_string())?;
@@ -484,14 +496,20 @@ mod tests {
 
     #[test]
     fn older_schema_is_replaced_by_defaults() {
+        // Only the theme carries over.
+        let mut dark_defaults = get_default_config();
+        dark_defaults.appearance = "dark".to_string();
+
         let mut config = custom_config();
         config.schema_version = CURRENT_SCHEMA_VERSION - 1;
         let yaml = serde_yaml::to_string(&config).unwrap();
-        assert_eq!(parse_config(&yaml).unwrap(), get_default_config());
+        assert_eq!(parse_config(&yaml).unwrap(), dark_defaults);
 
         // No schema_version: a pre-v2 config, which the helper also ignores.
         let unversioned = "appearance: dark\nmodels: []\n";
-        assert_eq!(parse_config(unversioned).unwrap(), get_default_config());
+        assert_eq!(parse_config(unversioned).unwrap(), dark_defaults);
+        let bad_appearance = "appearance: [1]\n";
+        assert_eq!(parse_config(bad_appearance).unwrap(), get_default_config());
         assert_eq!(parse_config("").unwrap(), get_default_config());
     }
 
@@ -514,11 +532,22 @@ mod tests {
         assert!(with_appearance(Some("just a string"), "dark").is_err());
     }
 
+    /// Picking a theme must not create a config the helper would act on: with
+    /// no schema_version the helper keeps ignoring it.
     #[test]
-    fn set_appearance_without_a_config_writes_defaults() {
-        let written = with_appearance(None, "dark").unwrap();
-        let mut expected = get_default_config();
-        expected.appearance = "dark".to_string();
-        assert_eq!(parse_config(&written).unwrap(), expected);
+    fn set_appearance_without_a_config_writes_only_appearance() {
+        let only_appearance: serde_yaml::Value = serde_yaml::from_str("appearance: dark").unwrap();
+        for content in [None, Some(""), Some("# just a comment\n")] {
+            let written = with_appearance(content, "dark").unwrap();
+            assert_eq!(
+                serde_yaml::from_str::<serde_yaml::Value>(&written).unwrap(),
+                only_appearance,
+                "content: {content:?}"
+            );
+
+            let mut expected = get_default_config();
+            expected.appearance = "dark".to_string();
+            assert_eq!(parse_config(&written).unwrap(), expected);
+        }
     }
 }
