@@ -196,38 +196,46 @@ void parseFingerprint(const YAML::Node& fp, FingerprintMethodConfig& out) {
   readIf(fp, "timeout", out.timeout);
 }
 
+// Builds a config from a document of the current schema. Throws
+// YAML::Exception on the first bad value.
+BiopassConfig parseDocument(const YAML::Node& yaml) {
+  BiopassConfig config;
+  config.schema_version = kCurrentSchemaVersion;
+  if (yaml["strategy"]) {
+    parseStrategy(yaml["strategy"], config.strategy);
+  }
+  if (yaml["methods"]) {
+    const YAML::Node& m = yaml["methods"];
+    if (m["face"]) {
+      parseFace(m["face"], config.methods.face);
+    }
+    if (m["fingerprint"]) {
+      parseFingerprint(m["fingerprint"], config.methods.fingerprint);
+    }
+  }
+  return config;
+}
+
 }  // namespace
 
 BiopassConfig parseConfig(const std::string& text) {
+  // Defaults unless the whole document parses: a bad value halfway through
+  // must not leave the values before it mixed with defaults.
   BiopassConfig config;
 
   try {
-    YAML::Node yaml = YAML::Load(text);
+    const YAML::Node yaml = YAML::Load(text);
 
     // Schema mismatch = defaults (only the app migrates). Default model_ids
     // don't resolve, so face auth reports Unavailable and PAM falls through
     // to normal auth instead of locking anyone out.
-    int schema_version = yaml["schema_version"] ? yaml["schema_version"].as<int>() : 0;
-    if (schema_version != kCurrentSchemaVersion) {
+    const int schema_version = yaml["schema_version"] ? yaml["schema_version"].as<int>() : 0;
+    if (schema_version == kCurrentSchemaVersion) {
+      config = parseDocument(yaml);
+    } else {
       spdlog::warn(
           "Biopass: config.yaml schema_version {} does not match expected {}, using defaults",
           schema_version, kCurrentSchemaVersion);
-      validateConfig(config);
-      return config;
-    }
-    config.schema_version = schema_version;
-
-    if (yaml["strategy"]) {
-      parseStrategy(yaml["strategy"], config.strategy);
-    }
-    if (yaml["methods"]) {
-      const YAML::Node& m = yaml["methods"];
-      if (m["face"]) {
-        parseFace(m["face"], config.methods.face);
-      }
-      if (m["fingerprint"]) {
-        parseFingerprint(m["fingerprint"], config.methods.fingerprint);
-      }
     }
   } catch (const YAML::Exception& e) {
     spdlog::error("Biopass: Failed to parse config: {}, using defaults", e.what());

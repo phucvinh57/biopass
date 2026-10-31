@@ -119,10 +119,11 @@ void validateConfig(BiopassConfig& config);
 
 std::string getConfigPath(const std::string& username);
 // Parses config.yaml's text and runs validateConfig() on the result. A
-// config that doesn't parse or has another schema_version gives defaults.
+// config with any bad value, or another schema_version, gives defaults as a
+// whole: never the values before the error mixed with defaults.
 BiopassConfig parseConfig(const std::string& text);
 // nullopt when config.yaml is missing, unreadable or not a regular file.
-// A config that doesn't parse or has another schema_version gives defaults.
+// Otherwise parseConfig() of its text.
 std::optional<BiopassConfig> readConfig(const std::string& username);
 
 std::vector<std::string> listFaces(const std::string& username);

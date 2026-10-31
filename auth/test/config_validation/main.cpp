@@ -45,9 +45,130 @@ void checkThreshold(const char* name, Setter set) {
   }
 }
 
+bool sameConfig(const BiopassConfig& a, const BiopassConfig& b) {
+  const auto& fa = a.methods.face;
+  const auto& fb = b.methods.face;
+  const auto& pa = a.methods.fingerprint;
+  const auto& pb = b.methods.fingerprint;
+  return a.schema_version == b.schema_version && a.strategy.debug == b.strategy.debug &&
+         a.strategy.execution_mode == b.strategy.execution_mode &&
+         a.strategy.order == b.strategy.order &&
+         a.strategy.ignore_services == b.strategy.ignore_services && fa.enable == fb.enable &&
+         fa.retries == fb.retries && fa.retry_delay == fb.retry_delay && fa.camera == fb.camera &&
+         fa.detection.model_id == fb.detection.model_id &&
+         fa.detection.threshold == fb.detection.threshold &&
+         fa.recognition.model_id == fb.recognition.model_id &&
+         fa.recognition.threshold == fb.recognition.threshold &&
+         fa.anti_spoofing.enable == fb.anti_spoofing.enable &&
+         fa.anti_spoofing.model.model_id == fb.anti_spoofing.model.model_id &&
+         fa.anti_spoofing.model.threshold == fb.anti_spoofing.model.threshold &&
+         fa.anti_spoofing.ir_camera == fb.anti_spoofing.ir_camera &&
+         fa.anti_spoofing.ir_warmup_delay_ms == fb.anti_spoofing.ir_warmup_delay_ms &&
+         fa.anti_spoofing.ir_presence_timeout_ms == fb.anti_spoofing.ir_presence_timeout_ms &&
+         pa.enable == pb.enable && pa.retries == pb.retries && pa.timeout == pb.timeout;
+}
+
+bool isDefaults(const BiopassConfig& c) { return sameConfig(c, BiopassConfig{}); }
+
+const char* kFullConfig = R"(schema_version: 2
+strategy:
+  debug: true
+  execution_mode: sequential
+  order: [fingerprint, face]
+  ignore_services: [sudo]
+methods:
+  face:
+    enable: true
+    retries: 3
+    retry_delay: 100
+    camera: /dev/video0
+    detection: {model_id: det, threshold: 0.6}
+    recognition: {model_id: rec, threshold: 0.7}
+    anti_spoofing:
+      enable: true
+      model: {model_id: as, threshold: 0.9}
+      ir_camera: /dev/video2
+      ir_warmup_delay_ms: 100
+      ir_presence_timeout_ms: 200
+  fingerprint:
+    enable: true
+    retries: 2
+    timeout: 3000
+)";
+
+void checkParse() {
+  {
+    const BiopassConfig c = biopass::parseConfig(kFullConfig);
+    const auto& f = c.methods.face;
+    expect(c.schema_version == 2 && c.strategy.debug && c.strategy.execution_mode == "sequential" &&
+               c.strategy.order == std::vector<std::string>{"fingerprint", "face"} &&
+               c.strategy.ignore_services == std::vector<std::string>{"sudo"},
+           "parse: strategy read");
+    expect(f.enable && f.retries == 3 && f.retry_delay == 100 && f.camera == "/dev/video0" &&
+               f.detection.model_id == "det" && f.detection.threshold == 0.6f &&
+               f.recognition.model_id == "rec" && f.recognition.threshold == 0.7f,
+           "parse: face read");
+    expect(f.anti_spoofing.enable && f.anti_spoofing.model.model_id == "as" &&
+               f.anti_spoofing.model.threshold == 0.9f &&
+               f.anti_spoofing.ir_camera == "/dev/video2" &&
+               f.anti_spoofing.ir_warmup_delay_ms == 100 &&
+               f.anti_spoofing.ir_presence_timeout_ms == 200,
+           "parse: anti_spoofing read");
+    expect(c.methods.fingerprint.enable && c.methods.fingerprint.retries == 2 &&
+               c.methods.fingerprint.timeout == 3000,
+           "parse: fingerprint read");
+  }
+
+  // A bad value after good ones: nothing parsed before it may stick.
+  for (const auto& [what, yaml] : std::vector<std::pair<std::string, std::string>>{
+           {"bad fingerprint.timeout",
+            "schema_version: 2\nstrategy: {debug: true, execution_mode: sequential}\n"
+            "methods:\n  face: {retries: 3}\n  fingerprint: {enable: true, timeout: abc}\n"},
+           {"bad face threshold type",
+            "schema_version: 2\nstrategy: {debug: true, ignore_services: []}\n"
+            "methods:\n  face: {enable: false, recognition: {threshold: [1]}}\n"},
+           {"bad order entry",
+            "schema_version: 2\nstrategy: {debug: true, order: [face, {a: 1}]}\n"},
+           {"YAML syntax error", "schema_version: 2\nstrategy: {debug: true\n"},
+           {"not a map", "just a string\n"},
+           {"other schema_version", "schema_version: 1\nstrategy: {debug: true}\n"},
+           {"empty file", ""},
+       }) {
+    expect(isDefaults(biopass::parseConfig(yaml)),
+           "parse: " + what + " -> defaults, nothing mixed");
+  }
+
+  {
+    const BiopassConfig c = biopass::parseConfig(
+        "schema_version: 2\nmethods:\n  face: {enable: true, recognition: {threshold: -2}}\n");
+    expect(!c.methods.face.enable, "parse: recognition.threshold -2 -> face off");
+  }
+
+  {
+    const BiopassConfig c = biopass::parseConfig(
+        "schema_version: 2\nmethods:\n  face: {detection: {threshold: .nan}}\n");
+    expect(!c.methods.face.enable, "parse: detection.threshold .nan -> face off");
+  }
+
+  {
+    const BiopassConfig c = biopass::parseConfig(
+        "schema_version: 2\nstrategy: {ignore_services: [polkit-1, '', polkit-1, sudo]}\n");
+    expect(c.strategy.ignore_services == std::vector<std::string>{"polkit-1", "sudo"},
+           "parse: ignore_services deduped");
+  }
+
+  {
+    const BiopassConfig c = biopass::parseConfig("schema_version: 2\nstrategy: {debug: true}\n");
+    expect(c.strategy.ignore_services == BiopassConfig{}.strategy.ignore_services,
+           "parse: missing ignore_services keeps the default list");
+  }
+}
+
 }  // namespace
 
 int main() {
+  checkParse();
+
   {
     BiopassConfig c;
     biopass::validateConfig(c);
