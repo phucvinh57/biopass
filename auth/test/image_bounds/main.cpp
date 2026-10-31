@@ -7,6 +7,8 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "image_utils.h"
@@ -201,6 +203,43 @@ bool patchJpegSize(std::vector<uint8_t>& jpeg, int w, int h) {
   return false;
 }
 
+// Encodes a w x h mid-grey single-channel PNG with stb_image_write.
+std::string encodeGreyPng(int w, int h) {
+  const std::vector<uint8_t> grey(static_cast<size_t>(w) * h, 0x40);
+  std::string out;
+  const auto append = [](void* ctx, void* data, int size) {
+    static_cast<std::string*>(ctx)->append(static_cast<const char*>(data), size);
+  };
+  if (!stbi_write_png_to_func(append, &out, w, h, 1, grey.data(), w)) {
+    out.clear();
+  }
+  return out;
+}
+
+// stb must refuse an over-limit header before it allocates: a tiny PNG can
+// declare a frame whose decode would take gigabytes.
+void checkStbLimit() {
+  for (const auto& [w, h] :
+       {std::pair{ImageRGB::kMaxDim + 1, 1}, std::pair{1, ImageRGB::kMaxDim + 1}}) {
+    const std::string png = encodeGreyPng(w, h);
+    expect(!png.empty(), "over-limit test PNG encodes");
+    const auto* data = reinterpret_cast<const stbi_uc*>(png.data());
+    const int len = static_cast<int>(png.size());
+    int iw = 0, ih = 0, ic = 0;
+    const bool info = stbi_info_from_memory(data, len, &iw, &ih, &ic) != 0;
+    uint8_t* px = stbi_load_from_memory(data, len, &iw, &ih, &ic, 3);
+    char what[128];
+    std::snprintf(what, sizeof(what), "stb rejects a %dx%d PNG header before decoding", w, h);
+    expect(!info && px == nullptr, what);
+    stbi_image_free(px);
+    expect(isEmptyImage(decodeImage(png)), "decodeImage of an over-limit PNG is empty");
+  }
+
+  const ImageRGB img = decodeImage(encodeGreyPng(ImageRGB::kMaxDim, 1));
+  expect(img.width == ImageRGB::kMaxDim && img.height == 1 && consistent(img),
+         "decodeImage of a PNG at the size limit works");
+}
+
 void checkMjpeg() {
   const std::vector<uint8_t> jpeg = encodeJpeg(16, 8);
   expect(!jpeg.empty(), "test JPEG encodes");
@@ -280,6 +319,7 @@ int main() {
   checkLetterbox();
   checkHugeBox();
   checkMjpeg();
+  checkStbLimit();
   checkRawConvertLimits();
   checkDetectionBoxes();
 
