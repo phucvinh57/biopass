@@ -2,9 +2,11 @@
 // timeouts from the user's config are kept in ranges that can't stall the
 // helper. Exits non-zero on any failure.
 
+#include <chrono>
 #include <cstdio>
 
 #include "auth_config.h"
+#include "auth_deadline.h"
 
 namespace {
 
@@ -83,11 +85,32 @@ int main() {
   }
 
   {
-    // Worst case of the sleeps alone stays under the PAM module's 60 s
-    // deadline (pam/helper_wait.h kHelperTimeout).
-    const unsigned face_sleep_ms = (biopass::kMaxFaceRetries - 1) * biopass::kMaxRetryDelayMs;
-    const unsigned fp_wait_ms = biopass::kMaxFingerprintRetries * biopass::kMaxFingerprintTimeoutMs;
-    expect(face_sleep_ms < 60000 && fp_wait_ms < 60000, "worst-case waits fit the PAM deadline");
+    // The clamps alone can't keep a run under the PAM kill. Worst case of
+    // the config-driven waits in sequential [face, fingerprint], each face
+    // attempt also waiting on a stuck colour capture (10 s), the IR warmup
+    // and the IR presence retries:
+    using std::chrono::milliseconds;
+    const long long capture_ms = 10000;  // kColorCaptureTimeoutMs, face/common
+    const long long face_ms =
+        static_cast<long long>(biopass::kMaxFaceRetries) *
+            (capture_ms + biopass::kMaxIrWarmupDelayMs + biopass::kMaxIrPresenceTimeoutMs) +
+        static_cast<long long>(biopass::kMaxFaceRetries - 1) * biopass::kMaxRetryDelayMs;
+    const long long fp_ms =
+        static_cast<long long>(biopass::kMaxFingerprintRetries) * biopass::kMaxFingerprintTimeoutMs;
+    const long long sum_ms = face_ms + fp_ms;
+    const long long budget_ms = milliseconds(biopass::kAuthBudget).count();
+    std::printf("worst-case sum %lld ms, budget %lld ms, PAM kill %lld ms\n", sum_ms, budget_ms,
+                static_cast<long long>(milliseconds(biopass::kHelperTimeout).count()));
+    expect(sum_ms > budget_ms, "worst-case sum exceeds the budget, so the budget must cut it");
+    // So AuthManager stops at kAuthBudget (test/auth_manager), and what can't
+    // be cancelled after that must still fit before the kill.
+    expect(budget_ms + capture_ms < milliseconds(biopass::kHelperTimeout).count(),
+           "budget + one uncancellable capture fits before the PAM kill");
+    // Every single clamped wait fits in the budget, so each can run once.
+    expect(biopass::kMaxRetryDelayMs < budget_ms && biopass::kMaxFingerprintTimeoutMs < budget_ms &&
+               biopass::kMaxIrWarmupDelayMs + biopass::kMaxIrPresenceTimeoutMs + capture_ms <
+                   budget_ms,
+           "each clamped wait fits in the budget");
   }
 
   if (g_failures != 0) {

@@ -87,9 +87,12 @@ struct BiopassConfig {
   StrategyConfig strategy = {};
   MethodsConfig methods = {};
 };
-// Upper bounds for the timing values in the user's config. The PAM module
-// kills the helper after 60 s regardless (pam/helper_wait.h); these keep a
-// normal run below that so the user isn't cut off mid-attempt.
+// Upper bounds for the timing values in the user's config, so no single
+// value can stretch one wait or the retry count without limit. They do not
+// bound a whole run: retries x (delay + capture + IR waits), then the next
+// method in sequential mode, can add up past a minute. The helper's time
+// budget (kAuthBudget in auth_deadline.h) bounds the run; these keep each
+// wait well inside it.
 inline constexpr uint32_t kMaxFaceRetries = 10;
 inline constexpr uint32_t kMaxRetryDelayMs = 5000;
 inline constexpr int kMaxIrWarmupDelayMs = 5000;
