@@ -10,9 +10,19 @@ pub struct VideoDeviceInfo {
 
 #[tauri::command]
 pub fn get_current_username() -> Result<String, String> {
-    std::env::var("USER")
-        .or_else(|_| std::env::var("USERNAME"))
-        .map_err(|_| "Could not determine current username".to_string())
+    username_from(|key| std::env::var(key).ok())
+        .ok_or_else(|| "Could not determine current username".to_string())
+}
+
+/// The login name from the environment: USER, then LOGNAME (set by login and
+/// PAM when USER isn't), then USERNAME. Empty values are skipped. The app runs
+/// as this user, so trusting its own environment is fine; a uid-based lookup
+/// would need getpwuid from a libc crate, which isn't a direct dependency.
+fn username_from(var: impl Fn(&str) -> Option<String>) -> Option<String> {
+    ["USER", "LOGNAME", "USERNAME"]
+        .into_iter()
+        .filter_map(var)
+        .find(|name| !name.is_empty())
 }
 
 fn video_device_sort_key(path: &str) -> i32 {
@@ -52,4 +62,37 @@ pub fn list_video_devices() -> Result<Vec<VideoDeviceInfo>, String> {
     devices.sort_by_key(|a| video_device_sort_key(&a.path));
 
     Ok(devices)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::username_from;
+
+    fn env<'a>(vars: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |key| {
+            vars.iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| v.to_string())
+        }
+    }
+
+    #[test]
+    fn prefers_user_then_logname_then_username() {
+        let all = [("USER", "a"), ("LOGNAME", "b"), ("USERNAME", "c")];
+        assert_eq!(username_from(env(&all)).as_deref(), Some("a"));
+        assert_eq!(username_from(env(&all[1..])).as_deref(), Some("b"));
+        assert_eq!(username_from(env(&all[2..])).as_deref(), Some("c"));
+    }
+
+    #[test]
+    fn empty_value_falls_through() {
+        let vars = [("USER", ""), ("LOGNAME", "b")];
+        assert_eq!(username_from(env(&vars)).as_deref(), Some("b"));
+        assert_eq!(username_from(env(&[("USER", "")])), None);
+    }
+
+    #[test]
+    fn none_set_is_none() {
+        assert_eq!(username_from(env(&[])), None);
+    }
 }
