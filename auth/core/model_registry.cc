@@ -1,11 +1,11 @@
 #include "model_registry.h"
 
-#include <pwd.h>
 #include <spdlog/spdlog.h>
 #include <sqlite3.h>
 #include <unistd.h>
 
 #include "user_file.h"
+#include "user_paths.h"
 
 namespace biopass {
 
@@ -16,21 +16,20 @@ constexpr size_t kMaxDbBytes = 64 << 20;
 
 }  // namespace
 
-std::string getDbPath(const std::string& username) {
-  struct passwd* pw = getpwnam(username.c_str());
-  if (pw == nullptr) {
-    const char* home = getenv("HOME");
-    if (home) {
-      return std::string(home) + "/.config/com.ticklab.biopass/biopass.db";
-    }
-    return "/etc/com.ticklab.biopass/biopass.db";
+ModelRegistry::ModelRegistry(const std::string& username) {
+  const std::optional<UserPaths> user = resolveUser(username);
+  if (!user) {
+    spdlog::warn("Biopass: Unknown user, no model registry");
+    return;
   }
-  return std::string(pw->pw_dir) + "/.config/com.ticklab.biopass/biopass.db";
+  load(username, user->dbFile());
 }
 
-ModelRegistry::ModelRegistry(const std::string& username) {
-  const std::string db_path = getDbPath(username);
+ModelRegistry::ModelRegistry(const std::string& username, const std::string& db_path) {
+  load(username, db_path);
+}
 
+void ModelRegistry::load(const std::string& username, const std::string& db_path) {
   // The db lives in the user's home: read it as the user, only if it is a
   // regular file, then query a read-only in-memory copy. sqlite itself then
   // opens nothing by path (no journal lookups as root either).

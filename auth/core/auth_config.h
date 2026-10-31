@@ -117,24 +117,21 @@ inline constexpr float kMaxThreshold = 1.0f;
 //   maximum.
 void validateConfig(BiopassConfig& config);
 
-std::string getConfigPath(const std::string& username);
 // Parses config.yaml's text and runs validateConfig() on the result. A
 // config with any bad value, or another schema_version, gives defaults as a
 // whole: never the values before the error mixed with defaults.
 BiopassConfig parseConfig(const std::string& text);
-// nullopt when config.yaml is missing, unreadable or not a regular file.
+// nullopt when the user is unknown (see resolveUser), or config.yaml is
+// missing, unreadable or not a regular file.
 // Otherwise parseConfig() of its text.
 std::optional<BiopassConfig> readConfig(const std::string& username);
 
+// Image files in the user's faces/ dir, sorted. Empty for an unknown user.
 std::vector<std::string> listFaces(const std::string& username);
-std::string getDebugPath(const std::string& username);
-std::string getLogPath(const std::string& username);
-// Creates faces/, debugs/ and logs/ (0700) under the user's data dir. The
-// filesystem calls run as the user (see fs_user.h), so a symlink in that dir
-// can't make root create or chown anything outside it.
-int setupConfig(const std::string& username);
-// Same, for an explicit data dir. Callers that run as root must hold a
-// ScopedFsUser for the owner first.
+// Creates faces/, debugs/ and logs/ (0700) under a data dir (see
+// UserPaths::data_dir). Callers that run as root must hold a ScopedFsUser for
+// the owner first, so a symlink in that dir can't make root create anything
+// outside it.
 int setupDataDirs(const std::string& dataDir);
 
 }  // namespace biopass

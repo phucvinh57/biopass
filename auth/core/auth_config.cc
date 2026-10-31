@@ -1,6 +1,5 @@
 #include "auth_config.h"
 
-#include <pwd.h>
 #include <spdlog/spdlog.h>
 #include <unistd.h>
 #include <yaml-cpp/yaml.h>
@@ -10,6 +9,7 @@
 
 #include "fs_user.h"
 #include "user_file.h"
+#include "user_paths.h"
 
 namespace biopass {
 
@@ -98,29 +98,6 @@ void validateConfig(BiopassConfig& config) {
   if (fp.timeout == 0 || fp.timeout > kMaxFingerprintTimeoutMs) {
     fp.timeout = kMaxFingerprintTimeoutMs;
   }
-}
-
-std::string getConfigPath(const std::string& username) {
-  struct passwd* pw = getpwnam(username.c_str());
-  if (pw == nullptr) {
-    const char* home = getenv("HOME");
-    if (home) {
-      return std::string(home) + "/.config/com.ticklab.biopass/config.yaml";
-    }
-    return "/etc/com.ticklab.biopass/config.yaml";
-  }
-  return std::string(pw->pw_dir) + "/.config/com.ticklab.biopass/config.yaml";
-}
-
-std::string user_data_dir(const std::string& username) {
-  struct passwd* pw = getpwnam(username.c_str());
-  if (pw != nullptr) {
-    return std::string(pw->pw_dir) + "/.local/share/com.ticklab.biopass";
-  }
-  const char* home = getenv("HOME");
-  if (home)
-    return std::string(home) + "/.local/share/com.ticklab.biopass";
-  return "";
 }
 
 namespace {
@@ -248,8 +225,12 @@ BiopassConfig parseConfig(const std::string& text) {
 std::optional<BiopassConfig> readConfig(const std::string& username) {
   // The config path is user-controlled, so it is read as the user and only
   // if it is a regular file. Anything else counts as missing.
+  const std::optional<UserPaths> user = resolveUser(username);
+  if (!user) {
+    return std::nullopt;
+  }
   const std::optional<std::string> text =
-      readUserFile(username, getConfigPath(username), kMaxConfigBytes);
+      readUserFile(username, user->configFile(), kMaxConfigBytes);
   if (!text) {
     return std::nullopt;
   }
@@ -280,10 +261,14 @@ static int mkdir_p(const std::string& path) {
 
 std::vector<std::string> listFaces(const std::string& username) {
   std::vector<std::string> faces;
-  std::string dir = user_data_dir(username) + "/faces";
+  const std::optional<UserPaths> user = resolveUser(username);
+  if (!user) {
+    return faces;
+  }
+  const std::string dir = user->facesDir();
   // The dir is the user's: list it as the user. Callers read each file with
   // readUserFile(), which skips anything that isn't a regular file.
-  ScopedFsUser as_user(username);
+  ScopedFsUser as_user(user->uid, user->gid);
   if (!as_user.ok())
     return faces;
   DIR* dp = opendir(dir.c_str());
@@ -311,12 +296,6 @@ std::vector<std::string> listFaces(const std::string& username) {
   return faces;
 }
 
-std::string getDebugPath(const std::string& username) {
-  return user_data_dir(username) + "/debugs";
-}
-
-std::string getLogPath(const std::string& username) { return user_data_dir(username) + "/logs"; }
-
 int setupDataDirs(const std::string& dataDir) {
   if (dataDir.empty()) {
     return 1;
@@ -327,14 +306,6 @@ int setupDataDirs(const std::string& dataDir) {
     }
   }
   return 0;
-}
-
-int setupConfig(const std::string& username) {
-  ScopedFsUser as_user(username);
-  if (!as_user.ok()) {
-    return 1;
-  }
-  return setupDataDirs(user_data_dir(username));
 }
 
 }  // namespace biopass

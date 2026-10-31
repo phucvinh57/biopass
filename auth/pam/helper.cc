@@ -11,6 +11,7 @@
 #include <ctime>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "auth_config.h"
@@ -25,6 +26,7 @@
 #include "image_utils.h"
 #include "status_reporter.h"
 #include "stb_image_write.h"
+#include "user_paths.h"
 
 using biopass::Detection;
 using biopass::FaceDetection;
@@ -59,13 +61,15 @@ std::string todayDateString() {
 void setupBiopassLogger(const std::string& username, bool debug) {
   std::vector<spdlog::sink_ptr> sinks;
 
-  if (debug) {
+  const std::optional<biopass::UserPaths> user =
+      debug ? biopass::resolveUser(username) : std::nullopt;
+  if (user) {
     // The log lives in a user-writable dir: open it as the user so a planted
     // symlink can't make root append to (or create) a file elsewhere. The
     // sink keeps the fd, so later writes need no guard.
-    biopass::ScopedFsUser as_user(username);
-    if (as_user.ok() && biopass::setupConfig(username) == 0) {
-      const std::string log_path = biopass::getLogPath(username) + "/" + todayDateString() + ".log";
+    biopass::ScopedFsUser as_user(user->uid, user->gid);
+    if (as_user.ok() && biopass::setupDataDirs(user->data_dir) == 0) {
+      const std::string log_path = user->logsDir() + "/" + todayDateString() + ".log";
       try {
         sinks.push_back(std::make_shared<spdlog::sinks::basic_file_sink_mt>(log_path,
                                                                             /*truncate=*/false));
