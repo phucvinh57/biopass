@@ -4,6 +4,7 @@
 
 #include <cstring>
 #include <exception>
+#include <optional>
 
 #include "fingerprint_auth.h"
 
@@ -55,18 +56,23 @@ bool fingerprint_is_available(void* auth) {
 char** fingerprint_list_enrolled_fingers(void* auth, const char* username, int* count) {
   if (!auth || !username || !count) {
     if (count)
-      *count = 0;
+      *count = -1;
     return nullptr;
   }
 
-  *count = 0;
+  *count = -1;
   char** result = nullptr;
   size_t filled = 0;
   try {
     auto* fp_auth = static_cast<biopass::FingerprintAuth*>(auth);
-    std::vector<std::string> fingers = fp_auth->listEnrolledFingers(username);
+    std::optional<std::vector<std::string>> listed = fp_auth->listEnrolledFingers(username);
+    if (!listed) {
+      return nullptr;
+    }
+    const std::vector<std::string>& fingers = *listed;
 
     if (fingers.empty()) {
+      *count = 0;
       return nullptr;
     }
 
@@ -88,7 +94,7 @@ char** fingerprint_list_enrolled_fingers(void* auth, const char* username, int* 
       }
       delete[] result;
     }
-    *count = 0;
+    *count = -1;
     return nullptr;
   }
 }

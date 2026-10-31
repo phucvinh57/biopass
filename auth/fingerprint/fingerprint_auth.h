@@ -1,6 +1,7 @@
 #pragma once
 
 #include <iostream>
+#include <optional>
 #include <vector>
 
 #include "auth_config.h"
@@ -21,7 +22,9 @@ class FingerprintAuth : public IAuthMethod {
   void beginAuthenticationSession() override { scan_announced_ = false; }
   AuthResult authenticate(const std::string& username, const AuthConfig& config,
                           std::atomic<bool>* cancel_signal = nullptr) override;
-  std::vector<std::string> listEnrolledFingers(const std::string& username);
+  // Fingers enrolled for `username`; std::nullopt when fprintd can't be asked
+  // (no reader, timeout, permission), which is not the same as none enrolled.
+  std::optional<std::vector<std::string>> listEnrolledFingers(const std::string& username);
   bool enroll(const std::string& username, const std::string& finger_name,
               void (*callback)(bool done, const char* status, void* user_data) = nullptr,
               void* user_data = nullptr);

@@ -18,6 +18,9 @@ typedef void (*EnrollProgressCallback)(bool done, const char* status, void* user
 void* fingerprint_auth_new(void);
 void fingerprint_auth_free(void* auth);
 bool fingerprint_is_available(void* auth);
+// Returns a NULL-terminated array of *count names (free with
+// fingerprint_free_string_array), or NULL when none are enrolled (*count 0)
+// or the list could not be read (*count -1).
 char** fingerprint_list_enrolled_fingers(void* auth, const char* username, int* count);
 void fingerprint_free_string_array(char** array, int count);
 bool fingerprint_enroll(void* auth, const char* username, const char* finger_name,

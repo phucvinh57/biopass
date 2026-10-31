@@ -9,7 +9,11 @@ namespace {
 
 using biopass::acceptVerifyStatus;
 using biopass::AuthResult;
+using biopass::enrollWaitExpired;
 using biopass::fprintdOwnerLost;
+using biopass::isNoEnrolledPrints;
+using biopass::kEnrollIdleTimeout;
+using biopass::kEnrollMaxDuration;
 using biopass::mapEnrollStatus;
 using biopass::mapVerifyStatus;
 
@@ -80,7 +84,7 @@ void testMapEnrollStatus() {
   expect(enrolls("enroll-completed", true, true), "enroll-completed succeeds");
   expect(enrolls("enroll-completed", false, true), "enroll-completed succeeds even if not done");
   expect(enrollWaits("enroll-stage-passed", false), "a passed stage keeps waiting");
-  expect(enrolls("enroll-stage-passed", true, true), "final stage-passed succeeds (as before)");
+  expect(enrolls("enroll-stage-passed", true, false), "final stage-passed is not a completion");
   expect(enrollWaits("enroll-retry-scan", false), "retry-scan keeps waiting");
   expect(enrollWaits("enroll-swipe-too-short", false), "swipe-too-short keeps waiting");
   expect(enrollWaits("enroll-remove-and-retry", false), "remove-and-retry keeps waiting");
@@ -94,6 +98,30 @@ void testMapEnrollStatus() {
   expect(!enrolls("enroll-completed-ish", true, true), "only exact enroll-completed succeeds");
 }
 
+void testEnrollWaitExpired() {
+  using std::chrono::seconds;
+  expect(!enrollWaitExpired(seconds(0), seconds(0)), "fresh wait is not expired");
+  expect(!enrollWaitExpired(kEnrollIdleTimeout - seconds(1), kEnrollIdleTimeout - seconds(1)),
+         "just under the idle timeout keeps waiting");
+  expect(enrollWaitExpired(kEnrollIdleTimeout, kEnrollIdleTimeout),
+         "no status for the idle timeout expires");
+  expect(!enrollWaitExpired(kEnrollIdleTimeout * 3, seconds(5)),
+         "an active user past the idle timeout keeps waiting");
+  expect(enrollWaitExpired(kEnrollMaxDuration, seconds(0)),
+         "the absolute cap expires even while scanning");
+  expect(kEnrollIdleTimeout < kEnrollMaxDuration, "idle timeout is below the cap");
+}
+
+void testIsNoEnrolledPrints() {
+  expect(isNoEnrolledPrints("net.reactivated.Fprint.Error.NoEnrolledPrints"),
+         "NoEnrolledPrints means an empty list");
+  expect(!isNoEnrolledPrints("net.reactivated.Fprint.Error.PermissionDenied"),
+         "permission denied is a failure");
+  expect(!isNoEnrolledPrints(""), "a local error (timeout, no bus) is a failure");
+  expect(!isNoEnrolledPrints("net.reactivated.Fprint.Error.NoEnrolledPrintsX"),
+         "only the exact error name counts");
+}
+
 }  // namespace
 
 int main() {
@@ -101,6 +129,8 @@ int main() {
   testAcceptVerifyStatus();
   testFprintdOwnerLost();
   testMapEnrollStatus();
+  testEnrollWaitExpired();
+  testIsNoEnrolledPrints();
   if (g_failures != 0) {
     std::printf("%d check(s) failed\n", g_failures);
     return 1;

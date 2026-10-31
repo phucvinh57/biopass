@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -20,6 +21,23 @@ std::optional<AuthResult> mapVerifyStatus(const std::string& status, bool done);
 // std::nullopt to keep waiting for the next scan. Takes a string_view so the
 // D-Bus signal handler doesn't allocate.
 std::optional<bool> mapEnrollStatus(std::string_view status, bool done);
+
+// The enroll wait gives up after kEnrollIdleTimeout without an accepted
+// EnrollStatus (the user walked away, fprintd wedged), or kEnrollMaxDuration
+// after EnrollStart at the latest. Readers that need many touches and retries
+// keep going as long as the user keeps scanning, up to the cap.
+inline constexpr std::chrono::seconds kEnrollIdleTimeout{60};
+inline constexpr std::chrono::seconds kEnrollMaxDuration{300};
+
+// True when the enroll wait should stop, given the time since EnrollStart and
+// since the last accepted EnrollStatus (or EnrollStart if none yet).
+bool enrollWaitExpired(std::chrono::steady_clock::duration since_start,
+                       std::chrono::steady_clock::duration since_status);
+
+// True when a failed ListEnrolledFingers only means the user has no prints:
+// fprintd answers an empty list with this D-Bus error. Any other error,
+// including a local one with no remote name (""), is a real failure.
+bool isNoEnrolledPrints(std::string_view remote_error);
 
 // True only when a VerifyStatus (or EnrollStatus) signal came from fprintd's
 // resolved unique bus name and carries the "(sb)" payload. Anything else is

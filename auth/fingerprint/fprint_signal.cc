@@ -30,8 +30,18 @@ std::optional<bool> mapEnrollStatus(std::string_view status, bool done) {
     // Stage passed, retry scan, swipe too short, etc.
     return std::nullopt;
   }
-  // A final stage-passed was treated as success before this was extracted.
-  return status == "enroll-stage-passed";
+  // Only enroll-completed means the finger was stored; any other final
+  // status (failed, data-full, duplicate, ...) is a failure.
+  return false;
+}
+
+bool enrollWaitExpired(std::chrono::steady_clock::duration since_start,
+                       std::chrono::steady_clock::duration since_status) {
+  return since_status >= kEnrollIdleTimeout || since_start >= kEnrollMaxDuration;
+}
+
+bool isNoEnrolledPrints(std::string_view remote_error) {
+  return remote_error == "net.reactivated.Fprint.Error.NoEnrolledPrints";
 }
 
 bool acceptVerifyStatus(const char* sender, const std::string& expected_owner,

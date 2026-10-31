@@ -449,10 +449,6 @@ using EnrollCallback = void (*)(bool done, const char* status, void* user_data);
 // they get longer than kFprintdCallTimeoutMs, but still a finite limit.
 constexpr int kFprintdPromptCallTimeoutMs = 60000;
 
-// How long enroll() waits for the scans after EnrollStart. Then it stops the
-// enrollment and fails, e.g. when the user walked away or fprintd wedged.
-constexpr std::chrono::seconds kEnrollScanTimeout{90};
-
 // fprintd's default device on the system bus, for the app's list, enroll and
 // remove. Every call has a finite timeout, and the destructor releases the
 // device if it was claimed, so each exit path gives the reader back.
@@ -502,25 +498,53 @@ class FprintdDevice {
   }
 
   bool claim(const std::string& username) {
+    CallError err;
     GVariant* ret = call("Claim", g_variant_new("(s)", username.c_str()), nullptr,
-                         kFprintdPromptCallTimeoutMs, "claim device");
-    if (!ret)
+                         kFprintdPromptCallTimeoutMs, "claim device", &err);
+    if (!ret) {
+      if (err.timed_out) {
+        // fprintd may still finish the Claim (e.g. the polkit prompt was
+        // answered late) and would then hold the reader for this shared bus
+        // connection until the app exits. Release it just in case; when the
+        // claim never happened fprintd only answers with an error.
+        GVariant* rel = g_dbus_connection_call_sync(
+            connection_, FPRINT_SERVICE, path_.c_str(), FPRINT_DEVICE_INTERFACE, "Release", nullptr,
+            nullptr, G_DBUS_CALL_FLAGS_NONE, kFprintdStopTimeoutMs, nullptr, nullptr);
+        if (rel)
+          g_variant_unref(rel);
+      }
       return false;
+    }
     g_variant_unref(ret);
     claimed_ = true;
     return true;
   }
 
+  struct CallError {
+    bool timed_out = false;
+    // D-Bus error name from fprintd, "" for a local error (timeout, no bus).
+    std::string remote_name;
+  };
+
   // Calls a device method. Returns the reply (caller unrefs) or nullptr after
-  // logging the error. Consumes a floating `params`.
+  // logging the error, which is also described in `err` if given. Consumes a
+  // floating `params`.
   GVariant* call(const char* method, GVariant* params, const GVariantType* reply_type,
-                 int timeout_ms, const char* what) {
+                 int timeout_ms, const char* what, CallError* err = nullptr) {
     GError* error = nullptr;
     GVariant* ret = g_dbus_connection_call_sync(
         connection_, FPRINT_SERVICE, path_.c_str(), FPRINT_DEVICE_INTERFACE, method, params,
         reply_type, G_DBUS_CALL_FLAGS_NONE, timeout_ms, nullptr, &error);
     if (!ret) {
       spdlog::error("FingerprintAuth: Failed to {}: {}", what, error ? error->message : "");
+      if (err && error) {
+        err->timed_out = g_error_matches(error, G_IO_ERROR, G_IO_ERROR_TIMED_OUT);
+        gchar* remote = g_dbus_error_get_remote_error(error);
+        if (remote) {
+          err->remote_name = remote;
+          g_free(remote);
+        }
+      }
       if (error)
         g_error_free(error);
     }
@@ -537,7 +561,11 @@ class FprintdDevice {
 };
 
 struct EnrollContext {
+  using Clock = std::chrono::steady_clock;
   GMainLoop* loop = nullptr;
+  // When EnrollStart returned, and when the last accepted EnrollStatus came.
+  Clock::time_point started_at;
+  Clock::time_point last_status_at;
   bool finished = false;
   bool success = false;
   EnrollCallback callback = nullptr;
@@ -570,6 +598,9 @@ void on_enroll_status(GDBusConnection* connection, const gchar* sender_name,
                  sender_name ? sender_name : "(none)", type_ok);
     return;
   }
+
+  // Any status from the reader shows the user is still scanning.
+  ctx->last_status_at = EnrollContext::Clock::now();
 
   const gchar* status = nullptr;
   gboolean done = FALSE;
@@ -611,15 +642,22 @@ void on_enroll_owner_changed(GDBusConnection* connection, const gchar* sender_na
   finishEnroll(ctx, false);
 }
 
-gboolean on_enroll_deadline(gpointer user_data) {
+// Polled once a second: fails the enrollment once enrollWaitExpired says so.
+gboolean on_enroll_tick(gpointer user_data) {
   EnrollContext* ctx = static_cast<EnrollContext*>(user_data);
-  spdlog::error("FingerprintAuth: Enrollment timed out after {} s", kEnrollScanTimeout.count());
+  const auto now = EnrollContext::Clock::now();
+  if (!enrollWaitExpired(now - ctx->started_at, now - ctx->last_status_at)) {
+    return G_SOURCE_CONTINUE;
+  }
+  spdlog::error("FingerprintAuth: Enrollment timed out (no scan for {} s, or over {} s in total)",
+                kEnrollIdleTimeout.count(), kEnrollMaxDuration.count());
   finishEnroll(ctx, false);
   return G_SOURCE_REMOVE;
 }
 
 // Starts enrolling `finger_name` on the claimed device and waits for the final
-// EnrollStatus, at most kEnrollScanTimeout. The wait runs on a private main
+// EnrollStatus, ending it as enrollWaitExpired says (kEnrollIdleTimeout without
+// a status, kEnrollMaxDuration in total). The wait runs on a private main
 // context, so it never depends on (or runs callbacks on) the caller's default
 // context, e.g. the app's GTK main loop. Stops the enrollment before
 // returning; the caller's FprintdDevice releases the device.
@@ -655,16 +693,18 @@ bool runEnrollment(FprintdDevice& device, const std::string& finger_name, Enroll
     if (start_ret) {
       g_variant_unref(start_ret);
       started = true;
+      ctx.started_at = EnrollContext::Clock::now();
+      ctx.last_status_at = ctx.started_at;
 
-      GSource* deadline = g_timeout_source_new_seconds(kEnrollScanTimeout.count());
-      g_source_set_callback(deadline, on_enroll_deadline, &ctx, nullptr);
-      g_source_attach(deadline, context);
+      GSource* tick = g_timeout_source_new_seconds(1);
+      g_source_set_callback(tick, on_enroll_tick, &ctx, nullptr);
+      g_source_attach(tick, context);
 
       spdlog::info("Waiting for fingerprint enrollment...");
       g_main_loop_run(ctx.loop);
 
-      g_source_destroy(deadline);
-      g_source_unref(deadline);
+      g_source_destroy(tick);
+      g_source_unref(tick);
     }
   }
 
@@ -686,18 +726,23 @@ bool runEnrollment(FprintdDevice& device, const std::string& finger_name, Enroll
 
 }  // namespace
 
-std::vector<std::string> FingerprintAuth::listEnrolledFingers(const std::string& username) {
+std::optional<std::vector<std::string>> FingerprintAuth::listEnrolledFingers(
+    const std::string& username) {
   std::vector<std::string> enrolled_fingers;
   FprintdDevice device;
   if (!device.open()) {
-    return enrolled_fingers;
+    return std::nullopt;
   }
 
+  FprintdDevice::CallError err;
   GVariant* enrolled_ret =
       device.call("ListEnrolledFingers", g_variant_new("(s)", username.c_str()),
-                  G_VARIANT_TYPE("(as)"), kFprintdCallTimeoutMs, "list enrolled fingers");
+                  G_VARIANT_TYPE("(as)"), kFprintdCallTimeoutMs, "list enrolled fingers", &err);
   if (!enrolled_ret) {
-    return enrolled_fingers;
+    if (isNoEnrolledPrints(err.remote_name)) {
+      return enrolled_fingers;
+    }
+    return std::nullopt;
   }
 
   GVariantIter* iter;
