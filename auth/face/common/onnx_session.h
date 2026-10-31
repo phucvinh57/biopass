@@ -47,6 +47,10 @@ class OnnxSession {
   std::vector<const char*> output_names_cstr_;
 };
 
+// Text up to the first '\n'. ONNX Runtime's load errors can run to many
+// lines; logs keep only the first.
+inline std::string firstLine(const std::string& text) { return text.substr(0, text.find('\n')); }
+
 // Builds an engine (OnnxSession, or a class taking ModelBytes first) from a
 // model path the user controls, such as one from the user's registry in the
 // root helper. Reading the model and building the session both run as the

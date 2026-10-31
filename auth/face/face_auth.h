@@ -1,6 +1,8 @@
 #pragma once
 
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "auth_config.h"
 #include "auth_method.h"
@@ -34,6 +36,9 @@ class FaceAuth : public IAuthMethod {
   void ensureIrSession();
   // Loads detection + recognition once; false if either fails to load.
   bool ensureModelsLoaded();
+  // True once `face` matches one of the user's enrolled images.
+  bool matchAgainstEnrolled(const std::string& username, const ImageRGB& face,
+                            const std::vector<std::string>& enrolled_paths);
 
   FaceMethodConfig face_config_;
   // Owner of the registry and model files, which are read as this user.

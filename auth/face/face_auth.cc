@@ -5,6 +5,8 @@
 #include <exception>
 #include <memory>
 #include <optional>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "antispoof_check.h"
@@ -25,6 +27,23 @@ namespace biopass {
 static_assert(kAuthBudget + std::chrono::milliseconds(kColorCaptureTimeoutMs) + kTeardownMargin <=
                   kHelperTimeout,
               "kAuthBudget leaves no room for an in-flight capture before kHelperTimeout");
+
+namespace {
+
+// Builds a face engine from the user's model file, as the user. nullptr,
+// logged, if that throws.
+template <typename Engine, typename... Args>
+std::unique_ptr<Engine> loadModel(const char* what, const std::string& username,
+                                  const std::string& path, Args&&... args) {
+  try {
+    return makeEngineAsUser<Engine>(username, path, std::forward<Args>(args)...);
+  } catch (const std::exception& e) {
+    spdlog::error("FaceAuth: Failed to load {} model: {}, skipping", what, firstLine(e.what()));
+    return nullptr;
+  }
+}
+
+}  // namespace
 
 bool FaceAuth::isAvailable() const { return checkCameraAvailability(face_config_.camera); }
 
@@ -57,34 +76,22 @@ bool FaceAuth::ensureModelsLoaded() {
   }
 
   // Model paths come from the user's registry: load them as the user.
-  try {
-    detector_ = makeEngineAsUser<FaceDetection>(username_, detectModel->path, 640,
-                                                face_config_.detection.threshold);
-    spdlog::debug("FaceAuth: Detection model loaded | threshold={:.3f}",
-                  face_config_.detection.threshold);
-  } catch (const std::exception& e) {
-    std::string msg = e.what();
-    size_t first_line = msg.find('\n');
-    if (first_line != std::string::npos)
-      msg = msg.substr(0, first_line);
-    spdlog::error("FaceAuth: Failed to load detection model: {}, skipping", msg);
+  detector_ = loadModel<FaceDetection>("detection", username_, detectModel->path, 640,
+                                       face_config_.detection.threshold);
+  if (!detector_) {
     return false;
   }
+  spdlog::debug("FaceAuth: Detection model loaded | threshold={:.3f}",
+                face_config_.detection.threshold);
 
-  try {
-    recognizer_ = makeEngineAsUser<FaceRecognition>(username_, recogModel->path, 112,
-                                                    face_config_.recognition.threshold);
-    spdlog::debug("FaceAuth: Recognition model loaded | threshold={:.3f}",
-                  face_config_.recognition.threshold);
-  } catch (const std::exception& e) {
-    std::string msg = e.what();
-    size_t first_line = msg.find('\n');
-    if (first_line != std::string::npos)
-      msg = msg.substr(0, first_line);
-    spdlog::error("FaceAuth: Failed to load recognition model: {}, skipping", msg);
+  recognizer_ = loadModel<FaceRecognition>("recognition", username_, recogModel->path, 112,
+                                           face_config_.recognition.threshold);
+  if (!recognizer_) {
     detector_.reset();
     return false;
   }
+  spdlog::debug("FaceAuth: Recognition model loaded | threshold={:.3f}",
+                face_config_.recognition.threshold);
 
   return true;
 }
@@ -214,9 +221,23 @@ AuthResult FaceAuth::attempt(const std::string& username, const AuthConfig& conf
     return AuthResult::Failure;
   }
 
+  if (matchAgainstEnrolled(username, face, enrolledFaces)) {
+    return AuthResult::Success;
+  }
+
+  if (config.debug) {
+    saveFailedFace(username, face, "not_similar");
+  }
+
+  return AuthResult::Retry;
+}
+
+// Unreadable enrolled images are skipped, never matched.
+bool FaceAuth::matchAgainstEnrolled(const std::string& username, const ImageRGB& face,
+                                    const std::vector<std::string>& enrolled_paths) {
   spdlog::debug("FaceAuth: Recognition | threshold={:.3f} enrolled_count={}",
-                face_config_.recognition.threshold, enrolledFaces.size());
-  for (const auto& facePath : enrolledFaces) {
+                face_config_.recognition.threshold, enrolled_paths.size());
+  for (const auto& facePath : enrolled_paths) {
     const auto faceBytes = readUserFile(username, facePath, kMaxImageFileBytes);
     ImageRGB preparedFace = faceBytes ? decodeImage(*faceBytes) : ImageRGB{};
     if (preparedFace.empty()) {
@@ -230,15 +251,10 @@ AuthResult FaceAuth::attempt(const std::string& username, const AuthConfig& conf
     if (match.similar) {
       spdlog::debug("FaceAuth: Recognition PASSED | matched face='{}' score={:.4f}", facePath,
                     match.dist);
-      return AuthResult::Success;
+      return true;
     }
   }
-
-  if (config.debug) {
-    saveFailedFace(username, face, "not_similar");
-  }
-
-  return AuthResult::Retry;
+  return false;
 }
 
 }  // namespace biopass
