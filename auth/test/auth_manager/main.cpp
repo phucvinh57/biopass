@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstdio>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -42,7 +43,22 @@ struct Spec {
   // How long each attempt takes. Like fprintd's verify, it ends early (as
   // Failure) once the cancel signal is set.
   uint32_t attempt_ms = 0;
+  // Where the method throws, and what: a std::exception or a non-std type.
+  enum class Throw { None, Available, Begin, Attempt, End } throw_at = Throw::None;
+  bool throw_non_std = false;
 };
+
+struct NotAnException {};
+
+void maybeThrow(const Spec& spec, Spec::Throw at) {
+  if (spec.throw_at != at) {
+    return;
+  }
+  if (spec.throw_non_std) {
+    throw NotAnException{};
+  }
+  throw std::runtime_error("fake method blew up");
+}
 
 // Returns `results` in order (the last one repeats). `available` = false
 // makes isAvailable() refuse before any attempt.
@@ -51,11 +67,20 @@ class FakeMethod : public IAuthMethod {
   FakeMethod(Spec spec, Calls* calls) : spec_(std::move(spec)), calls_(calls) {}
 
   std::string name() const override { return "fake"; }
-  bool isAvailable() const override { return spec_.available; }
+  bool isAvailable() const override {
+    maybeThrow(spec_, Spec::Throw::Available);
+    return spec_.available;
+  }
   uint32_t getRetries() const override { return spec_.retries; }
   uint32_t getRetryDelayMs() const override { return spec_.retry_delay_ms; }
-  void beginAuthenticationSession() override { calls_->begin++; }
-  void endAuthenticationSession() override { calls_->end++; }
+  void beginAuthenticationSession() override {
+    calls_->begin++;
+    maybeThrow(spec_, Spec::Throw::Begin);
+  }
+  void endAuthenticationSession() override {
+    calls_->end++;
+    maybeThrow(spec_, Spec::Throw::End);
+  }
   AuthResult authenticate(const std::string&, const biopass::AuthConfig&,
                           std::atomic<bool>* cancel) override {
     size_t i = static_cast<size_t>(calls_->authenticate++);
@@ -66,6 +91,7 @@ class FakeMethod : public IAuthMethod {
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
+    maybeThrow(spec_, Spec::Throw::Attempt);
     return spec_.results[i < spec_.results.size() ? i : spec_.results.size() - 1];
   }
 
@@ -211,11 +237,61 @@ void checkMode(ExecutionMode mode, const char* label) {
          name("not-available method is never started"));
 }
 
+// A throwing method must count as a failed attempt, never as success, and
+// must not take the helper (or a parallel sibling) down with it.
+void checkExceptions(ExecutionMode mode, const char* label) {
+  auto name = [label](const std::string& what) { return std::string(label) + ": " + what; };
+  const Spec ok{{AuthResult::Success}};
+  for (bool non_std : {false, true}) {
+    const std::string kind = non_std ? "non-std throw" : "std::exception";
+    auto throwing = [non_std](Spec::Throw at, AuthResult result = AuthResult::Success) {
+      Spec spec{{result}, true, 3};
+      spec.throw_at = at;
+      spec.throw_non_std = non_std;
+      return spec;
+    };
+    const Spec attempt_throws = throwing(Spec::Throw::Attempt);
+
+    std::vector<Calls> calls;
+    expect(run(mode, {attempt_throws}, &calls) == Outcome::Failure,
+           name(kind + " in attempt -> failure"));
+    expect(calls[0].authenticate == 1, name(kind + " in attempt is not retried"));
+    expect(calls[0].begin == 1 && calls[0].end == 1, name(kind + " in attempt ends the session"));
+
+    expect(run(mode, {attempt_throws, ok}) == Outcome::Success,
+           name(kind + " in attempt + success -> success"));
+    expect(run(mode, {ok, attempt_throws}) == Outcome::Success,
+           name("success + " + kind + " in attempt -> success"));
+
+    // Slow sibling: in parallel mode it is still running when the other one throws.
+    const Spec slow_ok{{AuthResult::Success}, true, 1, 0, 100};
+    expect(run(mode, {attempt_throws, slow_ok}) == Outcome::Success,
+           name(kind + " in attempt + slower success -> success"));
+
+    expect(run(mode, {throwing(Spec::Throw::Begin)}, &calls) == Outcome::Failure,
+           name(kind + " in session begin -> failure"));
+    expect(calls[0].authenticate == 0 && calls[0].end == 1,
+           name(kind + " in session begin: no attempt, session ended"));
+
+    expect(run(mode, {throwing(Spec::Throw::End, AuthResult::Failure)}) == Outcome::Failure,
+           name(kind + " in session end after failure -> failure"));
+    expect(run(mode, {throwing(Spec::Throw::End)}) == Outcome::Failure,
+           name(kind + " in session end after success -> failure"));
+
+    expect(run(mode, {throwing(Spec::Throw::Available)}) == Outcome::Ignore,
+           name(kind + " in availability check -> ignore"));
+    expect(run(mode, {throwing(Spec::Throw::Available), ok}) == Outcome::Success,
+           name(kind + " in availability check + success -> success"));
+  }
+}
+
 }  // namespace
 
 int main() {
   checkMode(ExecutionMode::Sequential, "sequential");
   checkMode(ExecutionMode::Parallel, "parallel");
+  checkExceptions(ExecutionMode::Sequential, "sequential");
+  checkExceptions(ExecutionMode::Parallel, "parallel");
 
   std::vector<Calls> calls;
   run(ExecutionMode::Sequential, {Spec{{AuthResult::Success}}, Spec{{AuthResult::Success}}},

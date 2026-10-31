@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <exception>
 #include <iostream>
 #include <mutex>
 
@@ -13,16 +14,34 @@ namespace biopass {
 
 namespace {
 
+// Ends the method's session. end() lets a throwing teardown reach the caller;
+// if end() was never reached (an exception is unwinding) the destructor ends
+// the session and swallows anything it throws.
 class MethodSessionGuard {
  public:
   explicit MethodSessionGuard(IAuthMethod& method) : method_(method) {}
-  ~MethodSessionGuard() { method_.endAuthenticationSession(); }
+  ~MethodSessionGuard() {
+    if (ended_) {
+      return;
+    }
+    try {
+      method_.endAuthenticationSession();
+    } catch (...) {
+      spdlog::error("AuthManager: ending the {} session threw", method_.name());
+    }
+  }
+
+  void end() {
+    ended_ = true;
+    method_.endAuthenticationSession();
+  }
 
   MethodSessionGuard(const MethodSessionGuard&) = delete;
   MethodSessionGuard& operator=(const MethodSessionGuard&) = delete;
 
  private:
   IAuthMethod& method_;
+  bool ended_ = false;
 };
 
 // A method that got past its first attempt was tried, so going unavailable
@@ -100,6 +119,40 @@ AuthResult runAttempts(IAuthMethod& method, const std::string& username, const A
   return finalResult(result, attempts);
 }
 
+// A method that throws while checking availability is treated as not
+// available: nothing was attempted.
+bool isAvailableNoThrow(const IAuthMethod& method) {
+  try {
+    return method.isAvailable();
+  } catch (const std::exception& e) {
+    spdlog::error("AuthManager: {} availability check threw: {}", method.name(), e.what());
+  } catch (...) {
+    spdlog::error("AuthManager: {} availability check threw", method.name());
+  }
+  return false;
+}
+
+// Runs one method's whole session. Any exception (ONNX Runtime, bad_alloc,
+// a non-std throw) ends it as a Failure, never Success, and never reaches a
+// std::async future or main, where it would terminate the helper.
+AuthResult runMethod(IAuthMethod& method, const std::string& username, const AuthConfig& config,
+                     std::atomic<bool>& cancel) {
+  try {
+    // Guard first: a begin that throws halfway (camera open, models not)
+    // still gets its session ended.
+    MethodSessionGuard session_guard(method);
+    method.beginAuthenticationSession();
+    const AuthResult result = runAttempts(method, username, config, cancel);
+    session_guard.end();
+    return result;
+  } catch (const std::exception& e) {
+    spdlog::error("AuthManager: {} threw, counting it as a failure: {}", method.name(), e.what());
+  } catch (...) {
+    spdlog::error("AuthManager: {} threw, counting it as a failure", method.name());
+  }
+  return AuthResult::Failure;
+}
+
 }  // namespace
 
 void AuthManager::addMethod(std::unique_ptr<IAuthMethod> method) {
@@ -147,15 +200,12 @@ AuthOutcome AuthManager::runSequential(const std::string& username, std::atomic<
       spdlog::debug("AuthManager: time budget spent, not starting {}", method->name());
       break;
     }
-    if (!method->isAvailable()) {
+    if (!isAvailableNoThrow(*method)) {
       spdlog::debug("AuthManager: {} is not available, skipping", method->name());
       continue;
     }
 
-    method->beginAuthenticationSession();
-    MethodSessionGuard session_guard(*method);
-
-    const AuthResult result = runAttempts(*method, username, this->config_, cancel);
+    const AuthResult result = runMethod(*method, username, this->config_, cancel);
 
     switch (result) {
       case AuthResult::Success:
@@ -193,7 +243,7 @@ AuthOutcome AuthManager::runParallel(const std::string& username, std::atomic<bo
   std::vector<std::future<AuthResult>> futures;
 
   for (auto& method : this->methods_) {
-    if (!method->isAvailable()) {
+    if (!isAvailableNoThrow(*method)) {
       spdlog::debug("AuthManager: {} is not available, skipping", method->name());
       continue;
     }
@@ -202,10 +252,7 @@ AuthOutcome AuthManager::runParallel(const std::string& username, std::atomic<bo
     // retry sleep and the joins below return promptly.
     futures.push_back(
         std::async(std::launch::async, [&method, &username, &config = this->config_, &cancel]() {
-          method->beginAuthenticationSession();
-          MethodSessionGuard session_guard(*method);
-
-          const AuthResult result = runAttempts(*method, username, config, cancel);
+          const AuthResult result = runMethod(*method, username, config, cancel);
           if (result == AuthResult::Success) {
             cancel.store(true);
             spdlog::debug("AuthManager: {} authentication succeeded (parallel)", method->name());
