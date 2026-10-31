@@ -57,6 +57,11 @@ impl FingerprintAuth {
             fingerprint_list_enrolled_fingers(self.inner, username_c.as_ptr(), &mut count)
         };
 
+        // count is -1 when fprintd couldn't be asked; that must not look like
+        // "no fingers" (enroll's duplicate check relies on the list).
+        if count < 0 {
+            return Err("Failed to read enrolled fingerprints from fprintd".to_string());
+        }
         if array.is_null() {
             return Ok(Vec::new());
         }
