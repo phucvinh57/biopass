@@ -75,38 +75,6 @@ void setupBiopassLogger(const std::string& username, bool debug) {
 
 }  // namespace
 
-int cropFace(const std::string& inputPath, const std::string& outputPath,
-             const std::string& modelPath) {
-  ImageRGB image = readImage(inputPath);
-  if (image.empty()) {
-    spdlog::error("Could not read input image: {}", inputPath);
-    return 1;
-  }
-
-  std::unique_ptr<FaceDetection> faceDetector;
-  try {
-    faceDetector = std::make_unique<FaceDetection>(modelPath);
-  } catch (const std::exception& e) {
-    spdlog::error("Failed to load detection model: {}", e.what());
-    return 1;
-  }
-
-  std::vector<Detection> detectedFaces = faceDetector->inference(image);
-  if (detectedFaces.empty()) {
-    spdlog::error("No face detected in the image");
-    return 2;  // Special exit code for "no face detected"
-  }
-
-  ImageRGB faceCrop = detectedFaces[0].image;
-  if (!saveImage(outputPath, faceCrop)) {
-    spdlog::error("Could not save cropped image to: {}", outputPath);
-    return 1;
-  }
-
-  spdlog::info("Successfully cropped face and saved to: {}", outputPath);
-  return 0;
-}
-
 // Streams JPEG frames over stdout, reads commands on stdin:
 //   FRAME          -> OK <byte_count>\n<bytes> | ERR <msg>\n
 //   CAPTURE <path> -> detect + crop face to <path>: OK\n | NO_FACE\n | ERR <msg>\n
@@ -198,47 +166,6 @@ int previewSession(const std::string& cameraPath, const std::string& modelPath, 
   return 0;
 }
 
-int captureAndCropFace(const std::string& cameraPath, const std::string& outputPath,
-                       const std::string& modelPath) {
-  std::optional<std::string> deviceOpt;
-  if (!cameraPath.empty()) {
-    deviceOpt = cameraPath;
-  }
-
-  // Silence libcamera's info-level setup noise.
-  spdlog::set_level(spdlog::level::err);
-  ImageRGB image = biopass::captureImage(deviceOpt);
-  spdlog::set_level(spdlog::level::info);
-  if (image.empty()) {
-    spdlog::error("Failed to capture image from camera: {}",
-                  cameraPath.empty() ? "<auto>" : cameraPath);
-    return 1;
-  }
-
-  std::unique_ptr<FaceDetection> faceDetector;
-  try {
-    faceDetector = std::make_unique<FaceDetection>(modelPath);
-  } catch (const std::exception& e) {
-    spdlog::error("Failed to load detection model: {}", e.what());
-    return 1;
-  }
-
-  std::vector<Detection> detectedFaces = faceDetector->inference(image);
-  if (detectedFaces.empty()) {
-    spdlog::error("No face detected in the captured frame");
-    return 2;
-  }
-
-  ImageRGB faceCrop = detectedFaces[0].image;
-  if (!saveImage(outputPath, faceCrop)) {
-    spdlog::error("Could not save cropped image to: {}", outputPath);
-    return 1;
-  }
-
-  spdlog::info("Successfully captured + cropped face and saved to: {}", outputPath);
-  return 0;
-}
-
 int authenticate(const std::string& username, const std::string& service) {
   const char* pUsername = username.c_str();
 
@@ -257,9 +184,6 @@ int authenticate(const std::string& username, const std::string& service) {
 
   biopass::AuthConfig runtime_config;
   runtime_config.debug = config.strategy.debug;
-  runtime_config.antispoof = config.methods.face.anti_spoofing.enable ||
-                             (config.methods.face.anti_spoofing.ir_camera.has_value() &&
-                              !config.methods.face.anti_spoofing.ir_camera->empty());
 
   biopass::AuthManager manager;
   manager.setMode(config.strategy.execution_mode == "sequential"
@@ -296,20 +220,6 @@ int main(int argc, char** argv) {
   app.set_version_flag("--version,-v", BIOPASS_VERSION);
   app.require_subcommand(1, 1);
 
-  auto crop_cmd = app.add_subcommand("crop-face", "Crop a face from an image");
-  std::string inputPath, outputPath, modelPath;
-  crop_cmd->add_option("--input,-i", inputPath, "Input image path")->required();
-  crop_cmd->add_option("--output,-o", outputPath, "Output image path")->required();
-  crop_cmd->add_option("--model,-m", modelPath, "Detection model path")->required();
-
-  auto capture_cmd = app.add_subcommand("capture-face",
-                                        "Capture a frame from a camera and crop the detected face");
-  std::string capCameraPath, capOutputPath, capModelPath;
-  capture_cmd->add_option("--camera,-c", capCameraPath,
-                          "Camera device path (e.g. /dev/video0). Empty = auto-select first.");
-  capture_cmd->add_option("--output,-o", capOutputPath, "Output image path")->required();
-  capture_cmd->add_option("--model,-m", capModelPath, "Detection model path")->required();
-
   auto preview_cmd = app.add_subcommand(
       "preview-session",
       "Long-running camera session: streams JPEG frames + handles capture via stdin/stdout");
@@ -335,14 +245,6 @@ int main(int argc, char** argv) {
     app.parse(argc, argv);
   } catch (const CLI::ParseError& e) {
     return app.exit(e);
-  }
-
-  if (app.got_subcommand(crop_cmd)) {
-    return cropFace(inputPath, outputPath, modelPath);
-  }
-
-  if (app.got_subcommand(capture_cmd)) {
-    return captureAndCropFace(capCameraPath, capOutputPath, capModelPath);
   }
 
   if (app.got_subcommand(preview_cmd)) {
