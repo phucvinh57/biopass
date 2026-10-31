@@ -1,19 +1,14 @@
 import { Fingerprint, ScanFace, ShieldCheck } from "lucide-react";
 import { useState } from "react";
-import { Controller, useFormContext, useWatch } from "react-hook-form";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { useFormContext, useWatch } from "react-hook-form";
 import type { BiopassConfig } from "@/types/config";
 import { FingerprintSetting } from "./FingerprintSetting";
 import { FaceSetting } from "./face/FaceSetting";
 import { MethodCard } from "./MethodCard";
-
-function parseNumberInput(value: string): number {
-  return value === "" ? Number.NaN : Number(value);
-}
+import { NumberField } from "./NumberField";
 
 export function MethodConfig() {
-  const { control, setValue } = useFormContext<BiopassConfig>();
+  const { setValue } = useFormContext<BiopassConfig>();
   const faceConfig = useWatch<BiopassConfig, "methods.face">({
     name: "methods.face",
   });
@@ -81,73 +76,23 @@ export function MethodConfig() {
         >
           <div className="grid gap-4 pt-4">
             <div className="grid grid-cols-2 gap-6 p-4 rounded-lg bg-muted/50 border border-border/50">
-              <div className="grid gap-2">
-                <Label
-                  htmlFor="fingerprint-max-retries"
-                  className="text-sm font-medium text-muted-foreground"
-                >
-                  Max Retries
-                </Label>
-                <Controller
-                  control={control}
-                  name="methods.fingerprint.retries"
-                  render={({ field, fieldState }) => (
-                    <>
-                      <Input
-                        id="fingerprint-max-retries"
-                        type="number"
-                        min={1}
-                        max={5}
-                        value={Number.isNaN(field.value) ? "" : field.value}
-                        onChange={(e) =>
-                          field.onChange(parseNumberInput(e.target.value))
-                        }
-                        aria-invalid={fieldState.invalid}
-                        className="h-10"
-                      />
-                      {fieldState.error && (
-                        <p className="text-xs text-destructive">
-                          {fieldState.error.message}
-                        </p>
-                      )}
-                    </>
-                  )}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label
-                  htmlFor="fingerprint-timeout"
-                  className="text-sm font-medium text-muted-foreground"
-                >
-                  Timeout (ms)
-                </Label>
-                <Controller
-                  control={control}
-                  name="methods.fingerprint.timeout"
-                  render={({ field, fieldState }) => (
-                    <>
-                      <Input
-                        id="fingerprint-timeout"
-                        type="number"
-                        min="0"
-                        max="10000"
-                        step="100"
-                        value={Number.isNaN(field.value) ? "" : field.value}
-                        onChange={(e) =>
-                          field.onChange(parseNumberInput(e.target.value))
-                        }
-                        aria-invalid={fieldState.invalid}
-                        className="h-10"
-                      />
-                      {fieldState.error && (
-                        <p className="text-xs text-destructive">
-                          {fieldState.error.message}
-                        </p>
-                      )}
-                    </>
-                  )}
-                />
-              </div>
+              <NumberField
+                name="methods.fingerprint.retries"
+                id="fingerprint-max-retries"
+                label="Max Retries"
+                min={1}
+                max={5}
+              />
+              {/* min stays 0, not the schema's 1: the browser counts step from min,
+                so min 1 would mark the default 5000 ms invalid on submit. */}
+              <NumberField
+                name="methods.fingerprint.timeout"
+                id="fingerprint-timeout"
+                label="Timeout (ms)"
+                min={0}
+                max={10000}
+                step={100}
+              />
             </div>
             <div className="overflow-hidden">
               <FingerprintSetting />

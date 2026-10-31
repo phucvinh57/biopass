@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { Controller, useFormContext, useWatch } from "react-hook-form";
+import { useFormContext, useWatch } from "react-hook-form";
 import { ModelStatus } from "@/app/-components/ModelStatus";
 import { cmd } from "@/commands";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -15,15 +14,11 @@ import { useModelFileStatus } from "@/hooks/useModelFileStatus";
 import type { BiopassConfig, Model, VideoDeviceInfo } from "@/types/config";
 import { ModelSelect } from "../methods/shared/ModelSelect";
 import { Threshold } from "../methods/shared/Threshold";
+import { NumberField } from "../NumberField";
 import { FaceCapture } from "./FaceCapture";
-
-function parseNumberInput(value: string): number {
-  return value === "" ? Number.NaN : Number(value);
-}
 
 export function FaceSetting() {
   const {
-    control,
     formState: { errors },
     setValue,
   } = useFormContext<BiopassConfig>();
@@ -106,72 +101,20 @@ export function FaceSetting() {
   return (
     <div className="grid gap-4">
       <div className="grid grid-cols-2 gap-6 p-4 rounded-lg bg-muted/50 border border-border/50">
-        <div className="grid gap-2">
-          <Label
-            htmlFor="face-max-retries"
-            className="text-sm font-medium text-muted-foreground"
-          >
-            Max Retries
-          </Label>
-          <Controller
-            control={control}
-            name="methods.face.retries"
-            render={({ field, fieldState }) => (
-              <>
-                <Input
-                  id="face-max-retries"
-                  type="number"
-                  min="1"
-                  max="10"
-                  value={Number.isNaN(field.value) ? "" : field.value}
-                  onChange={(e) =>
-                    field.onChange(parseNumberInput(e.target.value))
-                  }
-                  aria-invalid={fieldState.invalid}
-                  className="h-10"
-                />
-                {fieldState.error && (
-                  <p className="text-xs text-destructive">
-                    {fieldState.error.message}
-                  </p>
-                )}
-              </>
-            )}
-          />
-        </div>
-        <div className="grid gap-2">
-          <Label
-            htmlFor="face-retry-delay"
-            className="text-sm font-medium text-muted-foreground"
-          >
-            Retry Delay (ms)
-          </Label>
-          <Controller
-            control={control}
-            name="methods.face.retry_delay"
-            render={({ field, fieldState }) => (
-              <>
-                <Input
-                  id="face-retry-delay"
-                  type="number"
-                  min="0"
-                  max="5000"
-                  value={Number.isNaN(field.value) ? "" : field.value}
-                  onChange={(e) =>
-                    field.onChange(parseNumberInput(e.target.value))
-                  }
-                  aria-invalid={fieldState.invalid}
-                  className="h-10"
-                />
-                {fieldState.error && (
-                  <p className="text-xs text-destructive">
-                    {fieldState.error.message}
-                  </p>
-                )}
-              </>
-            )}
-          />
-        </div>
+        <NumberField
+          name="methods.face.retries"
+          id="face-max-retries"
+          label="Max Retries"
+          min={1}
+          max={10}
+        />
+        <NumberField
+          name="methods.face.retry_delay"
+          id="face-retry-delay"
+          label="Retry Delay (ms)"
+          min={0}
+          max={5000}
+        />
       </div>
 
       <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
