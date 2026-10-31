@@ -53,9 +53,12 @@ void relayStatusLine(pam_handle_t* pamh, const std::string& line) {
 // Relays status lines from `fd` as they arrive until the helper exits, then
 // reaps it into `status`. Polls with a timeout instead of blocking until EOF
 // so we still return if something else ends up holding the pipe's write end.
-void relayUntilExit(pam_handle_t* pamh, int fd, pid_t pid, int* status) {
+// Returns false if the helper could not be reaped (e.g. ECHILD because the
+// caller ignores SIGCHLD or reaped it first); `status` is then meaningless.
+bool relayUntilExit(pam_handle_t* pamh, int fd, pid_t pid, int* status) {
   std::string pending;
   bool fd_open = fd >= 0;
+  bool reaped = false;
 
   for (;;) {
     if (fd_open) {
@@ -88,7 +91,11 @@ void relayUntilExit(pam_handle_t* pamh, int fd, pid_t pid, int* status) {
     }
 
     pid_t r = waitpid(pid, status, fd_open ? WNOHANG : 0);
-    if (r == pid || (r < 0 && errno != EINTR)) {
+    if (r == pid) {
+      reaped = true;
+      break;
+    }
+    if (r < 0 && errno != EINTR) {
       break;
     }
   }
@@ -96,6 +103,7 @@ void relayUntilExit(pam_handle_t* pamh, int fd, pid_t pid, int* status) {
   if (fd >= 0) {
     close(fd);
   }
+  return reaped;
 }
 
 }  // namespace
@@ -134,6 +142,13 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t* pamh, int flags, int argc, cons
     status_pipe[1] = -1;
   }
 
+  // Formatted before fork(): snprintf isn't async-signal-safe, and the PAM
+  // caller may be multithreaded.
+  char status_fd_arg[16] = "";
+  if (status_pipe[1] >= 0) {
+    snprintf(status_fd_arg, sizeof(status_fd_arg), "%d", status_pipe[1]);
+  }
+
   pid_t pid = fork();
   if (pid < 0) {
     if (status_pipe[0] >= 0) {
@@ -142,11 +157,9 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t* pamh, int flags, int argc, cons
     }
     return PAM_AUTH_ERR;
   } else if (pid == 0) {
-    char status_fd_arg[16] = "";
     if (status_pipe[1] >= 0) {
       close(status_pipe[0]);
       fcntl(status_pipe[1], F_SETFD, 0);
-      snprintf(status_fd_arg, sizeof(status_fd_arg), "%d", status_pipe[1]);
     }
 
     // Run "biopass-helper auth --username <username> [--service <name>]
@@ -179,7 +192,10 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t* pamh, int flags, int argc, cons
       close(status_pipe[1]);
     }
     int status = 0;
-    relayUntilExit(pamh, status_pipe[0], pid, &status);
+    if (!relayUntilExit(pamh, status_pipe[0], pid, &status)) {
+      // We never saw the helper's exit status, so we can't know it succeeded.
+      return PAM_AUTH_ERR;
+    }
 
     if (WIFEXITED(status)) {
       int exit_code = WEXITSTATUS(status);
