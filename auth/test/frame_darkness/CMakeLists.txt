@@ -6,3 +6,5 @@ target_link_libraries(${FRAME_DARKNESS_TEST} PRIVATE
     biopass_face_common
     biopass_stb
 )
+
+add_test(NAME frame_darkness COMMAND ${FRAME_DARKNESS_TEST})
