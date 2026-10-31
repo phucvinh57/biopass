@@ -70,24 +70,27 @@ jobs:
 
       - name: Extract Version
         id: get_version
+        env:
+          RELEASE_NAME: ${{ inputs.release_name }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          if [ -n "${{ inputs.release_name }}" ]; then
-            VERSION="${{ inputs.release_name }}"
-          else
-            VERSION="${{ github.ref_name }}"
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          VERSION="${RELEASE_NAME:-$REF_NAME}"
+          # It ends up in make, sed and file names: allow version characters only.
+          case "$VERSION" in
+            "" | *[!A-Za-z0-9._+-]*)
+              echo "Invalid version: '$VERSION'" >&2
+              exit 1
+              ;;
+          esac
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Update Cargo.toml version
-        run: |
-          echo "Updating Cargo.toml version to ${{ steps.get_version.outputs.version }}"
-          sed -i -e "s/^version = \".*\"/version = \"${{ steps.get_version.outputs.version }}\"/" app/src-tauri/Cargo.toml
-          cat app/src-tauri/Cargo.toml
-
+      # make stamps VERSION into Cargo.toml for the build and restores it after.
       - name: Build & package
+        env:
+          VERSION: ${{ steps.get_version.outputs.version }}
         run: |
           rm -rf app/src-tauri/target/release/bundle/
-          make package BUILD_TYPE=${{ env.BUILD_TYPE }} VERSION=${{ steps.get_version.outputs.version }}
+          make package BUILD_TYPE="$BUILD_TYPE" VERSION="$VERSION"
           ls -R app/src-tauri/target/release/bundle/
 
       - name: Release
