@@ -123,19 +123,86 @@ std::string user_data_dir(const std::string& username) {
   return "";
 }
 
-std::optional<BiopassConfig> readConfig(const std::string& username) {
-  // The config path is user-controlled, so it is read as the user and only
-  // if it is a regular file. Anything else counts as missing.
-  const std::optional<std::string> text =
-      readUserFile(username, getConfigPath(username), kMaxConfigBytes);
-  if (!text) {
-    return std::nullopt;
-  }
+namespace {
 
+// Sets `out` from node[key] when the key is there. Throws YAML::Exception if
+// the value has the wrong type.
+template <typename T>
+void readIf(const YAML::Node& node, const char* key, T& out) {
+  if (node[key]) {
+    out = node[key].as<T>();
+  }
+}
+
+void readOptionalString(const YAML::Node& node, const char* key, std::optional<std::string>& out) {
+  if (node[key] && !node[key].IsNull()) {
+    out = node[key].as<std::string>();
+  }
+}
+
+void parseStrategy(const YAML::Node& s, StrategyConfig& out) {
+  readIf(s, "debug", out.debug);
+  readIf(s, "execution_mode", out.execution_mode);
+  if (s["order"] && s["order"].IsSequence()) {
+    out.order.clear();
+    for (const auto& m : s["order"]) {
+      out.order.push_back(m.as<std::string>());
+    }
+  }
+  if (s["ignore_services"]) {
+    out.ignore_services.clear();
+    if (s["ignore_services"].IsSequence()) {
+      for (const auto& item : s["ignore_services"]) {
+        if (item.IsScalar()) {
+          out.ignore_services.push_back(item.as<std::string>());
+        }
+      }
+    }
+  }
+}
+
+void parseAntiSpoofing(const YAML::Node& a, AntiSpoofingConfig& out) {
+  readIf(a, "enable", out.enable);
+  if (a["model"] && a["model"].IsMap()) {
+    readIf(a["model"], "model_id", out.model.model_id);
+    readIf(a["model"], "threshold", out.model.threshold);
+  }
+  readOptionalString(a, "ir_camera", out.ir_camera);
+  readIf(a, "ir_warmup_delay_ms", out.ir_warmup_delay_ms);
+  readIf(a, "ir_presence_timeout_ms", out.ir_presence_timeout_ms);
+}
+
+void parseFace(const YAML::Node& f, FaceMethodConfig& out) {
+  readIf(f, "enable", out.enable);
+  readIf(f, "retries", out.retries);
+  readIf(f, "retry_delay", out.retry_delay);
+  if (f["detection"]) {
+    readIf(f["detection"], "model_id", out.detection.model_id);
+    readIf(f["detection"], "threshold", out.detection.threshold);
+  }
+  if (f["recognition"]) {
+    readIf(f["recognition"], "model_id", out.recognition.model_id);
+    readIf(f["recognition"], "threshold", out.recognition.threshold);
+  }
+  readOptionalString(f, "camera", out.camera);
+  if (f["anti_spoofing"]) {
+    parseAntiSpoofing(f["anti_spoofing"], out.anti_spoofing);
+  }
+}
+
+void parseFingerprint(const YAML::Node& fp, FingerprintMethodConfig& out) {
+  readIf(fp, "enable", out.enable);
+  readIf(fp, "retries", out.retries);
+  readIf(fp, "timeout", out.timeout);
+}
+
+}  // namespace
+
+BiopassConfig parseConfig(const std::string& text) {
   BiopassConfig config;
 
   try {
-    YAML::Node yaml = YAML::Load(*text);
+    YAML::Node yaml = YAML::Load(text);
 
     // Schema mismatch = defaults (only the app migrates). Default model_ids
     // don't resolve, so face auth reports Unavailable and PAM falls through
@@ -145,99 +212,21 @@ std::optional<BiopassConfig> readConfig(const std::string& username) {
       spdlog::warn(
           "Biopass: config.yaml schema_version {} does not match expected {}, using defaults",
           schema_version, kCurrentSchemaVersion);
+      validateConfig(config);
       return config;
     }
     config.schema_version = schema_version;
 
     if (yaml["strategy"]) {
-      const auto& s = yaml["strategy"];
-      if (s["debug"])
-        config.strategy.debug = s["debug"].as<bool>();
-      if (s["execution_mode"])
-        config.strategy.execution_mode = s["execution_mode"].as<std::string>();
-      if (s["order"] && s["order"].IsSequence()) {
-        config.strategy.order.clear();
-        for (const auto& m : s["order"]) config.strategy.order.push_back(m.as<std::string>());
-      }
-      if (s["ignore_services"]) {
-        config.strategy.ignore_services.clear();
-        if (s["ignore_services"].IsSequence()) {
-          for (const auto& item : s["ignore_services"]) {
-            if (item.IsScalar()) {
-              config.strategy.ignore_services.push_back(item.as<std::string>());
-            }
-          }
-        }
-      }
+      parseStrategy(yaml["strategy"], config.strategy);
     }
-
     if (yaml["methods"]) {
-      const auto& m = yaml["methods"];
-
+      const YAML::Node& m = yaml["methods"];
       if (m["face"]) {
-        const auto& f = m["face"];
-        if (f["enable"])
-          config.methods.face.enable = f["enable"].as<bool>();
-        if (f["retries"])
-          config.methods.face.retries = f["retries"].as<uint32_t>();
-        if (f["retry_delay"])
-          config.methods.face.retry_delay = f["retry_delay"].as<uint32_t>();
-        if (f["detection"]) {
-          if (f["detection"]["model_id"])
-            config.methods.face.detection.model_id = f["detection"]["model_id"].as<std::string>();
-          if (f["detection"]["threshold"])
-            config.methods.face.detection.threshold = f["detection"]["threshold"].as<float>();
-        }
-        if (f["recognition"]) {
-          if (f["recognition"]["model_id"])
-            config.methods.face.recognition.model_id =
-                f["recognition"]["model_id"].as<std::string>();
-          if (f["recognition"]["threshold"])
-            config.methods.face.recognition.threshold = f["recognition"]["threshold"].as<float>();
-        }
-        if (f["camera"] && !f["camera"].IsNull()) {
-          config.methods.face.camera = f["camera"].as<std::string>();
-        }
-        if (f["anti_spoofing"]) {
-          const auto& anti_spoofing = f["anti_spoofing"];
-          if (anti_spoofing["enable"]) {
-            config.methods.face.anti_spoofing.enable = anti_spoofing["enable"].as<bool>();
-          }
-
-          if (anti_spoofing["model"] && anti_spoofing["model"].IsMap()) {
-            const auto& model = anti_spoofing["model"];
-            if (model["model_id"])
-              config.methods.face.anti_spoofing.model.model_id =
-                  model["model_id"].as<std::string>();
-            if (model["threshold"])
-              config.methods.face.anti_spoofing.model.threshold = model["threshold"].as<float>();
-          }
-
-          if (anti_spoofing["ir_camera"] && !anti_spoofing["ir_camera"].IsNull()) {
-            config.methods.face.anti_spoofing.ir_camera =
-                anti_spoofing["ir_camera"].as<std::string>();
-          }
-
-          if (anti_spoofing["ir_warmup_delay_ms"]) {
-            config.methods.face.anti_spoofing.ir_warmup_delay_ms =
-                anti_spoofing["ir_warmup_delay_ms"].as<int>();
-          }
-
-          if (anti_spoofing["ir_presence_timeout_ms"]) {
-            config.methods.face.anti_spoofing.ir_presence_timeout_ms =
-                anti_spoofing["ir_presence_timeout_ms"].as<int>();
-          }
-        }
+        parseFace(m["face"], config.methods.face);
       }
-
       if (m["fingerprint"]) {
-        const auto& fp = m["fingerprint"];
-        if (fp["enable"])
-          config.methods.fingerprint.enable = fp["enable"].as<bool>();
-        if (fp["retries"])
-          config.methods.fingerprint.retries = fp["retries"].as<uint32_t>();
-        if (fp["timeout"])
-          config.methods.fingerprint.timeout = fp["timeout"].as<uint32_t>();
+        parseFingerprint(m["fingerprint"], config.methods.fingerprint);
       }
     }
   } catch (const YAML::Exception& e) {
@@ -246,6 +235,17 @@ std::optional<BiopassConfig> readConfig(const std::string& username) {
 
   validateConfig(config);
   return config;
+}
+
+std::optional<BiopassConfig> readConfig(const std::string& username) {
+  // The config path is user-controlled, so it is read as the user and only
+  // if it is a regular file. Anything else counts as missing.
+  const std::optional<std::string> text =
+      readUserFile(username, getConfigPath(username), kMaxConfigBytes);
+  if (!text) {
+    return std::nullopt;
+  }
+  return parseConfig(*text);
 }
 
 static int mkdir_p(const std::string& path) {

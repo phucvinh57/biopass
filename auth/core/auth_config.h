@@ -118,6 +118,9 @@ inline constexpr float kMaxThreshold = 1.0f;
 void validateConfig(BiopassConfig& config);
 
 std::string getConfigPath(const std::string& username);
+// Parses config.yaml's text and runs validateConfig() on the result. A
+// config that doesn't parse or has another schema_version gives defaults.
+BiopassConfig parseConfig(const std::string& text);
 // nullopt when config.yaml is missing, unreadable or not a regular file.
 // A config that doesn't parse or has another schema_version gives defaults.
 std::optional<BiopassConfig> readConfig(const std::string& username);
