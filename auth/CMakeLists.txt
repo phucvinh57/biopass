@@ -41,6 +41,7 @@ if(BUILD_TESTS)
     add_subdirectory(test/pixel_convert)
     add_subdirectory(test/frame_darkness)
     add_subdirectory(test/fs_user)
+    add_subdirectory(test/helper_config)
     add_subdirectory(test/user_file)
 endif()
 

@@ -257,6 +257,11 @@ int main(int argc, char** argv) {
   }
 
   if (app.got_subcommand(auth_cmd)) {
+    // spdlog's default logger writes to stdout, which belongs to the PAM
+    // caller (see setupBiopassLogger). Silence it before anything can log;
+    // setupBiopassLogger replaces it once the config is known.
+    spdlog::set_default_logger(std::make_shared<spdlog::logger>("biopass"));
+    spdlog::set_level(spdlog::level::off);
     if (username.empty()) {
       spdlog::info("{}", app.help());
       return 2;  // PAM_IGNORE

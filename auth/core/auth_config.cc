@@ -7,11 +7,24 @@
 
 #include <algorithm>
 #include <cstring>
-#include <fstream>
 
 #include "fs_user.h"
+#include "user_file.h"
 
 namespace biopass {
+
+namespace {
+
+// Real configs are a few hundred bytes.
+constexpr size_t kMaxConfigBytes = 1 << 20;
+
+// The config path is user-controlled, so it is read as the user and only if
+// it is a regular file. Anything else counts as missing.
+std::optional<std::string> readConfigText(const std::string& username) {
+  return readUserFile(username, getConfigPath(username), kMaxConfigBytes);
+}
+
+}  // namespace
 
 std::string getConfigPath(const std::string& username) {
   struct passwd* pw = getpwnam(username.c_str());
@@ -25,10 +38,7 @@ std::string getConfigPath(const std::string& username) {
   return std::string(pw->pw_dir) + "/.config/com.ticklab.biopass/config.yaml";
 }
 
-bool configExists(const std::string& username) {
-  std::ifstream f(getConfigPath(username));
-  return f.good();
-}
+bool configExists(const std::string& username) { return readConfigText(username).has_value(); }
 
 std::string user_data_dir(const std::string& username) {
   struct passwd* pw = getpwnam(username.c_str());
@@ -44,10 +54,15 @@ std::string user_data_dir(const std::string& username) {
 BiopassConfig readConfig(const std::string& username) {
   BiopassConfig config;
 
-  std::string config_path = getConfigPath(username);
+  const std::optional<std::string> text = readConfigText(username);
+  if (!text) {
+    spdlog::warn("Biopass: Config file not found or not readable at {}, using defaults",
+                 getConfigPath(username));
+    return config;
+  }
 
   try {
-    YAML::Node yaml = YAML::LoadFile(config_path);
+    YAML::Node yaml = YAML::Load(*text);
 
     // Schema mismatch = defaults (only the app migrates). Default model_ids
     // don't resolve, so face auth reports Unavailable and PAM falls through
@@ -180,8 +195,6 @@ BiopassConfig readConfig(const std::string& username) {
           config.methods.fingerprint.timeout = fp["timeout"].as<uint32_t>();
       }
     }
-  } catch (const YAML::BadFile& e) {
-    spdlog::warn("Biopass: Config file not found at {}, using defaults", config_path);
   } catch (const YAML::Exception& e) {
     spdlog::error("Biopass: Failed to parse config: {}, using defaults", e.what());
   }
