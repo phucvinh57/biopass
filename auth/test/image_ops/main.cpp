@@ -165,6 +165,10 @@ void checkAntispoofPreprocess() {
             imageLetterboxReflect101(pattern(300, 199), 80), 0xe4da066c431f5166ull);
   checkHash("imageLetterboxReflect101 80x80 -> 80 (same)",
             imageLetterboxReflect101(pattern(80, 80), 80), 0xdada5e42eaf19023ull);
+  // 67 * 128 / 101 = 84.9: the short side truncates to 84 here, where
+  // imageLetterbox would round it to 85.
+  checkHash("imageLetterboxReflect101 101x67 -> 128 (truncating short side)",
+            imageLetterboxReflect101(pattern(101, 67), 128), 0x5594733a8f248447ull);
   checkHash("imageSquareCropReflect101 1.5x inside",
             imageSquareCropReflect101(pattern(120, 90), 30, 20, 71, 63, 1.5f),
             0x4d82887851840fe3ull);
