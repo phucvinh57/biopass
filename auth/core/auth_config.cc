@@ -178,10 +178,6 @@ BiopassConfig readConfig(const std::string& username) {
           config.methods.fingerprint.timeout = fp["timeout"].as<uint32_t>();
       }
     }
-
-    if (yaml["appearance"] && yaml["appearance"].IsScalar()) {
-      config.appearance = yaml["appearance"].as<std::string>();
-    }
   } catch (const YAML::BadFile& e) {
     spdlog::warn("Biopass: Config file not found at {}, using defaults", config_path);
   } catch (const YAML::Exception& e) {

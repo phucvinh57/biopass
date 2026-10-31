@@ -86,7 +86,6 @@ struct BiopassConfig {
   int schema_version = 0;
   StrategyConfig strategy = {};
   MethodsConfig methods = {};
-  std::string appearance = "system";
 };
 std::string getConfigPath(const std::string& username);
 BiopassConfig readConfig(const std::string& username);
