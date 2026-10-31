@@ -33,6 +33,9 @@ struct Calls {
   int authenticate = 0;
   int begin = 0;
   int end = 0;
+  // When the last attempt returned / the session's end() finished.
+  std::chrono::steady_clock::time_point attempt_done;
+  std::chrono::steady_clock::time_point end_done;
 };
 
 struct Spec {
@@ -46,6 +49,8 @@ struct Spec {
   // Where the method throws, and what: a std::exception or a non-std type.
   enum class Throw { None, Available, Begin, Attempt, End } throw_at = Throw::None;
   bool throw_non_std = false;
+  // How long endAuthenticationSession() takes (fprintd's VerifyStop/Release).
+  uint32_t end_ms = 0;
 };
 
 struct NotAnException {};
@@ -79,6 +84,8 @@ class FakeMethod : public IAuthMethod {
   }
   void endAuthenticationSession() override {
     calls_->end++;
+    std::this_thread::sleep_for(std::chrono::milliseconds(spec_.end_ms));
+    calls_->end_done = std::chrono::steady_clock::now();
     maybeThrow(spec_, Spec::Throw::End);
   }
   AuthResult authenticate(const std::string&, const biopass::AuthConfig&,
@@ -87,10 +94,12 @@ class FakeMethod : public IAuthMethod {
     const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(spec_.attempt_ms);
     while (std::chrono::steady_clock::now() < end) {
       if (cancel != nullptr && cancel->load()) {
+        calls_->attempt_done = std::chrono::steady_clock::now();
         return AuthResult::Failure;
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
+    calls_->attempt_done = std::chrono::steady_clock::now();
     maybeThrow(spec_, Spec::Throw::Attempt);
     return spec_.results[i < spec_.results.size() ? i : spec_.results.size() - 1];
   }
@@ -179,6 +188,18 @@ void checkTiming() {
       expect(took < kQuickMs,
              label + ": " + c.what + ", within budget (" + std::to_string(took) + " ms)");
     }
+  }
+
+  {
+    // Parallel: the winner cancels its siblings before its own (slow)
+    // teardown, so face stops capturing as soon as fingerprint matches.
+    Spec slow_end_ok{{AuthResult::Success}};
+    slow_end_ok.end_ms = 300;
+    std::vector<Calls> calls;
+    Outcome rc = run(ExecutionMode::Parallel, {slow_end_ok, kSlowAttempt}, &calls);
+    expect(rc == Outcome::Success, "parallel: winner with a slow teardown -> success");
+    expect(calls[1].attempt_done < calls[0].end_done,
+           "parallel: sibling cancelled before the winner's teardown ends");
   }
 
   {

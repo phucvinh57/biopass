@@ -143,6 +143,11 @@ AuthResult runMethod(IAuthMethod& method, const std::string& username, const Aut
     MethodSessionGuard session_guard(method);
     method.beginAuthenticationSession();
     const AuthResult result = runAttempts(method, username, config, cancel);
+    if (result == AuthResult::Success) {
+      // Parallel: stop the siblings now, not after this method's teardown
+      // (fprintd's VerifyStop/Release can take seconds).
+      cancel.store(true);
+    }
     session_guard.end();
     return result;
   } catch (const std::exception& e) {
@@ -248,13 +253,12 @@ AuthOutcome AuthManager::runParallel(const std::string& username, std::atomic<bo
       continue;
     }
 
-    // A success sets `cancel`, so the other methods leave their attempt or
+    // A success sets `cancel` (in runMethod), so the other methods leave their attempt or
     // retry sleep and the joins below return promptly.
     futures.push_back(
         std::async(std::launch::async, [&method, &username, &config = this->config_, &cancel]() {
           const AuthResult result = runMethod(*method, username, config, cancel);
           if (result == AuthResult::Success) {
-            cancel.store(true);
             spdlog::debug("AuthManager: {} authentication succeeded (parallel)", method->name());
           }
           return result;
