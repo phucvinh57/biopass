@@ -33,6 +33,19 @@ jobs:
         working-directory: app
         run: bunx tsc --noEmit
 
+  shell:
+    name: Shell scripts (shellcheck)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      # The deb/rpm maintainer scripts run as root on install.
+      - name: shellcheck
+        run: |
+          shellcheck --version
+          git ls-files -z 'app/src-tauri/scripts/deb/*' 'app/src-tauri/scripts/rpm/*' '*.sh' \
+            | xargs -0 shellcheck
+
   native:
     name: Native (auth + Rust)
     runs-on: ubuntu-24.04
