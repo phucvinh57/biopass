@@ -7,6 +7,7 @@
 #include <sys/stat.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
@@ -401,7 +402,7 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
 
   ~LibcameraCaptureSession() override { close(); }
 
-  bool isOpen() const override { return lifecycle_.isStarted(); }
+  bool isOpen() const override { return lifecycle_.isStarted() && !disconnected_; }
 
   ImageRGB capture() override {
     if (!isOpen()) {
@@ -536,6 +537,13 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
       }
       ready_.notify_one();
     });
+    camera_->disconnected.connect(&connection_token_, [this]() {
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        disconnected_ = true;
+      }
+      ready_.notify_all();
+    });
 
     if (camera_->start() < 0) {
       spdlog::error("FaceAuth: Failed to start camera '{}'", camera_label_);
@@ -574,12 +582,19 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
   libcamera::Request* waitForRequest(std::chrono::steady_clock::time_point deadline,
                                      bool has_timeout) {
     std::unique_lock<std::mutex> lock(mutex_);
+    const auto ready = [this] { return !completed_.empty() || disconnected_; };
     bool have_request;
     if (has_timeout) {
-      have_request = ready_.wait_until(lock, deadline, [this] { return !completed_.empty(); });
+      have_request = ready_.wait_until(lock, deadline, ready);
     } else {
-      ready_.wait(lock, [this] { return !completed_.empty(); });
+      ready_.wait(lock, ready);
       have_request = true;
+    }
+    if (have_request && completed_.empty()) {
+      spdlog::error("FaceAuth: Camera '{}' was disconnected", camera_label_);
+      lock.unlock();
+      close();
+      return nullptr;
     }
     if (!have_request) {
       spdlog::error("FaceAuth: Timed out waiting for frame from '{}'", camera_label_);
@@ -638,14 +653,23 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
 
   // Safe to call more than once.
   void close() {
+    // After an unplug stop() is a no-op that leaves requests in the pipeline.
+    // Checking again after stop() covers an unplug racing it.
+    if (disconnected_) {
+      lifecycle_.markDisconnected();
+    }
     if (lifecycle_.needsStop()) {
       const int ret = camera_->stop();
       if (ret < 0) {
         spdlog::error("FaceAuth: Failed to stop camera '{}': {}", camera_label_, ret);
       }
+      if (disconnected_) {
+        lifecycle_.markDisconnected();
+      }
       lifecycle_.markStopped(ret == 0);
     }
     camera_->requestCompleted.disconnect(&connection_token_);
+    camera_->disconnected.disconnect(&connection_token_);
     {
       std::lock_guard<std::mutex> lock(mutex_);
       completed_.clear();
@@ -700,6 +724,8 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
   std::condition_variable ready_;
   std::deque<libcamera::Request*> completed_;
   int connection_token_ = 0;
+  // Set from libcamera's thread when the camera is unplugged.
+  std::atomic<bool> disconnected_{false};
 
   CameraLifecycle lifecycle_;
 };

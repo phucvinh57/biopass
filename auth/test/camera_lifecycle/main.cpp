@@ -57,8 +57,8 @@ void testStartedThenQueueFailed() {
 }
 
 void testStopFailed() {
-  // stop() failed (camera unplugged): libcamera may still hold the requests,
-  // and release() refuses a running camera.
+  // stop() failed (e.g. the camera was mid-stop): libcamera may still hold
+  // the requests, and release() refuses a camera that isn't stopped.
   CameraLifecycle life;
   life.markAcquired();
   life.markStarted();
@@ -69,6 +69,33 @@ void testStopFailed() {
   expect(!life.needsRelease(), "stop failed: no release");
 }
 
+void testDisconnectedWhileRunning() {
+  // Unplugged while running: libcamera forces the camera to Configured
+  // without cancelling its requests, so stop() returns 0 and does nothing.
+  // The pipeline may still hold the requests; release() is still allowed.
+  CameraLifecycle life;
+  life.markAcquired();
+  life.markStarted();
+  life.markDisconnected();
+  expect(!life.isStarted(), "disconnected: not usable for capture");
+  expect(!life.needsStop(), "disconnected: stop skipped");
+  expect(!life.canFreeBuffers(), "disconnected: buffers kept");
+  expect(life.needsRelease(), "disconnected: release");
+  life.markReleased();
+  expect(!life.needsRelease(), "disconnected: release only once");
+}
+
+void testDisconnectedAfterStop() {
+  // Unplugged after a clean stop: nothing is queued any more.
+  CameraLifecycle life;
+  life.markAcquired();
+  life.markStarted();
+  life.markStopped(true);
+  life.markDisconnected();
+  expect(life.canFreeBuffers(), "disconnected after stop: buffers can be freed");
+  expect(life.needsRelease(), "disconnected after stop: release");
+}
+
 }  // namespace
 
 int main() {
@@ -76,6 +103,8 @@ int main() {
   testAcquiredNotStarted();
   testStartedThenQueueFailed();
   testStopFailed();
+  testDisconnectedWhileRunning();
+  testDisconnectedAfterStop();
   if (g_failures != 0) {
     std::printf("%d failure(s)\n", g_failures);
     return 1;
