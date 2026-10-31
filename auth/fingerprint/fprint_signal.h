@@ -2,6 +2,7 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 
 #include "auth_method.h"
 
@@ -14,8 +15,15 @@ namespace biopass {
 // std::nullopt means keep waiting for the next status.
 std::optional<AuthResult> mapVerifyStatus(const std::string& status, bool done);
 
-// True only when a VerifyStatus signal came from fprintd's resolved unique bus
-// name and carries the "(sb)" payload. Anything else is ignored.
+// Maps an EnrollStatus (result, done) pair to the end of the enroll wait:
+// true when the finger is enrolled, false when enrollment failed, and
+// std::nullopt to keep waiting for the next scan. Takes a string_view so the
+// D-Bus signal handler doesn't allocate.
+std::optional<bool> mapEnrollStatus(std::string_view status, bool done);
+
+// True only when a VerifyStatus (or EnrollStatus) signal came from fprintd's
+// resolved unique bus name and carries the "(sb)" payload. Anything else is
+// ignored.
 bool acceptVerifyStatus(const char* sender, const std::string& expected_owner, bool params_type_ok);
 
 // True when a NameOwnerChanged for net.reactivated.Fprint means the fprintd

@@ -1,5 +1,5 @@
-// Checks how fprintd VerifyStatus signals are filtered and mapped to an auth
-// result (fingerprint/fprint_signal.h). Exits non-zero on failure.
+// Checks how fprintd VerifyStatus and EnrollStatus signals are filtered and
+// mapped to a result (fingerprint/fprint_signal.h). Exits non-zero on failure.
 
 #include <cstdio>
 
@@ -10,6 +10,7 @@ namespace {
 using biopass::acceptVerifyStatus;
 using biopass::AuthResult;
 using biopass::fprintdOwnerLost;
+using biopass::mapEnrollStatus;
 using biopass::mapVerifyStatus;
 
 int g_failures = 0;
@@ -66,12 +67,40 @@ void testFprintdOwnerLost() {
   expect(fprintdOwnerLost("", ""), "unresolved owner counts as lost");
 }
 
+bool enrolls(const char* status, bool done, bool want) {
+  auto got = mapEnrollStatus(status, done);
+  return got.has_value() && *got == want;
+}
+
+bool enrollWaits(const char* status, bool done) {
+  return !mapEnrollStatus(status, done).has_value();
+}
+
+void testMapEnrollStatus() {
+  expect(enrolls("enroll-completed", true, true), "enroll-completed succeeds");
+  expect(enrolls("enroll-completed", false, true), "enroll-completed succeeds even if not done");
+  expect(enrollWaits("enroll-stage-passed", false), "a passed stage keeps waiting");
+  expect(enrolls("enroll-stage-passed", true, true), "final stage-passed succeeds (as before)");
+  expect(enrollWaits("enroll-retry-scan", false), "retry-scan keeps waiting");
+  expect(enrollWaits("enroll-swipe-too-short", false), "swipe-too-short keeps waiting");
+  expect(enrollWaits("enroll-remove-and-retry", false), "remove-and-retry keeps waiting");
+  expect(enrolls("enroll-unknown-error", false, false), "unknown error fails even if not done");
+  expect(enrolls("enroll-disconnected", false, false), "disconnected fails even if not done");
+  expect(enrolls("enroll-failed", true, false), "final enroll-failed fails");
+  expect(enrolls("enroll-data-full", true, false), "final data-full fails");
+  expect(enrolls("enroll-duplicate", true, false), "final duplicate fails");
+  expect(enrolls("something-new", true, false), "unknown final status fails");
+  expect(enrollWaits("", false), "empty status keeps waiting");
+  expect(!enrolls("enroll-completed-ish", true, true), "only exact enroll-completed succeeds");
+}
+
 }  // namespace
 
 int main() {
   testMapVerifyStatus();
   testAcceptVerifyStatus();
   testFprintdOwnerLost();
+  testMapEnrollStatus();
   if (g_failures != 0) {
     std::printf("%d check(s) failed\n", g_failures);
     return 1;
