@@ -97,6 +97,7 @@ export function MethodConfig() {
                         id="fingerprint-max-retries"
                         type="number"
                         min={1}
+                        max={5}
                         value={Number.isNaN(field.value) ? "" : field.value}
                         onChange={(e) =>
                           field.onChange(parseNumberInput(e.target.value))
@@ -129,7 +130,7 @@ export function MethodConfig() {
                         id="fingerprint-timeout"
                         type="number"
                         min="0"
-                        max="5000"
+                        max="10000"
                         step="100"
                         value={Number.isNaN(field.value) ? "" : field.value}
                         onChange={(e) =>

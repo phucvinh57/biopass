@@ -8,6 +8,8 @@ const thresholdSchema = z
   .min(0, "Threshold must be at least 0%")
   .max(1, "Threshold must be at most 100%");
 
+// Retry, delay and timeout maxima mirror the kMax* clamps in
+// auth/core/auth_config.h; the helper clamps anything above them anyway.
 export const biopassConfigSchema = z.object({
   schema_version: z.number(),
   strategy: z.object({
@@ -23,11 +25,12 @@ export const biopassConfigSchema = z.object({
       retries: z
         .number("Max retries must be a number")
         .int("Max retries must be a whole number")
-        .min(1, "Max retries must be at least 1"),
+        .min(1, "Max retries must be at least 1")
+        .max(10, "Max retries must be at most 10"),
       retry_delay: z
         .number("Retry delay must be a number")
         .int("Retry delay must be a whole number")
-        .min(1, "Retry delay must be at least 1 ms")
+        .min(0, "Retry delay must be at least 0 ms")
         .max(5000, "Retry delay must be at most 5000 ms"),
       detection: z.object({
         model_id: z.string(),
@@ -47,11 +50,13 @@ export const biopassConfigSchema = z.object({
         ir_warmup_delay_ms: z
           .number("IR warmup delay must be a number")
           .int("IR warmup delay must be a whole number")
-          .min(0, "IR warmup delay must be at least 0 ms"),
+          .min(0, "IR warmup delay must be at least 0 ms")
+          .max(5000, "IR warmup delay must be at most 5000 ms"),
         ir_presence_timeout_ms: z
           .number("IR presence timeout must be a number")
           .int("IR presence timeout must be a whole number")
-          .min(0, "IR presence timeout must be at least 0 ms"),
+          .min(0, "IR presence timeout must be at least 0 ms")
+          .max(10000, "IR presence timeout must be at most 10000 ms"),
       }),
     }),
     fingerprint: z.object({
@@ -59,12 +64,13 @@ export const biopassConfigSchema = z.object({
       retries: z
         .number("Max retries must be a number")
         .int("Max retries must be a whole number")
-        .min(1, "Max retries must be at least 1"),
+        .min(1, "Max retries must be at least 1")
+        .max(5, "Max retries must be at most 5"),
       timeout: z
         .number("Timeout must be a number")
         .int("Timeout must be a whole number")
         .min(1, "Timeout must be at least 1 ms")
-        .max(5000, "Timeout must be at most 5000 ms"),
+        .max(10000, "Timeout must be at most 10000 ms"),
     }),
   }),
   appearance: z.string(),

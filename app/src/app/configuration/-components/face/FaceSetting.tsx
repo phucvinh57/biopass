@@ -131,6 +131,7 @@ export function FaceSetting() {
                   id="face-max-retries"
                   type="number"
                   min="1"
+                  max="10"
                   value={Number.isNaN(field.value) ? "" : field.value}
                   onChange={(e) =>
                     field.onChange(parseNumberInput(e.target.value))
