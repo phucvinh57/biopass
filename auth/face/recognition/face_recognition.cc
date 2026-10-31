@@ -3,6 +3,9 @@
 #include <cmath>
 #include <stdexcept>
 
+#include "resize.h"
+#include "tensor.h"
+
 namespace biopass {
 
 FaceRecognition::FaceRecognition(const ModelBytes& model, int imgsz, const float threshold)

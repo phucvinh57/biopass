@@ -5,7 +5,7 @@
 
 #include "auth_config.h"
 #include "auth_method.h"
-#include "image_utils.h"
+#include "image.h"
 #include "model_registry.h"
 
 namespace biopass {

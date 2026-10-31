@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "face_detection.h"
-#include "image_utils.h"
+#include "image.h"
 #include "onnx_session.h"
 
 namespace biopass {

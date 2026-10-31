@@ -8,7 +8,8 @@
 #include <cstdio>
 #include <vector>
 
-#include "image_utils.h"
+#include "resize.h"
+#include "tensor.h"
 #include "utils.h"
 
 namespace {

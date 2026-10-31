@@ -6,7 +6,7 @@
 #include <utility>
 #include <vector>
 
-#include "image_utils.h"
+#include "image.h"
 
 namespace biopass {
 

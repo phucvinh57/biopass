@@ -12,7 +12,8 @@
 #include <fstream>
 #include <string>
 
-#include "image_utils.h"
+#include "image_io.h"
+#include "stb_image_write.h"
 #include "user_file.h"
 
 namespace {
@@ -66,7 +67,7 @@ void checkReadRegularFile(const std::string& dir) {
   alarm(0);
 }
 
-// Enrolled face images go through the same reader (face/image_utils.h).
+// Enrolled face images go through the same reader (face/image_io.h).
 void checkImages(const std::string& dir) {
   const uint8_t pixels[2 * 2 * 3] = {255, 0, 0, 0, 255, 0, 0, 0, 255, 10, 20, 30};
   const std::string png = dir + "/face.png";

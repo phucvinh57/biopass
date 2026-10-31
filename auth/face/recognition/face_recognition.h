@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "image_utils.h"
+#include "image.h"
 #include "onnx_session.h"
 
 namespace biopass {

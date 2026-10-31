@@ -24,26 +24,14 @@
 #include "fingerprint_auth.h"
 #include "fs_user.h"
 #include "helper_exit.h"
-#include "image_utils.h"
+#include "image_io.h"
 #include "status_reporter.h"
-#include "stb_image_write.h"
 #include "user_paths.h"
 
 using biopass::Detection;
 using biopass::FaceDetection;
 
 namespace {
-
-void appendJpegToBuffer(void* context, void* data, int size) {
-  auto* buf = static_cast<std::vector<uint8_t>*>(context);
-  buf->insert(buf->end(), static_cast<uint8_t*>(data), static_cast<uint8_t*>(data) + size);
-}
-
-bool encodeJpeg(const ImageRGB& img, int quality, std::vector<uint8_t>& out) {
-  out.clear();
-  return stbi_write_jpg_to_func(&appendJpegToBuffer, &out, img.width, img.height, 3, img.ptr(),
-                                quality) != 0;
-}
 
 std::string todayDateString() {
   std::time_t now = std::time(nullptr);

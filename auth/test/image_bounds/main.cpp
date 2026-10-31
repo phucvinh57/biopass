@@ -1,4 +1,4 @@
-// Bounds checks for face/image_utils.h, the MJPEG decoder and detector box
+// Bounds checks for face/image.h and resize.h, the MJPEG decoder and detector box
 // clamping: degenerate, oversized and out-of-frame inputs must give an empty
 // result instead of reading or writing out of bounds. Valid images are pinned
 // by output hashes. Exits non-zero on any failure.
@@ -7,12 +7,16 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "image_utils.h"
+#include "image_io.h"
 #include "pixel_convert.h"
+#include "resize.h"
+#include "stb_image.h"
+#include "stb_image_write.h"
 #include "utils.h"
 
 namespace {

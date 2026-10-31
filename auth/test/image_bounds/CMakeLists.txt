@@ -13,6 +13,7 @@ target_include_directories(${IMAGE_BOUNDS_TEST} PRIVATE
 
 target_link_libraries(${IMAGE_BOUNDS_TEST} PRIVATE
     biopass_face_common
+    biopass_image
     biopass_stb
 )
 

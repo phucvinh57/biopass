@@ -11,9 +11,22 @@ target_include_directories(biopass_stb PUBLIC
     ${STB_INCLUDE_DIRS}
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
-# image_utils.h reads files through core/user_file.h.
-target_link_libraries(biopass_stb PUBLIC
-    biopass_core
+
+# ImageRGB helpers: resize/letterbox/crop, CHW tensors and file I/O.
+# stb stays private: only image_io.cc includes it.
+add_library(biopass_image STATIC
+    resize.cc
+    tensor.cc
+    image_io.cc
+)
+set_target_properties(biopass_image PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(biopass_image PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+# image_io.cc reads files through core/user_file.h.
+target_link_libraries(biopass_image
+    PUBLIC biopass_core
+    PRIVATE biopass_stb
 )
 
 # ONNX Runtime plumbing shared by detection, recognition and anti-spoofing.
@@ -44,7 +57,7 @@ target_include_directories(biopass_face_common PUBLIC
     ${CMAKE_SOURCE_DIR}/core
 )
 target_link_libraries(biopass_face_common
-    biopass_stb
+    biopass_image
     biopass_core
     libcamera_bundled
     PkgConfig::TURBOJPEG
@@ -74,6 +87,6 @@ target_link_libraries(biopass_face
     biopass_reg
     biopass_as
     biopass_face_common
-    biopass_stb
+    biopass_image
     ${ONNXRUNTIME_LIB}
 )

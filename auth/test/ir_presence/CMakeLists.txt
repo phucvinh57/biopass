@@ -10,7 +10,7 @@ target_include_directories(${IR_PRESENCE_TEST} PRIVATE
 
 target_link_libraries(${IR_PRESENCE_TEST} PRIVATE
     biopass_as
-    biopass_stb
+    biopass_image
 )
 
 add_test(NAME ir_presence COMMAND ${IR_PRESENCE_TEST})

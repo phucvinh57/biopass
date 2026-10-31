@@ -10,7 +10,7 @@ target_link_libraries(${FACE_TEST} PRIVATE
     ${ONNXRUNTIME_LIB}
     biopass_det
     biopass_reg
-    biopass_stb
+    biopass_image
     biopass_onnx
     CLI11::CLI11
 )

@@ -6,7 +6,7 @@
 
 #include "face_detection.h"
 #include "face_recognition.h"
-#include "image_utils.h"
+#include "image_io.h"
 
 using biopass::Detection;
 using biopass::FaceDetection;

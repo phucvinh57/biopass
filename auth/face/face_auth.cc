@@ -12,7 +12,7 @@
 #include "camera_capture.h"
 #include "debug_image_io.h"
 #include "frame_darkness.h"
-#include "image_utils.h"
+#include "image_io.h"
 #include "onnx_session.h"
 #include "status_reporter.h"
 #include "user_file.h"

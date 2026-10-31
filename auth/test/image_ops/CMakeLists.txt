@@ -12,7 +12,7 @@ target_include_directories(${IMAGE_OPS_TEST} PRIVATE
 )
 
 target_link_libraries(${IMAGE_OPS_TEST} PRIVATE
-    biopass_stb
+    biopass_image
 )
 
 add_test(NAME image_ops COMMAND ${IMAGE_OPS_TEST})

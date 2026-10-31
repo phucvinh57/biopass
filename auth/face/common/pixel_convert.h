@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "image_utils.h"
+#include "image.h"
 
 namespace biopass {
 

@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "resize.h"
+#include "tensor.h"
 #include "utils.h"
 
 namespace biopass {

@@ -5,6 +5,8 @@
 #include <stdexcept>
 
 #include "antispoof_output.h"
+#include "resize.h"
+#include "tensor.h"
 
 namespace biopass {
 

@@ -8,6 +8,7 @@
 
 #include "auth_config.h"
 #include "fs_user.h"
+#include "image_io.h"
 #include "user_paths.h"
 
 namespace biopass {

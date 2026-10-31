@@ -6,7 +6,7 @@
 
 #include "face_as.h"
 #include "face_detection.h"
-#include "image_utils.h"
+#include "image_io.h"
 
 using biopass::AntiSpoofArchitecture;
 using biopass::Detection;
