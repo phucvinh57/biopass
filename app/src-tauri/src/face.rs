@@ -1,69 +1,7 @@
 use std::fs;
 use tauri::AppHandle;
 
-use crate::config::{load_config, BiopassConfig};
-use crate::db;
 use crate::paths::get_faces_dir;
-
-#[tauri::command]
-pub fn capture_face(app: AppHandle, camera: Option<String>) -> Result<String, String> {
-    let faces_dir = get_faces_dir(&app)?;
-    let app_config: BiopassConfig = load_config(app.clone())?;
-
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| format!("Failed to get timestamp: {}", e))?
-        .as_millis();
-    let filename = format!("face_{}.jpg", timestamp);
-    let file_path = faces_dir.join(&filename);
-
-    if !faces_dir.exists() {
-        fs::create_dir_all(&faces_dir)
-            .map_err(|e| format!("Failed to create faces directory: {}", e))?;
-    }
-
-    let conn = db::open(&app)?;
-    let model_id = &app_config.methods.face.detection.model_id;
-    let detect_model = db::resolve_model_path(&conn, model_id)?
-        .ok_or_else(|| format!("Detection model '{}' not found in registry", model_id))?;
-
-    let helper_bin = if std::path::Path::new("/usr/bin/biopass-helper").exists() {
-        "/usr/bin/biopass-helper".to_string()
-    } else if std::path::Path::new("../../auth/build/pam/biopass-helper").exists() {
-        "../../auth/build/pam/biopass-helper".to_string()
-    } else {
-        "biopass-helper".to_string()
-    };
-
-    let mut cmd_builder = std::process::Command::new(&helper_bin);
-    cmd_builder
-        .arg("capture-face")
-        .arg("--output")
-        .arg(&file_path)
-        .arg("--model")
-        .arg(&detect_model);
-
-    if let Some(cam) = camera.filter(|s| !s.is_empty()) {
-        cmd_builder.arg("--camera").arg(cam);
-    }
-
-    let output = cmd_builder
-        .output()
-        .map_err(|e| format!("Failed to execute helper: {}", e))?;
-
-    if output.status.success() {
-        Ok(file_path.to_string_lossy().to_string())
-    } else if output.status.code() == Some(2) {
-        Err("No face detected. Please position your face in front of the camera.".to_string())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(format!(
-            "Capture failed (exit {}): {}",
-            output.status.code().unwrap_or(-1),
-            stderr
-        ))
-    }
-}
 
 #[tauri::command]
 pub fn list_faces(app: AppHandle) -> Result<Vec<String>, String> {

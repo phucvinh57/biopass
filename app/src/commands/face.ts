@@ -5,12 +5,6 @@ function listImages() {
   return invokeCommand<string[]>("list_faces");
 }
 
-function saveImage(camera?: string | null) {
-  return invokeCommand<string>("capture_face", {
-    camera: camera ?? null,
-  });
-}
-
 function startPreview(camera?: string | null) {
   return invokeCommand<void>("start_face_preview", { camera: camera ?? null });
 }
@@ -32,7 +26,6 @@ function listVideoDevices() {
 }
 export const face = {
   listImages,
-  saveImage,
   startPreview,
   stopPreview,
   captureInSession,
