@@ -2,7 +2,7 @@
 
 ## Contribution rules
 
-We encourage you to use AI tools for coding help, but pull request descriptions and issues MUST be written in your own words. We need to understand what you changed, why you changed it, and how you verified it without having to review a large AI-generated explanation.
+AI tools are welcome for code, issues, and pull request descriptions. Use them as much as you like, as long as the result follows the [issue forms](.github/ISSUE_TEMPLATE) and the [PR template](.github/PULL_REQUEST_TEMPLATE.md): short, factual, with real evidence. You are responsible for everything you submit, whoever or whatever typed it.
 
 Open a discussion before starting changes that affect project direction, for examples:
 
@@ -13,7 +13,7 @@ Open a discussion before starting changes that affect project direction, for exa
 
 The discussion should explain the problem, the proposed solution, expected impact, and any distro-specific risks. Pull requests without clear evidence for the change may be closed.
 
-AI-like issues or pull requests, including generic generated text, vague impact statements, or submissions that do not show personal understanding of the change, will be closed as not planned.
+Issues or pull requests that skip the template, claim results without output, or pad the description with generic text will be closed as not planned.
 
 ## Review flow
 
@@ -42,7 +42,7 @@ The project's [Claude Code hook](.claude/settings.json) and [lefthook](lefthook.
 
 ### 2. On the pull request
 
-Fill in the [PR template](.github/PULL_REQUEST_TEMPLATE.md) yourself. Its **Verification**, **Risk**, and **How to revert** sections are what reviewers check first. An AI tool may help you collect facts, but you are responsible for every line.
+Fill in the [PR template](.github/PULL_REQUEST_TEMPLATE.md). `/pre-pr` drafts it for you from the diff, the check output, and the review results. Read it before opening the PR. Reviewers check **Verification**, **Review report**, **Risk**, and **How to revert** first, so those must hold real output and facts.
 
 Pick the risk tier from what the change touches, not from who wrote it:
 

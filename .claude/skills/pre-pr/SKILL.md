@@ -31,11 +31,12 @@ Run this step if the diff touches `auth/pam`, `auth/core`, `app/src-tauri/script
 - Stop after 3 rounds. If findings keep appearing, tell the user to rethink the approach instead of looping.
 - If the same kind of issue came up that REVIEW.md doesn't already list, propose a one-line entry for its "Recurring issues" section.
 
-## 6. Report
+## 6. Draft the PR description
 
-Give a short report:
-- the checks that ran, with pass or fail
-- the findings fixed or dismissed, each with a reason
-- a suggested Risk tier and "How to revert" line for the PR template
+Fill `.github/PULL_REQUEST_TEMPLATE.md` and save it to the scratchpad (or a path the user gives):
+- **Verification**: the real output from step 2, trimmed to the relevant lines. List what couldn't run under "Not tested".
+- **Review report**: the summary line from step 3, whether step 4 ran, and each finding fixed or dismissed with a reason.
+- **Risk** and **How to revert**: tick the tier from the paths touched, not the author.
+- Leave the manual-testing table and the checklist for the author unless they gave you those facts.
 
-Do not write the PR description: CONTRIBUTING.md requires the author to write it.
+Facts only. Keep every heading; write "N/A" rather than deleting one. Tell the user to read it before opening the PR.

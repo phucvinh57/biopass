@@ -1,0 +1,94 @@
+name: Bug report
+description: Something in Biopass doesn't work (login, sudo, face, fingerprint, app, packaging)
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        AI tools may help you write this. Keep it to facts: what you did, what happened, and the logs.
+        Remove secrets and personal data from logs before posting.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One or two sentences on what is broken.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - Face
+        - Fingerprint
+        - PAM (login, sudo, lock screen)
+        - Polkit
+        - Desktop app
+        - Install / packaging
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: system
+    attributes:
+      label: System info
+      description: |
+        Paste the output of:
+        ```bash
+        grep PRETTY_NAME /etc/os-release; uname -r; echo "$XDG_CURRENT_DESKTOP $XDG_SESSION_TYPE"; systemctl status display-manager --no-pager | head -1; biopass-helper --version; (dpkg-query -W biopass || rpm -q biopass) 2>/dev/null
+        ```
+        Built from source or installed from AUR? Say so here too.
+      render: text
+    validations:
+      required: true
+
+  - type: input
+    id: hardware
+    attributes:
+      label: Hardware
+      description: Camera (RGB/IR, model), fingerprint reader model, laptop model if relevant.
+      placeholder: "Lenovo X1 Carbon Gen 11, IR camera (IPU6), Synaptics fingerprint"
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Enable face in the app
+        2. Run `sudo -k && sudo true`
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-actual
+    attributes:
+      label: Expected vs actual
+      placeholder: |
+        Expected: face login succeeds within 2s.
+        Actual: password prompt appears immediately, no camera light.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Turn on Debug Mode in the app, reproduce, then paste today's log from
+        `~/.local/share/com.ticklab.biopass/logs/`. For PAM issues also add `journalctl -b | grep -i biopass`.
+        Failed face captures are saved in `~/.local/share/com.ticklab.biopass/debugs/` (attach only if you are fine sharing them).
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Workarounds you found, PAM config changes you made, when it started (Biopass or distro update).

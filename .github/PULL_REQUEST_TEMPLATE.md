@@ -1,18 +1,41 @@
+<!--
+AI tools may draft this description (`/pre-pr` does). Rules for whoever fills it in, human or AI:
+- Facts only: what changed, what ran, what it printed. No marketing words, no restating the diff line by line.
+- Keep every heading. Write "N/A" or "Not tested: <reason>" instead of deleting a section.
+- The author reads and stands behind every line before opening the PR.
+-->
+
 ## Summary
 
-Describe the change in your own words.
+<!-- 1–3 sentences: the problem and how this change solves it. -->
 
-## Related discussion or issue
+Closes #<!-- issue --> / Discussion: <!-- link, required for new deps, auth/install/packaging/PAM flows, features, large refactors -->
 
-Link the discussion or issue for this work. A discussion is required before adding dependencies, changing auth/install/packaging/PAM/application flows, introducing features, or making large refactors.
+## Changes
 
-## Impact
+<!-- One bullet per behavior change, grouped by area (auth/pam, auth/face, app/src, app/src-tauri, scripts, docs). Mention anything a reviewer should look at first. -->
 
-Explain who is affected and what behavior changes.
+-
 
 ## Verification
 
-List the commands, distros, desktop environments, PAM flows, or package types you tested. Paste or link the output (test results, screenshots, logs).
+<!-- Commands run with their real output (trim to the relevant lines). Use the CLAUDE.md table for the areas touched. -->
+
+```text
+
+```
+
+Manual testing:
+
+| Distro / version | Package (`.deb`/`.rpm`/AUR/source) | DE / display manager | Hardware (camera, IR, fingerprint) | Flow tested (login, sudo, polkit, lock screen, app) | Result |
+| --- | --- | --- | --- | --- | --- |
+| | | | | | |
+
+Not tested: <!-- what was not covered and why (no device, needs VM, ...) -->
+
+## Review report
+
+<!-- Paste the `/pre-pr` report summary, or equivalent: AI review line (`N important, N nits, N pre-existing`), security review (ran / not needed), findings fixed or dismissed with a reason. -->
 
 ## Risk
 
@@ -20,22 +43,15 @@ List the commands, distros, desktop environments, PAM flows, or package types yo
 - [ ] Medium: app logic, Rust/Tauri commands, face/fingerprint pipeline
 - [ ] High: PAM module or helper, install/remove scripts, PAM config, packaging, CI/release workflows
 
-What could break, and for whom?
+What could break, and for whom:
 
 ## How to revert
 
-Is `git revert` enough, or does a revert also need a new release, a config migration, or users to re-run `pam-auth-update`?
+<!-- Is `git revert` enough, or does it also need a release, a config migration, or users re-running `pam-auth-update`? -->
 
-## Distro notes
+## Checklist
 
-- Distro and version:
-- Package format tested (`.deb`, `.rpm`, AUR, source build, other):
-- Desktop environment or display manager:
-- PAM file or distro auth tool involved:
-
-## Contributor checklist
-
-- [ ] I wrote this PR description myself.
-- [ ] I opened a discussion first if this changes dependencies, flows, features, or broad behavior.
-- [ ] I included clear evidence for the behavior or distro impact.
-- [ ] I updated docs when behavior, installation, packaging, or distro support changed.
+- [ ] I read the whole diff and can explain every change.
+- [ ] Verification above shows real output, not a claim.
+- [ ] All Important review findings are fixed or answered.
+- [ ] Docs are updated if behavior, install, packaging, or distro support changed.

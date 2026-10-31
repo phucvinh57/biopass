@@ -1,0 +1,51 @@
+name: Feature request
+description: Propose new behavior or support for a new distro, device, or flow
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        AI tools may help you write this. Keep it concrete and short.
+        Changes to dependencies or to auth/install/packaging/PAM flows need agreement here (or in a discussion) before a PR.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What can't you do today, and who is affected?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should Biopass do? Include the user-visible behavior and, if you know it, which part of the code changes (`auth/pam`, `auth/face`, `app/src`, ...).
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds or other designs, and why they fall short.
+
+  - type: textarea
+    id: risk
+    attributes:
+      label: Risk
+      description: Could this affect login safety (failing open, lockout), root-run code, packaging, or specific distros?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: contribute
+    attributes:
+      label: Will you open the PR?
+      options:
+        - "Yes"
+        - "Maybe, with guidance"
+        - "No"
+    validations:
+      required: true

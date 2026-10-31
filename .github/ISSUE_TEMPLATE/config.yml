@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and ideas
+    url: https://github.com/phucvinh57/biopass/discussions
+    about: Ask setup questions or discuss a design before opening an issue.

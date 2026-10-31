@@ -27,6 +27,6 @@ Before opening or updating a PR, run `/pre-pr`. It does the checks above, a fres
 - Never test PAM changes on the host's real `/etc/pam.d` — use a VM (see CONTRIBUTING "System Lockout Warnings").
 - PAM code must fail closed: any error → `PAM_AUTH_ERR`/`PAM_IGNORE`, never `PAM_SUCCESS`.
 - Don't add dependencies or change auth/install/packaging/PAM flows without a linked discussion.
-- PR descriptions are written by the human author, not generated. Fill the template's Testing/Risk/Revert sections with facts only.
+- PR descriptions and issues may be AI-drafted. Follow `.github/PULL_REQUEST_TEMPLATE.md` / `.github/ISSUE_TEMPLATE/`, keep every heading, facts and real output only.
 - Conventional commits: `fix(scope): …`, `feat(scope): …`, `chore: …`.
 - Review checklist and known recurring issues: [REVIEW.md](REVIEW.md).
