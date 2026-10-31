@@ -9,12 +9,9 @@ pub mod paths;
 pub mod system;
 
 use config::{load_config, save_config};
-use face::{capture_face, delete_face, list_faces};
+use face::{delete_face, list_faces};
 use face_session::{capture_face_in_session, start_face_preview, stop_face_preview};
-use fingerprint::{
-    add_fingerprint, delete_fingerprint, enroll_fingerprint, fingerprint_is_available,
-    list_enrolled_fingerprints, list_fingerprint_devices, remove_fingerprint,
-};
+use fingerprint::{enroll_fingerprint, list_enrolled_fingerprints, remove_fingerprint};
 use models::{
     add_model_from_file, add_model_from_url, delete_model, ensure_default_models, list_models,
     rename_model,
@@ -51,20 +48,15 @@ pub fn run() {
             load_config,
             save_config,
             get_current_username,
-            capture_face,
             start_face_preview,
             stop_face_preview,
             capture_face_in_session,
             list_faces,
             list_video_devices,
             delete_face,
-            add_fingerprint,
-            delete_fingerprint,
             enroll_fingerprint,
             remove_fingerprint,
-            fingerprint_is_available,
             list_enrolled_fingerprints,
-            list_fingerprint_devices,
             list_models,
             add_model_from_url,
             add_model_from_file,
