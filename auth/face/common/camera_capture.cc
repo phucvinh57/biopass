@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "camera_lifecycle.h"
+#include "frame_sampling.h"
 #include "pixel_convert.h"
 
 namespace biopass {
@@ -239,6 +240,11 @@ constexpr double kIrOverexposedMeanLuma = 220.0;
 // first, then over-exposed frames from the least washed-out.
 double irFrameScore(double mean) { return mean <= kIrOverexposedMeanLuma ? mean : -mean; }
 
+// Dropped (failed or unconvertible) frames one capture tolerates before
+// giving up: about a second at 30 fps. Bounds the loop when there is no
+// capture deadline.
+constexpr int kMaxDroppedFrames = 30;
+
 uint64_t area(const libcamera::Size& size) {
   return static_cast<uint64_t>(size.width) * static_cast<uint64_t>(size.height);
 }
@@ -425,25 +431,31 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
     // same phase every time, so sample several frames and keep the brightest
     // one that isn't over-exposed.
     const int samples = is_grey_ ? kIrCaptureSampleFrames : 1;
+    FrameSampling sampling(samples, kMaxDroppedFrames);
     ImageRGB best;
     double best_mean = 0.0;
-    for (int i = 0; i < samples; ++i) {
+    while (sampling.wantsMore()) {
       libcamera::Request* request = waitForRequest(deadline, has_timeout);
       if (!request) {
         break;
       }
       ImageRGB image;
-      const bool ok = extractFrame(request, image);
+      const bool ok = frameSucceeded(request) && extractFrame(request, image);
       requeue(request);
       if (!ok) {
-        spdlog::error("FaceAuth: Failed to convert frame from '{}'", camera_label_);
+        sampling.recordDropped();
         continue;
       }
+      sampling.recordGood();
       const double mean = samples > 1 ? meanLuma(image) : 0.0;
       if (best.empty() || irFrameScore(mean) > irFrameScore(best_mean)) {
         best_mean = mean;
         best = std::move(image);
       }
+    }
+    if (!sampling.gotAny() && isOpen()) {
+      spdlog::error("FaceAuth: No usable frame from '{}' after {} dropped frames", camera_label_,
+                    kMaxDroppedFrames);
     }
     if (samples > 1 && !best.empty()) {
       spdlog::debug("FaceAuth: Kept brightest of {} frames from '{}' (mean={:.1f})", samples,
@@ -595,28 +607,33 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
     camera_->queueRequest(request);
   }
 
+  // An errored or cancelled buffer holds partial or stale data.
+  bool frameSucceeded(libcamera::Request* request) {
+    libcamera::FrameBuffer* buffer = request->findBuffer(stream_);
+    if (buffer && buffer->metadata().status == libcamera::FrameMetadata::FrameSuccess) {
+      return true;
+    }
+    spdlog::debug("FaceAuth: Dropping frame with status {} from '{}'",
+                  buffer ? static_cast<int>(buffer->metadata().status) : -1, camera_label_);
+    return false;
+  }
+
+  // Call only after frameSucceeded(), which checks the buffer exists.
   bool extractFrame(libcamera::Request* request, ImageRGB& out) {
     libcamera::FrameBuffer* buffer = request->findBuffer(stream_);
-    if (!buffer) {
-      return false;
-    }
-    // An errored or cancelled buffer holds partial or stale data.
-    if (buffer->metadata().status != libcamera::FrameMetadata::FrameSuccess) {
-      spdlog::debug("FaceAuth: Dropping frame with status {} from '{}'",
-                    static_cast<int>(buffer->metadata().status), camera_label_);
-      return false;
-    }
     const auto it = mappings_.find(buffer);
-    if (it == mappings_.end()) {
-      return false;
-    }
     const auto metadata = buffer->metadata().planes();
-    if (metadata.empty()) {
+    if (it == mappings_.end() || metadata.empty()) {
+      spdlog::error("FaceAuth: Frame from '{}' has no mapped data", camera_label_);
       return false;
     }
     const size_t bytes_used = metadata[0].bytesused;
     const uint8_t* data = static_cast<const uint8_t*>(it->second.base) + it->second.plane_offset;
-    return convertFrame(pixel_format_, data, bytes_used, width_, height_, stride_, out);
+    if (!convertFrame(pixel_format_, data, bytes_used, width_, height_, stride_, out)) {
+      spdlog::error("FaceAuth: Failed to convert frame from '{}'", camera_label_);
+      return false;
+    }
+    return true;
   }
 
   // Safe to call more than once.
