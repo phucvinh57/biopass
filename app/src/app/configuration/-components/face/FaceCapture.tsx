@@ -18,11 +18,16 @@ export function FaceCapture() {
   const {
     active: capturing,
     start: startCamera,
-    stop,
-  } = usePreviewSession(camera, (err) => {
-    toast.error(`Failed to start camera: ${err}`);
-    console.error(err);
-  });
+    stop: stopCamera,
+  } = usePreviewSession(
+    camera,
+    (err) => {
+      toast.error(`Failed to start camera: ${err}`);
+      console.error(err);
+    },
+    // Drop the last frame so a failed start or camera switch doesn't show it.
+    () => previewRef.current?.removeAttribute("src"),
+  );
 
   // Stable identity: the effect below depends on it, and a new function per
   // render would reload (and re-render) forever.
@@ -62,13 +67,6 @@ export function FaceCapture() {
       unlisten?.();
     };
   }, [capturing]);
-
-  function stopCamera() {
-    stop();
-    if (previewRef.current) {
-      previewRef.current.removeAttribute("src");
-    }
-  }
 
   async function capturePhoto() {
     try {
