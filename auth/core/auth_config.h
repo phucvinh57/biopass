@@ -16,7 +16,7 @@
 namespace biopass {
 
 // Keep in sync with CURRENT_SCHEMA_VERSION in app/src-tauri/src/config.rs.
-// On mismatch readConfig() falls back to defaults; only the app migrates.
+// On mismatch readConfig() gives no config; only the app migrates.
 inline constexpr int kCurrentSchemaVersion = 2;
 
 // Mirrors app/src-tauri/src/config.rs.
@@ -117,13 +117,13 @@ inline constexpr float kMaxThreshold = 1.0f;
 //   maximum.
 void validateConfig(BiopassConfig& config);
 
-// Parses config.yaml's text and runs validateConfig() on the result. A
-// config with any bad value, or another schema_version, gives defaults as a
-// whole: never the values before the error mixed with defaults.
-BiopassConfig parseConfig(const std::string& text);
+// Parses config.yaml's text and runs validateConfig() on the result.
+// nullopt for a config with any bad value or another schema_version: never
+// a mix of parsed values and defaults, and never defaults alone (they would
+// turn face back on for a user who turned it off).
+std::optional<BiopassConfig> parseConfig(const std::string& text);
 // nullopt when the user is unknown (see resolveUser), or config.yaml is
-// missing, unreadable or not a regular file.
-// Otherwise parseConfig() of its text.
+// missing, unreadable, not a regular file or rejected by parseConfig().
 std::optional<BiopassConfig> readConfig(const std::string& username);
 
 // Image files in the user's faces/ dir, sorted. Empty for an unknown user.

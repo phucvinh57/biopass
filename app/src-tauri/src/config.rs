@@ -160,8 +160,9 @@ fn clamp_limits(methods: &mut MethodsConfig) {
     }
 }
 
-/// Falls back to defaults on a parse error or schema_version mismatch, like
-/// readConfig() in auth/core/auth_config.cc.
+/// Falls back to defaults on a parse error or schema_version mismatch, so the
+/// UI has something to show and save. (The helper's readConfig() in
+/// auth/core/auth_config.cc ignores such a config instead.)
 fn parse_config(content: &str) -> BiopassConfig {
     match serde_yaml::from_str::<BiopassConfig>(content) {
         Ok(mut config) if config.schema_version == CURRENT_SCHEMA_VERSION => {

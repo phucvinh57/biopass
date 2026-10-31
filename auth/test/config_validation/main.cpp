@@ -4,6 +4,7 @@
 
 #include <cstdio>
 #include <limits>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -45,30 +46,12 @@ void checkThreshold(const char* name, Setter set) {
   }
 }
 
-bool sameConfig(const BiopassConfig& a, const BiopassConfig& b) {
-  const auto& fa = a.methods.face;
-  const auto& fb = b.methods.face;
-  const auto& pa = a.methods.fingerprint;
-  const auto& pb = b.methods.fingerprint;
-  return a.schema_version == b.schema_version && a.strategy.debug == b.strategy.debug &&
-         a.strategy.execution_mode == b.strategy.execution_mode &&
-         a.strategy.order == b.strategy.order &&
-         a.strategy.ignore_services == b.strategy.ignore_services && fa.enable == fb.enable &&
-         fa.retries == fb.retries && fa.retry_delay == fb.retry_delay && fa.camera == fb.camera &&
-         fa.detection.model_id == fb.detection.model_id &&
-         fa.detection.threshold == fb.detection.threshold &&
-         fa.recognition.model_id == fb.recognition.model_id &&
-         fa.recognition.threshold == fb.recognition.threshold &&
-         fa.anti_spoofing.enable == fb.anti_spoofing.enable &&
-         fa.anti_spoofing.model.model_id == fb.anti_spoofing.model.model_id &&
-         fa.anti_spoofing.model.threshold == fb.anti_spoofing.model.threshold &&
-         fa.anti_spoofing.ir_camera == fb.anti_spoofing.ir_camera &&
-         fa.anti_spoofing.ir_warmup_delay_ms == fb.anti_spoofing.ir_warmup_delay_ms &&
-         fa.anti_spoofing.ir_presence_timeout_ms == fb.anti_spoofing.ir_presence_timeout_ms &&
-         pa.enable == pb.enable && pa.retries == pb.retries && pa.timeout == pb.timeout;
+// A config expected to parse; a failure shows up as a FAIL line.
+BiopassConfig parseOrDie(const std::string& text) {
+  const std::optional<BiopassConfig> c = biopass::parseConfig(text);
+  expect(c.has_value(), "parse: config parses");
+  return c.value_or(BiopassConfig{});
 }
-
-bool isDefaults(const BiopassConfig& c) { return sameConfig(c, BiopassConfig{}); }
 
 const char* kFullConfig = R"(schema_version: 2
 strategy:
@@ -98,7 +81,9 @@ methods:
 
 void checkParse() {
   {
-    const BiopassConfig c = biopass::parseConfig(kFullConfig);
+    const std::optional<BiopassConfig> parsed = biopass::parseConfig(kFullConfig);
+    expect(parsed.has_value(), "parse: full config parses");
+    const BiopassConfig c = parsed.value_or(BiopassConfig{});
     const auto& f = c.methods.face;
     expect(c.schema_version == 2 && c.strategy.debug && c.strategy.execution_mode == "sequential" &&
                c.strategy.order == std::vector<std::string>{"fingerprint", "face"} &&
@@ -119,7 +104,10 @@ void checkParse() {
            "parse: fingerprint read");
   }
 
-  // A bad value after good ones: nothing parsed before it may stick.
+  // A bad value after good ones, or a config of another schema: no config
+  // at all, so the helper steps aside as if config.yaml were missing.
+  // Defaults would turn face back on (and reset ignore_services) for a user
+  // who turned it off.
   for (const auto& [what, yaml] : std::vector<std::pair<std::string, std::string>>{
            {"bad fingerprint.timeout",
             "schema_version: 2\nstrategy: {debug: true, execution_mode: sequential}\n"
@@ -134,31 +122,30 @@ void checkParse() {
            {"other schema_version", "schema_version: 1\nstrategy: {debug: true}\n"},
            {"empty file", ""},
        }) {
-    expect(isDefaults(biopass::parseConfig(yaml)),
-           "parse: " + what + " -> defaults, nothing mixed");
+    expect(!biopass::parseConfig(yaml), "parse: " + what + " -> no config");
   }
 
   {
-    const BiopassConfig c = biopass::parseConfig(
+    const BiopassConfig c = parseOrDie(
         "schema_version: 2\nmethods:\n  face: {enable: true, recognition: {threshold: -2}}\n");
     expect(!c.methods.face.enable, "parse: recognition.threshold -2 -> face off");
   }
 
   {
-    const BiopassConfig c = biopass::parseConfig(
-        "schema_version: 2\nmethods:\n  face: {detection: {threshold: .nan}}\n");
+    const BiopassConfig c =
+        parseOrDie("schema_version: 2\nmethods:\n  face: {detection: {threshold: .nan}}\n");
     expect(!c.methods.face.enable, "parse: detection.threshold .nan -> face off");
   }
 
   {
-    const BiopassConfig c = biopass::parseConfig(
+    const BiopassConfig c = parseOrDie(
         "schema_version: 2\nstrategy: {ignore_services: [polkit-1, '', polkit-1, sudo]}\n");
     expect(c.strategy.ignore_services == std::vector<std::string>{"polkit-1", "sudo"},
            "parse: ignore_services deduped");
   }
 
   {
-    const BiopassConfig c = biopass::parseConfig("schema_version: 2\nstrategy: {debug: true}\n");
+    const BiopassConfig c = parseOrDie("schema_version: 2\nstrategy: {debug: true}\n");
     expect(c.strategy.ignore_services == BiopassConfig{}.strategy.ignore_services,
            "parse: missing ignore_services keeps the default list");
   }

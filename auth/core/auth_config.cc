@@ -195,31 +195,28 @@ BiopassConfig parseDocument(const YAML::Node& yaml) {
 
 }  // namespace
 
-BiopassConfig parseConfig(const std::string& text) {
-  // Defaults unless the whole document parses: a bad value halfway through
-  // must not leave the values before it mixed with defaults.
-  BiopassConfig config;
-
+std::optional<BiopassConfig> parseConfig(const std::string& text) {
+  // No config unless the whole document parses. Defaults are no fallback:
+  // they turn face on and reset ignore_services, so a user who turned face
+  // off would get the camera on every sudo. With no config the helper steps
+  // aside, as when config.yaml is missing.
   try {
     const YAML::Node yaml = YAML::Load(text);
 
-    // Schema mismatch = defaults (only the app migrates). Default model_ids
-    // don't resolve, so face auth reports Unavailable and PAM falls through
-    // to normal auth instead of locking anyone out.
+    // Only the app migrates an older schema.
     const int schema_version = yaml["schema_version"] ? yaml["schema_version"].as<int>() : 0;
-    if (schema_version == kCurrentSchemaVersion) {
-      config = parseDocument(yaml);
-    } else {
-      spdlog::warn(
-          "Biopass: config.yaml schema_version {} does not match expected {}, using defaults",
-          schema_version, kCurrentSchemaVersion);
+    if (schema_version != kCurrentSchemaVersion) {
+      spdlog::warn("Biopass: config.yaml schema_version {} does not match expected {}, ignoring it",
+                   schema_version, kCurrentSchemaVersion);
+      return std::nullopt;
     }
+    BiopassConfig config = parseDocument(yaml);
+    validateConfig(config);
+    return config;
   } catch (const YAML::Exception& e) {
-    spdlog::error("Biopass: Failed to parse config: {}, using defaults", e.what());
+    spdlog::error("Biopass: Failed to parse config: {}, ignoring it", e.what());
+    return std::nullopt;
   }
-
-  validateConfig(config);
-  return config;
 }
 
 std::optional<BiopassConfig> readConfig(const std::string& username) {
