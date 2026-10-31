@@ -71,7 +71,7 @@ bool checkAntiSpoofByAIModel(const FaceMethodConfig& faceCfg, const std::string&
 bool checkAntiSpoof(const FaceMethodConfig& face_config, const std::string& username,
                     const ImageRGB& frame, const Box& face_box, const AuthConfig& config,
                     const ModelRegistry& model_registry, FaceDetection* shared_detector,
-                    ICameraCaptureSession* ir_camera_session) {
+                    ICameraCaptureSession* ir_camera_session, const std::atomic<bool>* cancel) {
   const bool ai_enabled = face_config.anti_spoofing.enable;
   const bool ir_enabled = face_config.anti_spoofing.ir_camera.has_value() &&
                           !face_config.anti_spoofing.ir_camera->empty();
@@ -111,10 +111,10 @@ bool checkAntiSpoof(const FaceMethodConfig& face_config, const std::string& user
     tasks.push_back(make_task(
         "IR", std::async(std::launch::async, [ir_camera_path, shared_detector, username_copy,
                                               debug_enabled, warmup_delay_ms, presence_timeout_ms,
-                                              ir_camera_session_ptr]() {
+                                              ir_camera_session_ptr, cancel]() {
           return checkAntispoofByIRCamera(ir_camera_path, shared_detector, username_copy,
                                           debug_enabled, ir_camera_session_ptr, warmup_delay_ms,
-                                          presence_timeout_ms);
+                                          presence_timeout_ms, cancel);
         })));
   }
 

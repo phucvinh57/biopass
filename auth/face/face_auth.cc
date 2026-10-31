@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "antispoof_check.h"
+#include "auth_deadline.h"
 #include "camera_capture.h"
 #include "debug_image_io.h"
 #include "frame_darkness.h"
@@ -16,6 +17,14 @@
 #include "user_file.h"
 
 namespace biopass {
+
+// A colour capture already waiting when the run is cancelled can't be
+// interrupted. It must still end, with teardown, before the PAM module kills
+// the helper, or a result reached within the budget could be lost.
+static_assert(kAuthBudget + std::chrono::milliseconds(kColorCaptureTimeoutMs) +
+                      std::chrono::seconds(5) <=
+                  kHelperTimeout,
+              "kAuthBudget leaves no room for an in-flight capture before kHelperTimeout");
 
 bool FaceAuth::isAvailable() const { return checkCameraAvailability(face_config_.camera); }
 
@@ -170,10 +179,16 @@ AuthResult FaceAuth::authenticate(const std::string& username, const AuthConfig&
 
   ImageRGB face = detectedImages[0].image;
 
+  // The capture may have run past a sibling's success or the time budget;
+  // don't open the IR camera or match faces for a run that is over.
+  if (cancel_signal && cancel_signal->load()) {
+    return AuthResult::Failure;
+  }
+
   ensureIrSession();
 
   if (!checkAntiSpoof(face_config_, username, loginFace, detectedImages[0].box, config,
-                      model_registry_, detector_.get(), ir_camera_session_.get())) {
+                      model_registry_, detector_.get(), ir_camera_session_.get(), cancel_signal)) {
     spdlog::warn("FaceAuth: Anti-spoofing failed — returning Failure (no retry allowed)");
     // Always tear down the IR session so a subsequent call cannot reuse a
     // partially-warmed camera to bypass the check.
