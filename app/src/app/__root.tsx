@@ -6,10 +6,8 @@ import {
 } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import { getVersion } from "@tauri-apps/api/app";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Cpu, Laptop, Moon, Settings, Sun, User } from "lucide-react";
-import { useTheme } from "next-themes";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import logo from "@/assets/logo.svg";
 import { cmd } from "@/commands";
@@ -20,44 +18,15 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useThemeSync } from "@/hooks/useThemeSync";
 
 function App() {
   const [username, setUsername] = useState("");
   const [version, setVersion] = useState("");
-  const { setTheme, theme } = useTheme();
+  const { chooseTheme } = useThemeSync();
   const pathname = useRouterState({
     select: (state) => state.location.pathname,
   });
-
-  useEffect(() => {
-    // Listen for system theme changes from Tauri (more reliable on Linux)
-    const window = getCurrentWindow();
-
-    const sync = async () => {
-      if (theme === "system") {
-        const sysTheme = await window.theme();
-        if (sysTheme)
-          document.documentElement.classList.toggle(
-            "dark",
-            sysTheme === "dark",
-          );
-      }
-    };
-
-    sync();
-
-    const unlisten = window.onThemeChanged(({ payload: newTheme }) => {
-      if (theme === "system") {
-        document.documentElement.classList.toggle("dark", newTheme === "dark");
-      }
-    });
-
-    return () => {
-      unlisten.then((fn) => fn());
-    };
-  }, [theme]);
-
-  const initialized = useRef(false);
 
   useEffect(() => {
     const loadUsername = async () => {
@@ -66,20 +35,6 @@ function App() {
         setUsername(u);
       } catch (err) {
         console.error("Failed to get username:", err);
-      }
-    };
-
-    const loadInitialTheme = async () => {
-      if (initialized.current) return;
-      initialized.current = true;
-
-      try {
-        const config = await cmd.config.load();
-        if (config.appearance) {
-          setTheme(config.appearance);
-        }
-      } catch (err) {
-        console.error("Failed to load initial theme from config:", err);
       }
     };
 
@@ -92,9 +47,8 @@ function App() {
     };
 
     loadUsername();
-    loadInitialTheme();
     loadVersion();
-  }, [setTheme]);
+  }, []);
 
   useEffect(() => {
     cmd.models
@@ -107,21 +61,6 @@ function App() {
         toast.error(`${err}. Check your network and restart Biopass.`),
       );
   }, []);
-
-  useEffect(() => {
-    const updateConfigTheme = async () => {
-      try {
-        const config = await cmd.config.load();
-        if (config.appearance !== theme) {
-          config.appearance = theme ?? "dark";
-          await cmd.config.save(config);
-        }
-      } catch (err) {
-        console.debug("Theme sync to config skipped or failed:", err);
-      }
-    };
-    if (theme) updateConfigTheme();
-  }, [theme]);
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -183,21 +122,21 @@ function App() {
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
                     <DropdownMenuItem
-                      onClick={() => setTheme("light")}
+                      onClick={() => chooseTheme("light")}
                       className="cursor-pointer"
                     >
                       <Sun className="mr-2 h-4 w-4" />
                       <span>Light</span>
                     </DropdownMenuItem>
                     <DropdownMenuItem
-                      onClick={() => setTheme("dark")}
+                      onClick={() => chooseTheme("dark")}
                       className="cursor-pointer"
                     >
                       <Moon className="mr-2 h-4 w-4" />
                       <span>Dark</span>
                     </DropdownMenuItem>
                     <DropdownMenuItem
-                      onClick={() => setTheme("system")}
+                      onClick={() => chooseTheme("system")}
                       className="cursor-pointer"
                     >
                       <Laptop className="mr-2 h-4 w-4" />
