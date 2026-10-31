@@ -29,12 +29,15 @@ pub fn run() {
         .setup(|app| {
             #[cfg(target_os = "linux")]
             {
+                // The webview needs no browser permissions: the camera preview
+                // is captured natively and streamed as JPEG over IPC. Deny
+                // every request (camera, mic, geolocation, notifications, ...).
                 use webkit2gtk::{PermissionRequestExt, WebViewExt};
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.with_webview(|webview| {
                         webview.inner().connect_permission_request(
                             |_view, request: &webkit2gtk::PermissionRequest| {
-                                request.allow();
+                                request.deny();
                                 true
                             },
                         );
