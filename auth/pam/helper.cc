@@ -214,11 +214,13 @@ int authenticate(const std::string& username, const std::string& service) {
 
   int retval = manager.authenticate(pUsername);
 
-  if (retval == 0) {
+  if (retval == PAM_SUCCESS) {
     return 0;  // PAM_SUCCESS
-  } else {
-    return 1;  // PAM_AUTH_ERR
   }
+  if (retval == PAM_IGNORE) {
+    return 2;  // PAM_IGNORE: no method could even try
+  }
+  return 1;  // PAM_AUTH_ERR
 }
 
 int main(int argc, char** argv) {

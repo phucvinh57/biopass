@@ -21,9 +21,10 @@ failures=0
 check() {
   out="$home/stdout"
   # The memory cap keeps a helper that does read /dev/zero from eating RAM.
+  # The dead system bus address keeps fprintd (and any real device) out of it.
   (
     ulimit -v 4000000
-    HOME="$home" exec timeout 10 "$helper" auth -u biopass-no-such-user -s polkit-1
+    HOME="$home" DBUS_SYSTEM_BUS_ADDRESS="unix:path=$home/no-such-bus" exec timeout 10 "$helper" auth -u biopass-no-such-user -s polkit-1
   ) >"$out" 2>/dev/null
   rc=$?
   if [ "$rc" -eq 2 ] && [ ! -s "$out" ]; then
@@ -59,6 +60,21 @@ else
   echo "[FAIL] regular config is parsed (debug log dir created)"
   failures=$((failures + 1))
 fi
+
+# Fingerprint enabled but fprintd unreachable: no method could even start, so
+# the helper must fall through as PAM_IGNORE rather than report an
+# authentication failure (PAM_AUTH_ERR).
+cat >"$cfg" <<'YAML'
+schema_version: 2
+strategy:
+  ignore_services: []
+methods:
+  face:
+    enable: false
+  fingerprint:
+    enable: true
+YAML
+check "no available method is ignored"
 
 rm -f "$cfg"
 ln -s /dev/zero "$cfg"
