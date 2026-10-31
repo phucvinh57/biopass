@@ -11,6 +11,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useModelFileStatus } from "@/hooks/useModelFileStatus";
+import { referencedModelIds } from "@/lib/models";
 import type { Model } from "@/types/config";
 import { AddModelDialog } from "./-components/AddModelDialog";
 import { ModelStatus, type ModelStatusType } from "./-components/ModelStatus";
@@ -123,70 +125,42 @@ function ModelCard({ model, status, onRenamed, onDelete }: ModelCardProps) {
 function ModelsRouteComponent() {
   const [models, setModels] = useState<Model[]>([]);
   const [loading, setLoading] = useState(true);
-  const [statusMap, setStatusMap] = useState<
-    Record<string, "checking" | "available" | "missing" | "inuse">
-  >({});
+  // null until the saved config is read; keeps every model "checking" (and
+  // undeletable) if that fails.
+  const [inUseIds, setInUseIds] = useState<Set<string> | null>(null);
+  const fileStatus = useModelFileStatus(models);
 
-  const checkModelsStatus = useCallback(async (modelList: Model[]) => {
-    const newStatuses: Record<
-      string,
-      "checking" | "available" | "missing" | "inuse"
-    > = {};
-
-    for (const model of modelList) newStatuses[model.id] = "checking";
-    setStatusMap({ ...newStatuses });
-
+  const loadInUseIds = useCallback(async () => {
     try {
       const config = await cmd.config.load();
-      const inUseIds = new Set<string>();
-
-      if (config.methods.face.detection.model_id) {
-        inUseIds.add(config.methods.face.detection.model_id);
-      }
-      if (config.methods.face.recognition.model_id) {
-        inUseIds.add(config.methods.face.recognition.model_id);
-      }
-      if (config.methods.face.anti_spoofing.model.model_id) {
-        // Counted as in-use even when anti-spoofing is currently disabled:
-        // re-enabling it later must not resolve to a deleted model.
-        inUseIds.add(config.methods.face.anti_spoofing.model.model_id);
-      }
-      const checks = modelList.map(async (model) => {
-        try {
-          const exists = await cmd.file.exists(model.path);
-          if (!exists) {
-            newStatuses[model.id] = "missing";
-          } else if (inUseIds.has(model.id)) {
-            newStatuses[model.id] = "inuse";
-          } else {
-            newStatuses[model.id] = "available";
-          }
-        } catch (err) {
-          console.error(`Status check failed for ${model.path}:`, err);
-          newStatuses[model.id] = "missing";
-        }
-      });
-
-      await Promise.all(checks);
-      setStatusMap({ ...newStatuses });
+      setInUseIds(
+        new Set(referencedModelIds(config, { includeDisabled: true })),
+      );
     } catch (err) {
       console.error("Failed to check model usage:", err);
     }
   }, []);
+
+  function statusOf(model: Model): ModelStatusType {
+    const exists = fileStatus[model.id];
+    if (exists === undefined || inUseIds === null) return "checking";
+    if (!exists) return "missing";
+    return inUseIds.has(model.id) ? "inuse" : "available";
+  }
 
   const loadModels = useCallback(async () => {
     try {
       setLoading(true);
       const loadedModels = await cmd.models.list();
       setModels(loadedModels);
-      await checkModelsStatus(loadedModels);
+      await loadInUseIds();
     } catch (err) {
       console.error("Failed to load models:", err);
       toast.error("Failed to load models");
     } finally {
       setLoading(false);
     }
-  }, [checkModelsStatus]);
+  }, [loadInUseIds]);
 
   useEffect(() => {
     loadModels();
@@ -202,7 +176,6 @@ function ModelsRouteComponent() {
 
   function handleModelAdded(added: Model) {
     setModels((prev) => [...prev, added]);
-    checkModelsStatus([...models, added]);
   }
 
   async function handleDelete(model: Model) {
@@ -250,7 +223,7 @@ function ModelsRouteComponent() {
             <ModelCard
               key={model.id}
               model={model}
-              status={statusMap[model.id]}
+              status={statusOf(model)}
               onRenamed={handleModelUpdated}
               onDelete={handleDelete}
             />

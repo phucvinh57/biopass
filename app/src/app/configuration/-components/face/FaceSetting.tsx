@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Controller, useFormContext, useWatch } from "react-hook-form";
 import { ModelStatus } from "@/app/-components/ModelStatus";
 import { cmd } from "@/commands";
@@ -11,6 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useModelFileStatus } from "@/hooks/useModelFileStatus";
 import type { BiopassConfig, Model, VideoDeviceInfo } from "@/types/config";
 import { ModelSelect } from "../methods/shared/ModelSelect";
 import { Threshold } from "../methods/shared/Threshold";
@@ -31,9 +32,6 @@ export function FaceSetting() {
   });
   const [models, setModels] = useState<Model[]>([]);
   const [videoDevices, setVideoDevices] = useState<VideoDeviceInfo[]>([]);
-  const [antiSpoofStatusMap, setAntiSpoofStatusMap] = useState<
-    Record<string, boolean>
-  >({});
 
   useEffect(() => {
     const fetchDevices = async () => {
@@ -72,25 +70,18 @@ export function FaceSetting() {
     ? (videoDevices.find((device) => device.path === irCameraPath) ?? null)
     : null;
 
-  const antiSpoofModels = models.filter((m) => m.task === "anti_spoofing");
-
-  useEffect(() => {
-    const checkAntiSpoofModels = async () => {
-      const newStatusMap: Record<string, boolean> = {};
-      await Promise.all(
-        antiSpoofModels.map(async (m) => {
-          try {
-            newStatusMap[m.id] = await cmd.file.exists(m.path);
-          } catch {
-            newStatusMap[m.id] = false;
-          }
-        }),
-      );
-      setAntiSpoofStatusMap(newStatusMap);
-    };
-
-    checkAntiSpoofModels();
-  }, [models]);
+  // Memoized so useModelFileStatus (here and in ModelSelect) rechecks files
+  // only when the model list changes, not on every render.
+  const modelsByTask = useMemo(
+    () => ({
+      detection: models.filter((m) => m.task === "detection"),
+      recognition: models.filter((m) => m.task === "recognition"),
+      anti_spoofing: models.filter((m) => m.task === "anti_spoofing"),
+    }),
+    [models],
+  );
+  const antiSpoofModels = modelsByTask.anti_spoofing;
+  const antiSpoofStatusMap = useModelFileStatus(antiSpoofModels);
 
   const disabledOption = "__disabled__";
   const unavailableAiModelOption = "__unavailable_ai_model__";
@@ -244,7 +235,7 @@ export function FaceSetting() {
             <ModelSelect
               label="Model"
               value={config.detection.model_id}
-              models={models.filter((m) => m.task === "detection")}
+              models={modelsByTask.detection}
               error={
                 config.enable || !!errors.methods?.face?.detection?.model_id
               }
@@ -276,7 +267,7 @@ export function FaceSetting() {
             <ModelSelect
               label="Model"
               value={config.recognition.model_id}
-              models={models.filter((m) => m.task === "recognition")}
+              models={modelsByTask.recognition}
               error={
                 config.enable || !!errors.methods?.face?.recognition?.model_id
               }
