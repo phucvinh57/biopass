@@ -40,7 +40,9 @@
           "curl",
           "fprintd",
           "libwebkit2gtk-4.1-0",
-          "libturbojpeg0 | libturbojpeg"
+          "libturbojpeg0 | libturbojpeg",
+          "libegl1",
+          "libgles2"
         ],
         "postInstallScript": "scripts/deb/postinst",
         "desktopTemplate": "scripts/biopass.desktop",
@@ -61,7 +63,7 @@
         }
       },
       "rpm": {
-        "depends": ["fprintd", "turbojpeg"],
+        "depends": ["fprintd", "turbojpeg", "libglvnd-egl", "libglvnd-gles"],
         "postInstallScript": "scripts/rpm/postinst",
         "postRemoveScript": "scripts/rpm/postrm",
         "desktopTemplate": "scripts/biopass.desktop",

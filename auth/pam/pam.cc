@@ -30,15 +30,22 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t* pamh, int flags, int argc, cons
   if (pid < 0) {
     return PAM_AUTH_ERR;
   } else if (pid == 0) {
+    // The helper runs with the PAM caller's privileges (often root), so it
+    // gets a fixed environment instead of the caller's: LD_*, LIBCAMERA_IPA_*,
+    // HOME and XDG_CONFIG_HOME would otherwise let the invoking user pick code
+    // or config (e.g. libcamera IPA modules and proxy workers) it loads.
+    char* const helper_env[] = {const_cast<char*>("PATH=/usr/sbin:/usr/bin:/sbin:/bin"), nullptr};
+
     // Run "biopass-helper auth --username <username> [--service <name>]"
     if (service != nullptr && service[0] != '\0') {
-      execl("/usr/bin/biopass-helper", "biopass-helper", "auth", "--username", pUsername,
-            "--service", service, NULL);
+      execle("/usr/bin/biopass-helper", "biopass-helper", "auth", "--username", pUsername,
+             "--service", service, NULL, helper_env);
     } else {
-      execl("/usr/bin/biopass-helper", "biopass-helper", "auth", "--username", pUsername, NULL);
+      execle("/usr/bin/biopass-helper", "biopass-helper", "auth", "--username", pUsername, NULL,
+             helper_env);
     }
 
-    // If execl returns, it failed. Don't perror() here: this process's
+    // If execle returns, it failed. Don't perror() here: this process's
     // stdio is inherited from the PAM caller (e.g. polkit-agent-helper-1),
     // which some callers (GNOME Shell's polkit agent) parse as a strict
     // line protocol -- any unexpected line on it derails the caller's
