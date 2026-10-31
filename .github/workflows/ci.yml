@@ -70,7 +70,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: auth/build
-          key: ci-${{ runner.os }}-auth-${{ hashFiles('auth/BundleLibcamera.cmake', 'auth/Dependencies.cmake') }}
+          key: ci-${{ runner.os }}-auth-${{ hashFiles('auth/BundleLibcamera.cmake', 'auth/PatchLibcameraNoCrypto.cmake', 'auth/Dependencies.cmake') }}
 
       - name: Build auth
         run: make build-auth BUILD_TYPE=Release
