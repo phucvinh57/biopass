@@ -414,7 +414,10 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
                           std::chrono::milliseconds(std::max(0, capture_timeout_ms_));
 
     // A long-idle session must never return a stale frame.
-    drainPending();
+    if (!drainPending()) {
+      close();
+      return {};
+    }
 
     // Colour sessions warm up once; grey/IR sessions warm up on every capture
     // to let the IR emitter and auto-exposure settle.
@@ -425,7 +428,10 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
       if (!request) {
         return {};
       }
-      requeue(request);
+      if (!requeue(request)) {
+        close();
+        return {};
+      }
     }
 
     // Many IR emitters strobe lit/dark, and a fixed warmup count lands on the
@@ -442,7 +448,10 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
       }
       ImageRGB image;
       const bool ok = frameSucceeded(request) && extractFrame(request, image);
-      requeue(request);
+      if (!requeue(request)) {
+        close();
+        return {};
+      }
       if (!ok) {
         sampling.recordDropped();
         continue;
@@ -607,19 +616,30 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
     return request;
   }
 
-  void drainPending() {
+  // Requeues every completed request. False if one couldn't be requeued; the
+  // caller must then close() (outside the lock).
+  bool drainPending() {
     std::lock_guard<std::mutex> lock(mutex_);
     while (!completed_.empty()) {
       libcamera::Request* request = completed_.front();
       completed_.pop_front();
-      request->reuse(libcamera::Request::ReuseBuffers);
-      camera_->queueRequest(request);
+      if (!requeue(request)) {
+        return false;
+      }
     }
+    return true;
   }
 
-  void requeue(libcamera::Request* request) {
+  // A request that can't be requeued is lost, so the session would slowly run
+  // out of requests and time out. Callers treat this as a capture failure.
+  bool requeue(libcamera::Request* request) {
     request->reuse(libcamera::Request::ReuseBuffers);
-    camera_->queueRequest(request);
+    const int ret = camera_->queueRequest(request);
+    if (ret < 0) {
+      spdlog::error("FaceAuth: Failed to requeue request for '{}': {}", camera_label_, ret);
+      return false;
+    }
+    return true;
   }
 
   // An errored or cancelled buffer holds partial or stale data.
