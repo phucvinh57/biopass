@@ -12,6 +12,8 @@
 
 #include <string>
 
+#include "helper_status.h"
+
 namespace {
 
 // Shows one message through the application's conversation function. Does
@@ -187,7 +189,7 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t* pamh, int flags, int argc, cons
     // execve failed. No perror(): stdio is inherited from the PAM caller,
     // which may parse it as a strict line protocol (GNOME Shell's polkit
     // agent); a stray line derails its auth state machine.
-    _exit(1);
+    _exit(biopass::exitCode(biopass::HelperExit::AuthErr));
   } else {
     if (status_pipe[1] >= 0) {
       close(status_pipe[1]);
@@ -198,19 +200,7 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t* pamh, int flags, int argc, cons
       return PAM_AUTH_ERR;
     }
 
-    if (WIFEXITED(status)) {
-      int exit_code = WEXITSTATUS(status);
-      if (exit_code == 0) {
-        return PAM_SUCCESS;
-      } else if (exit_code == 2) {
-        return PAM_IGNORE;
-      } else {
-        return PAM_AUTH_ERR;
-      }
-    } else {
-      // e.g. killed by a signal
-      return PAM_AUTH_ERR;
-    }
+    return biopass::pamCodeForHelperStatus(status);
   }
 }
 

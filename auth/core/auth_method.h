@@ -1,7 +1,5 @@
 #pragma once
 
-#include <security/_pam_types.h>
-
 #include <atomic>
 #include <cstdint>
 #include <string>

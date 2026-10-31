@@ -8,6 +8,11 @@ target_link_libraries(${PAM}
     pam
 )
 
+# Header-only: the helper exit-code contract (core/helper_exit.h).
+target_include_directories(${PAM} PRIVATE
+    ${CMAKE_SOURCE_DIR}/core
+)
+
 add_executable(biopass-helper
     helper.cc
 )

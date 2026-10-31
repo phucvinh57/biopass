@@ -20,6 +20,7 @@
 #include "face_auth.h"
 #include "fingerprint_auth.h"
 #include "fs_user.h"
+#include "helper_exit.h"
 #include "image_utils.h"
 #include "status_reporter.h"
 #include "stb_image_write.h"
@@ -171,19 +172,20 @@ int previewSession(const std::string& cameraPath, const std::string& modelPath, 
   return 0;
 }
 
-int authenticate(const std::string& username, const std::string& service) {
+biopass::HelperExit authenticate(const std::string& username, const std::string& service) {
+  using biopass::HelperExit;
   const char* pUsername = username.c_str();
 
   const std::optional<biopass::BiopassConfig> loaded = biopass::readConfig(pUsername);
   if (!loaded) {
-    return 2;  // PAM_IGNORE: no usable config.yaml
+    return HelperExit::Ignore;  // no usable config.yaml
   }
   const biopass::BiopassConfig& config = *loaded;
 
   if (!service.empty() &&
       std::find(config.strategy.ignore_services.begin(), config.strategy.ignore_services.end(),
                 service) != config.strategy.ignore_services.end()) {
-    return 2;  // PAM_IGNORE
+    return HelperExit::Ignore;
   }
 
   setupBiopassLogger(pUsername, config.strategy.debug);
@@ -209,18 +211,10 @@ int authenticate(const std::string& username, const std::string& service) {
   }
 
   if (numOfMethods == 0) {
-    return 2;  // PAM_IGNORE
+    return HelperExit::Ignore;
   }
 
-  int retval = manager.authenticate(pUsername);
-
-  if (retval == PAM_SUCCESS) {
-    return 0;  // PAM_SUCCESS
-  }
-  if (retval == PAM_IGNORE) {
-    return 2;  // PAM_IGNORE: no method could even try
-  }
-  return 1;  // PAM_AUTH_ERR
+  return biopass::toHelperExit(manager.authenticate(pUsername));
 }
 
 int main(int argc, char** argv) {
@@ -267,17 +261,17 @@ int main(int argc, char** argv) {
     spdlog::set_level(spdlog::level::off);
     if (username.empty()) {
       spdlog::info("{}", app.help());
-      return 2;  // PAM_IGNORE
+      return biopass::exitCode(biopass::HelperExit::Ignore);
     }
     // ScopedFsUser switches only the filesystem uid/gid; root's supplementary
     // groups would still grant group access. Drop them before any thread
     // starts. Root keeps its capabilities, so nothing else changes.
     if (geteuid() == 0 && setgroups(0, nullptr) != 0) {
-      return 1;  // PAM_AUTH_ERR: fail closed
+      return biopass::exitCode(biopass::HelperExit::AuthErr);  // fail closed
     }
     // Only methods that start scanning report, so skipped runs stay silent.
     biopass::setStatusFd(statusFd);
-    return authenticate(username, pamService);
+    return biopass::exitCode(authenticate(username, pamService));
   }
 
   spdlog::error("No valid subcommand provided");

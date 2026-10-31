@@ -30,10 +30,10 @@ void AuthManager::addMethod(std::unique_ptr<IAuthMethod> method) {
 void AuthManager::setMode(ExecutionMode mode) { this->mode_ = mode; }
 void AuthManager::setConfig(const AuthConfig& config) { this->config_ = config; }
 
-int AuthManager::authenticate(const std::string& username) {
+AuthOutcome AuthManager::authenticate(const std::string& username) {
   if (this->methods_.empty()) {
     spdlog::error("AuthManager: No authentication methods configured");
-    return PAM_IGNORE;
+    return AuthOutcome::Ignore;
   }
 
   if (this->config_.debug) {
@@ -48,11 +48,11 @@ int AuthManager::authenticate(const std::string& username) {
     case ExecutionMode::Parallel:
       return this->runParallel(username);
     default:
-      return PAM_AUTH_ERR;
+      return AuthOutcome::Failure;
   }
 }
 
-int AuthManager::runSequential(const std::string& username) {
+AuthOutcome AuthManager::runSequential(const std::string& username) {
   bool any_attempted = false;
 
   for (auto& method : this->methods_) {
@@ -85,7 +85,7 @@ int AuthManager::runSequential(const std::string& username) {
     switch (result) {
       case AuthResult::Success:
         spdlog::debug("AuthManager: {} authentication succeeded", method->name());
-        return PAM_SUCCESS;
+        return AuthOutcome::Success;
       case AuthResult::Unavailable:
         spdlog::debug("AuthManager: {} is unavailable, skipping", method->name());
         break;
@@ -102,17 +102,17 @@ int AuthManager::runSequential(const std::string& username) {
 
   if (!any_attempted) {
     spdlog::debug("AuthManager: No methods were able to run for this user, skipping module");
-    return PAM_IGNORE;
+    return AuthOutcome::Ignore;
   }
 
   spdlog::error("AuthManager: All authentication methods failed");
-  return PAM_AUTH_ERR;
+  return AuthOutcome::Failure;
 }
 
-int AuthManager::runParallel(const std::string& username) {
+AuthOutcome AuthManager::runParallel(const std::string& username) {
   if (this->methods_.empty()) {
     spdlog::debug("AuthManager: No methods were able to run for this user, skipping module");
-    return PAM_IGNORE;
+    return AuthOutcome::Ignore;
   }
 
   std::atomic<bool> success_found{false};
@@ -171,16 +171,16 @@ int AuthManager::runParallel(const std::string& username) {
   }
 
   if (any_success) {
-    return PAM_SUCCESS;
+    return AuthOutcome::Success;
   }
 
   if (!any_attempted) {
     spdlog::debug("AuthManager: All parallel methods became unavailable, skipping module");
-    return PAM_IGNORE;
+    return AuthOutcome::Ignore;
   }
 
   spdlog::error("AuthManager: All parallel authentication methods failed");
-  return PAM_AUTH_ERR;
+  return AuthOutcome::Failure;
 }
 
 }  // namespace biopass

@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "auth_method.h"
+#include "helper_exit.h"
 
 namespace biopass {
 
@@ -27,11 +28,11 @@ class AuthManager {
   void addMethod(std::unique_ptr<IAuthMethod> method);
   void setMode(ExecutionMode mode);
   void setConfig(const AuthConfig& config);
-  int authenticate(const std::string& username);
+  AuthOutcome authenticate(const std::string& username);
 
  private:
-  int runSequential(const std::string& username);
-  int runParallel(const std::string& username);
+  AuthOutcome runSequential(const std::string& username);
+  AuthOutcome runParallel(const std::string& username);
 
   std::vector<std::unique_ptr<IAuthMethod>> methods_;
   ExecutionMode mode_ = ExecutionMode::Parallel;

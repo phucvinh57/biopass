@@ -14,6 +14,7 @@ using biopass::AuthManager;
 using biopass::AuthResult;
 using biopass::ExecutionMode;
 using biopass::IAuthMethod;
+using Outcome = biopass::AuthOutcome;
 
 int g_failures = 0;
 
@@ -62,7 +63,8 @@ struct Spec {
   uint32_t retries = 1;
 };
 
-int run(ExecutionMode mode, const std::vector<Spec>& specs, std::vector<Calls>* calls = nullptr) {
+Outcome run(ExecutionMode mode, const std::vector<Spec>& specs,
+            std::vector<Calls>* calls = nullptr) {
   std::vector<Calls> local;
   std::vector<Calls>& c = calls ? *calls : local;
   c.assign(specs.size(), Calls{});
@@ -82,24 +84,25 @@ void checkMode(ExecutionMode mode, const char* label) {
   const Spec gone{{AuthResult::Unavailable}};
   const Spec refused{{AuthResult::Success}, false};
 
-  expect(run(mode, {}) == PAM_IGNORE, name("no methods -> ignore"));
-  expect(run(mode, {ok}) == PAM_SUCCESS, name("success -> success"));
-  expect(run(mode, {fail}) == PAM_AUTH_ERR, name("failure -> auth error"));
-  expect(run(mode, {refused}) == PAM_IGNORE, name("method not available -> ignore"));
-  expect(run(mode, {gone, gone}) == PAM_IGNORE, name("all methods unavailable -> ignore"));
-  expect(run(mode, {refused, gone}) == PAM_IGNORE, name("not available + unavailable -> ignore"));
-  expect(run(mode, {gone, fail}) == PAM_AUTH_ERR, name("unavailable + failure -> auth error"));
-  expect(run(mode, {fail, gone}) == PAM_AUTH_ERR, name("failure + unavailable -> auth error"));
-  expect(run(mode, {fail, ok}) == PAM_SUCCESS, name("failure + success -> success"));
-  expect(run(mode, {gone, ok}) == PAM_SUCCESS, name("unavailable + success -> success"));
-  expect(run(mode, {refused, ok}) == PAM_SUCCESS, name("not available + success -> success"));
+  expect(run(mode, {}) == Outcome::Ignore, name("no methods -> ignore"));
+  expect(run(mode, {ok}) == Outcome::Success, name("success -> success"));
+  expect(run(mode, {fail}) == Outcome::Failure, name("failure -> failure"));
+  expect(run(mode, {refused}) == Outcome::Ignore, name("method not available -> ignore"));
+  expect(run(mode, {gone, gone}) == Outcome::Ignore, name("all methods unavailable -> ignore"));
+  expect(run(mode, {refused, gone}) == Outcome::Ignore,
+         name("not available + unavailable -> ignore"));
+  expect(run(mode, {gone, fail}) == Outcome::Failure, name("unavailable + failure -> failure"));
+  expect(run(mode, {fail, gone}) == Outcome::Failure, name("failure + unavailable -> failure"));
+  expect(run(mode, {fail, ok}) == Outcome::Success, name("failure + success -> success"));
+  expect(run(mode, {gone, ok}) == Outcome::Success, name("unavailable + success -> success"));
+  expect(run(mode, {refused, ok}) == Outcome::Success, name("not available + success -> success"));
 
   std::vector<Calls> calls;
-  expect(run(mode, {Spec{{AuthResult::Retry}, true, 3}}, &calls) == PAM_AUTH_ERR,
-         name("retries exhausted -> auth error"));
+  expect(run(mode, {Spec{{AuthResult::Retry}, true, 3}}, &calls) == Outcome::Failure,
+         name("retries exhausted -> failure"));
   expect(calls[0].authenticate == 3, name("retry count honoured"));
 
-  expect(run(mode, {Spec{{AuthResult::Retry, AuthResult::Success}, true, 3}}) == PAM_SUCCESS,
+  expect(run(mode, {Spec{{AuthResult::Retry, AuthResult::Success}, true, 3}}) == Outcome::Success,
          name("retry then success -> success"));
 
   run(mode, {fail, refused, ok}, &calls);

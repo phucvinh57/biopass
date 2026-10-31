@@ -47,6 +47,7 @@ if(BUILD_TESTS)
     add_subdirectory(test/onnx_external_data)
     add_subdirectory(test/fprint_signal)
     add_subdirectory(test/auth_manager)
+    add_subdirectory(test/helper_exit)
 endif()
 
 install(
