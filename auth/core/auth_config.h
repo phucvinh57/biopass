@@ -62,6 +62,22 @@ struct AntiSpoofingConfig {
   int ir_presence_timeout_ms = 1500;
 };
 
+// The IR presence check's settings, once the config turns it on.
+struct IrCameraConfig {
+  std::string device;
+  int warmup_delay_ms = 300;
+  int presence_timeout_ms = 1500;
+};
+
+// The IR check runs when `ir_camera` is set to a non-empty string; nullopt and
+// "" both mean off. Not trimmed: "  " is on and fails to open (fail closed).
+// Independent of `enable`, which only governs the AI model.
+std::optional<IrCameraConfig> irCameraConfig(const AntiSpoofingConfig& anti_spoofing);
+
+// The AI model check runs when `enable` is set, even with an empty model_id:
+// the model then fails to resolve and the check fails closed.
+std::optional<AntiSpoofingModelConfig> aiAntiSpoofingModel(const AntiSpoofingConfig& anti_spoofing);
+
 struct FaceMethodConfig {
   bool enable = true;
   uint32_t retries = 5;

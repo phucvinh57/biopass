@@ -70,6 +70,22 @@ bool faceThresholdsValid(const FaceMethodConfig& face) {
 
 }  // namespace
 
+std::optional<IrCameraConfig> irCameraConfig(const AntiSpoofingConfig& anti_spoofing) {
+  if (!anti_spoofing.ir_camera || anti_spoofing.ir_camera->empty()) {
+    return std::nullopt;
+  }
+  return IrCameraConfig{*anti_spoofing.ir_camera, anti_spoofing.ir_warmup_delay_ms,
+                        anti_spoofing.ir_presence_timeout_ms};
+}
+
+std::optional<AntiSpoofingModelConfig> aiAntiSpoofingModel(
+    const AntiSpoofingConfig& anti_spoofing) {
+  if (!anti_spoofing.enable) {
+    return std::nullopt;
+  }
+  return anti_spoofing.model;
+}
+
 void validateConfig(BiopassConfig& config) {
   StrategyConfig& strategy = config.strategy;
   strategy.order = normalizeOrder(strategy.order);
