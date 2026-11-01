@@ -6,13 +6,13 @@ use std::fs;
 use std::path::Path;
 
 /// Fails when the committed file at `relative` (to the repository root)
-/// differs from `generated`. With BIOPASS_UPDATE_GENERATED set it writes the
-/// file instead.
+/// differs from `generated`. With BIOPASS_UPDATE_GENERATED=1 (exactly) it
+/// writes the file instead; any other value still checks.
 pub fn check(relative: &str, generated: &str) {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .join(relative);
-    if std::env::var_os("BIOPASS_UPDATE_GENERATED").is_some() {
+    if std::env::var("BIOPASS_UPDATE_GENERATED").as_deref() == Ok("1") {
         fs::write(&path, generated).unwrap();
         return;
     }

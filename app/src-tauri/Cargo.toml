@@ -33,5 +33,9 @@ reqwest = { version = "0.13.4", default-features = false, features = ["rustls", 
 sha2 = "0.11.0"
 futures-util = "0.3"
 specta = { version = "=2.0.0-rc.26", features = ["derive"] }
-tauri-specta = { version = "=2.0.0-rc.26", features = ["typescript"] }
+tauri-specta = "=2.0.0-rc.26"
 specta-typescript = "=0.0.13"
+
+[dev-dependencies]
+# The TypeScript exporter is only used by the bindings_are_up_to_date test.
+tauri-specta = { version = "=2.0.0-rc.26", features = ["typescript"] }
