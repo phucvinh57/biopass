@@ -31,7 +31,8 @@ pub struct StrategyConfig {
 /// Saved as "sequential" or "parallel". Any other string loads as Parallel,
 /// as the helper reads it (parseExecutionMode in auth/core/auth_config.cc),
 /// so the app shows and saves what applies instead of rejecting the config.
-/// A value that is not a string is still an error.
+/// A value that is not a string differs: the app rejects the config, while
+/// the helper reads a scalar (e.g. `1`, `~`) as parallel.
 #[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ExecutionMode {

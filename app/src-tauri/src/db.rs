@@ -64,12 +64,56 @@ text_enum! {
     }
 }
 
-text_enum! {
-    /// Where a model came from (`source` column). Only these two values have
-    /// ever been written; a row with any other value fails to read.
-    ModelSource {
-        Builtin => "builtin",
-        User => "user",
+/// Where a model came from (`source` column). The app writes only
+/// "builtin" and "user", but the column has no CHECK constraint, so any
+/// other stored value is kept as `Other`: such a row still lists, renames
+/// and deletes, and keeps its string in the DB and in JSON.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModelSource {
+    Builtin,
+    User,
+    Other(String),
+}
+
+impl ModelSource {
+    pub fn as_str(&self) -> &str {
+        match self {
+            ModelSource::Builtin => "builtin",
+            ModelSource::User => "user",
+            ModelSource::Other(text) => text,
+        }
+    }
+
+    pub fn parse(text: &str) -> Self {
+        match text {
+            "builtin" => ModelSource::Builtin,
+            "user" => ModelSource::User,
+            _ => ModelSource::Other(text.to_string()),
+        }
+    }
+}
+
+impl Serialize for ModelSource {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for ModelSource {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(ModelSource::parse(&String::deserialize(deserializer)?))
+    }
+}
+
+impl ToSql for ModelSource {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        Ok(self.as_str().into())
+    }
+}
+
+impl FromSql for ModelSource {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+        Ok(ModelSource::parse(value.as_str()?))
     }
 }
 
@@ -562,22 +606,26 @@ mod tests {
             assert_eq!(ModelTask::parse(task.as_str()), Some(task));
             assert_eq!(serde_json::to_value(task).unwrap(), task.as_str());
         }
-        for &source in ModelSource::ALL {
-            assert_eq!(ModelSource::parse(source.as_str()), Some(source));
-            assert_eq!(serde_json::to_value(source).unwrap(), source.as_str());
-        }
         for bad in ["", "Detection", "anti-spoofing", "bogus"] {
             assert_eq!(ModelTask::parse(bad), None, "{bad}");
         }
-        for bad in ["", "Builtin", "custom"] {
-            assert_eq!(ModelSource::parse(bad), None, "{bad}");
+        for (text, source) in [
+            ("builtin", ModelSource::Builtin),
+            ("user", ModelSource::User),
+            ("Builtin", ModelSource::Other("Builtin".into())),
+            ("", ModelSource::Other(String::new())),
+        ] {
+            assert_eq!(ModelSource::parse(text), source);
+            assert_eq!(source.as_str(), text);
+            assert_eq!(serde_json::to_value(&source).unwrap(), text);
         }
     }
 
-    /// No version wrote another source; a hand-edited one is reported, not
-    /// guessed at.
+    /// `source` has no CHECK constraint. A row with another value still
+    /// lists, keeps its stored string, is neither built-in (so it can be
+    /// deleted) nor a user model.
     #[test]
-    fn unknown_source_fails_to_read() {
+    fn unknown_source_reads_like_any_other_row() {
         let mut conn = Connection::open_in_memory().unwrap();
         migrations().to_latest(&mut conn).unwrap();
         conn.execute_batch(
@@ -585,8 +633,11 @@ mod tests {
                  ('m', 'M', 'detection', '/m/m.onnx', 'custom', 0);",
         )
         .unwrap();
-        let err = list_models(&conn, None).unwrap_err();
-        assert!(err.contains("unknown ModelSource 'custom'"), "{err}");
+        let json = serde_json::to_value(list_models(&conn, None).unwrap()).unwrap();
+        assert_eq!(json[0]["source"], "custom");
+        let model = get_model(&conn, "m").unwrap().unwrap();
+        assert_ne!(model.source, ModelSource::Builtin);
+        assert!(!is_user_model(&conn, "m").unwrap());
     }
 
     #[test]

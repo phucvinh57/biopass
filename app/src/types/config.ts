@@ -62,9 +62,8 @@ export interface FingerprintMethodConfig {
   timeout: number;
 }
 
-// ModelTask and ModelSource in app/src-tauri/src/db.rs.
+// ModelTask in app/src-tauri/src/db.rs.
 export type ModelTask = "detection" | "recognition" | "anti_spoofing";
-export type ModelSource = "builtin" | "user";
 
 // Anti-spoofing only; auth picks preprocessing and output decoding from it.
 export type AntiSpoofArchitecture = "mobilenetv3" | "minifasv2";
@@ -78,6 +77,7 @@ export interface Model {
   path: string;
   version: string | null;
   checksum: string | null;
-  source: ModelSource;
+  // "builtin" or "user"; a hand-edited row may hold anything else.
+  source: string;
   installed_at: number;
 }
