@@ -168,6 +168,13 @@ biopass/
 └── Makefile              # Root build (CMake + Tauri)
 ```
 
+### Config schema and generated files
+
+`app/src-tauri/src/config.rs` is the source of truth for `config.yaml`. `cargo test` checks these committed files and fails when one is out of date; regenerate them with `BIOPASS_UPDATE_GENERATED=1 cargo test` in `app/src-tauri` and commit the result:
+
+- `app/src/bindings.ts`: TypeScript types, typed commands and `CONFIG_LIMITS` (specta, tauri-specta). Don't edit it by hand.
+- `auth/test/config/defaults.yaml` and `limits.yaml`: the `config_golden` ctest checks the helper reads the same defaults and ranges (`auth/core/auth_config.h`). The C++ structs are still hand-written; change both sides.
+
 ## 4. Development Warnings and Debugging
 
 When changing C++ auth logic, enable **Debug Mode** in the app (or the `debug` flag in `~/.config/com.ticklab.biopass/config.yaml`). It prints detailed logs and saves failed or spoof-flagged face captures as `.bmp` to `~/.local/share/com.ticklab.biopass/debugs/`.
