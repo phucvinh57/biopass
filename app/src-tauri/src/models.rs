@@ -841,4 +841,49 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn name_is_trimmed_and_bounded() {
+        assert_eq!(validate_name("  My model \n").unwrap(), "My model");
+        assert_eq!(
+            validate_name(" \t ").unwrap_err(),
+            "Model name cannot be empty"
+        );
+        assert_eq!(validate_name("").unwrap_err(), "Model name cannot be empty");
+
+        let max = "a".repeat(MAX_NAME_LEN);
+        assert_eq!(validate_name(&format!(" {max} ")).unwrap(), max);
+        assert_eq!(
+            validate_name(&"a".repeat(MAX_NAME_LEN + 1)).unwrap_err(),
+            "Model name is too long"
+        );
+        // The limit is in bytes: 67 three-byte characters are 201 bytes.
+        assert_eq!(
+            validate_name(&"\u{20ac}".repeat(67)).unwrap_err(),
+            "Model name is too long"
+        );
+    }
+
+    #[test]
+    fn slug_is_lowercase_ascii_with_single_dashes() {
+        for (name, slug) in [
+            ("YOLOv8n Face", "yolov8n-face"),
+            ("  edge face  ", "edge-face"),
+            ("a__b..c", "a-b-c"),
+            ("--x--", "x"),
+            ("caf\u{e9} 2", "caf-2"),
+            ("v1.2/onnx", "v1-2-onnx"),
+            ("", "model"),
+            ("!!!", "model"),
+            ("\u{4e2d}\u{6587}", "model"),
+        ] {
+            assert_eq!(slugify(name), slug, "{name:?}");
+        }
+    }
+
+    #[test]
+    fn hex_is_lowercase_two_digits_per_byte() {
+        assert_eq!(hex_encode([]), "");
+        assert_eq!(hex_encode([0x00, 0x0f, 0xa0, 0xff]), "000fa0ff");
+    }
 }

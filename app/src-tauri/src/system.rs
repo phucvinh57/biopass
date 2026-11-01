@@ -70,7 +70,7 @@ pub fn list_video_devices() -> Result<Vec<VideoDeviceInfo>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::username_from;
+    use super::{username_from, video_device_sort_key};
 
     fn env<'a>(vars: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
         move |key| {
@@ -98,5 +98,35 @@ mod tests {
     #[test]
     fn none_set_is_none() {
         assert_eq!(username_from(env(&[])), None);
+    }
+
+    #[test]
+    fn video_device_sort_key_is_the_device_number() {
+        assert_eq!(video_device_sort_key("/dev/video0"), 0);
+        assert_eq!(video_device_sort_key("/dev/video2"), 2);
+        assert_eq!(video_device_sort_key("/dev/video10"), 10);
+    }
+
+    #[test]
+    fn video_device_without_a_number_sorts_first() {
+        for path in [
+            "/dev/video",
+            "/dev/video-meta",
+            "/dev/videoX1",
+            "video2",
+            "",
+        ] {
+            assert_eq!(video_device_sort_key(path), -1, "{path}");
+        }
+    }
+
+    #[test]
+    fn video_devices_sort_numerically_not_lexically() {
+        let mut paths = ["/dev/video10", "/dev/video2", "/dev/videoX", "/dev/video0"];
+        paths.sort_by_key(|p| video_device_sort_key(p));
+        assert_eq!(
+            paths,
+            ["/dev/videoX", "/dev/video0", "/dev/video2", "/dev/video10"]
+        );
     }
 }
