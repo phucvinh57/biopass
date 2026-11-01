@@ -1,7 +1,7 @@
 import { Fingerprint, ScanFace, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import { useFormContext, useWatch } from "react-hook-form";
-import type { BiopassConfig } from "@/types/config";
+import type { BiopassConfig, MethodKind } from "@/types/config";
 import { FingerprintSetting } from "./FingerprintSetting";
 import { FaceSetting } from "./face/FaceSetting";
 import { MethodCard } from "./MethodCard";
@@ -15,14 +15,16 @@ export function MethodConfig() {
   const fingerprintConfig = useWatch<BiopassConfig, "methods.fingerprint">({
     name: "methods.fingerprint",
   });
-  const [expandedMethod, setExpandedMethod] = useState<string | null>("face");
+  const [expandedMethod, setExpandedMethod] = useState<MethodKind | null>(
+    "face",
+  );
 
-  const methodIcons: Record<string, React.ReactNode> = {
+  const methodIcons: Record<MethodKind, React.ReactNode> = {
     face: <ScanFace className="w-5 h-5 text-white" />,
     fingerprint: <Fingerprint className="w-5 h-5 text-white" />,
   };
 
-  const methodColors: Record<string, string> = {
+  const methodColors: Record<MethodKind, string> = {
     face: "from-violet-500 to-purple-500",
     fingerprint: "from-emerald-500 to-teal-500",
   };

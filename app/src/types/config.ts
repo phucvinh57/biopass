@@ -5,9 +5,17 @@ export interface BiopassConfig {
   appearance: string;
 }
 
+// ExecutionMode in app/src-tauri/src/config.rs.
+export type ExecutionMode = "sequential" | "parallel";
+
+// A `strategy.order` entry the helper knows (MethodKind in
+// auth/core/auth_config.h). `order` stays string[]: the app keeps whatever
+// config.yaml holds, and the helper drops unknown names.
+export type MethodKind = "face" | "fingerprint";
+
 export interface StrategyConfig {
   debug: boolean;
-  execution_mode: "sequential" | "parallel";
+  execution_mode: ExecutionMode;
   order: string[];
   ignore_services: string[];
 }
@@ -54,7 +62,9 @@ export interface FingerprintMethodConfig {
   timeout: number;
 }
 
+// ModelTask and ModelSource in app/src-tauri/src/db.rs.
 export type ModelTask = "detection" | "recognition" | "anti_spoofing";
+export type ModelSource = "builtin" | "user";
 
 // Anti-spoofing only; auth picks preprocessing and output decoding from it.
 export type AntiSpoofArchitecture = "mobilenetv3" | "minifasv2";
@@ -68,6 +78,6 @@ export interface Model {
   path: string;
   version: string | null;
   checksum: string | null;
-  source: string;
+  source: ModelSource;
   installed_at: number;
 }

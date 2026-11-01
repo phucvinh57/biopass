@@ -29,7 +29,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import type { BiopassConfig } from "@/types/config";
+import type { BiopassConfig, ExecutionMode } from "@/types/config";
 import { areServicesEqual, parseIgnoredServicesInput } from "./ignoredServices";
 
 const PAM_MANUAL_SETUP_GUIDE_URL =
@@ -98,14 +98,10 @@ export function StrategyConfig() {
           <Select
             value={strategy.execution_mode}
             onValueChange={(value) =>
-              setValue(
-                "strategy.execution_mode",
-                value as "sequential" | "parallel",
-                {
-                  shouldDirty: true,
-                  shouldValidate: true,
-                },
-              )
+              setValue("strategy.execution_mode", value as ExecutionMode, {
+                shouldDirty: true,
+                shouldValidate: true,
+              })
             }
           >
             <SelectTrigger className="w-full h-10 transition-all">
