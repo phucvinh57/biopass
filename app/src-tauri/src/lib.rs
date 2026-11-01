@@ -5,6 +5,8 @@ pub mod face;
 pub mod face_session;
 pub mod fingerprint;
 pub mod fingerprint_ffi;
+#[cfg(test)]
+mod golden;
 pub mod models;
 pub mod paths;
 pub mod system;
