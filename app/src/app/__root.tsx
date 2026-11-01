@@ -6,7 +6,15 @@ import {
 } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import { getVersion } from "@tauri-apps/api/app";
-import { Cpu, Laptop, Moon, Settings, Sun, User } from "lucide-react";
+import {
+  Cpu,
+  Laptop,
+  type LucideIcon,
+  Moon,
+  Settings,
+  Sun,
+  User,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import logo from "@/assets/logo.svg";
@@ -18,15 +26,78 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useThemeSync } from "@/hooks/useThemeSync";
+import { type Appearance, useThemeSync } from "@/hooks/useThemeSync";
+
+interface NavLinkProps {
+  to: "/configuration" | "/models";
+  icon: LucideIcon;
+  label: string;
+}
+
+function NavLink({ to, icon: Icon, label }: NavLinkProps) {
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
+  });
+  return (
+    <Link
+      to={to}
+      className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors cursor-pointer ${
+        pathname === to
+          ? "bg-primary/10 text-primary"
+          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+      }`}
+    >
+      <Icon className="w-4 h-4" />
+      <span className="text-sm font-medium">{label}</span>
+    </Link>
+  );
+}
+
+function ThemeMenu({
+  chooseTheme,
+}: {
+  chooseTheme: (theme: Appearance) => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon" className="cursor-pointer">
+          <Sun className="h-[1.2rem] w-[1.2rem] rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
+          <Moon className="absolute h-[1.2rem] w-[1.2rem] rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
+          <span className="sr-only">Toggle theme</span>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem
+          onClick={() => chooseTheme("light")}
+          className="cursor-pointer"
+        >
+          <Sun className="mr-2 h-4 w-4" />
+          <span>Light</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={() => chooseTheme("dark")}
+          className="cursor-pointer"
+        >
+          <Moon className="mr-2 h-4 w-4" />
+          <span>Dark</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={() => chooseTheme("system")}
+          className="cursor-pointer"
+        >
+          <Laptop className="mr-2 h-4 w-4" />
+          <span>System</span>
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
 function App() {
   const [username, setUsername] = useState("");
   const [version, setVersion] = useState("");
   const { chooseTheme } = useThemeSync();
-  const pathname = useRouterState({
-    select: (state) => state.location.pathname,
-  });
 
   useEffect(() => {
     const loadUsername = async () => {
@@ -81,69 +152,18 @@ function App() {
               </div>
 
               <div className="flex items-center gap-2">
-                <Link
+                <NavLink
                   to="/configuration"
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors cursor-pointer ${
-                    pathname === "/configuration"
-                      ? "bg-primary/10 text-primary"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                  }`}
-                >
-                  <Settings className="w-4 h-4" />
-                  <span className="text-sm font-medium">Configuration</span>
-                </Link>
-                <Link
-                  to="/models"
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors cursor-pointer ${
-                    pathname === "/models"
-                      ? "bg-primary/10 text-primary"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                  }`}
-                >
-                  <Cpu className="w-4 h-4" />
-                  <span className="text-sm font-medium">AI Models</span>
-                </Link>
+                  icon={Settings}
+                  label="Configuration"
+                />
+                <NavLink to="/models" icon={Cpu} label="AI Models" />
               </div>
             </div>
 
             {username && (
               <div className="flex items-center gap-4">
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="cursor-pointer"
-                    >
-                      <Sun className="h-[1.2rem] w-[1.2rem] rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
-                      <Moon className="absolute h-[1.2rem] w-[1.2rem] rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
-                      <span className="sr-only">Toggle theme</span>
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem
-                      onClick={() => chooseTheme("light")}
-                      className="cursor-pointer"
-                    >
-                      <Sun className="mr-2 h-4 w-4" />
-                      <span>Light</span>
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => chooseTheme("dark")}
-                      className="cursor-pointer"
-                    >
-                      <Moon className="mr-2 h-4 w-4" />
-                      <span>Dark</span>
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => chooseTheme("system")}
-                      className="cursor-pointer"
-                    >
-                      <Laptop className="mr-2 h-4 w-4" />
-                      <span>System</span>
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                <ThemeMenu chooseTheme={chooseTheme} />
 
                 <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted/50 border border-border/50">
                   <User className="w-4 h-4 text-muted-foreground" />
