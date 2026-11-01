@@ -1,11 +1,14 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AntiSpoofArchitecture, Model, ModelTask } from "@/types/config";
-import { invokeCommand } from "./core";
+import { commands } from "@/bindings";
+import type {
+  AntiSpoofArchitecture,
+  Model,
+  ModelDownloadProgress,
+  ModelTask,
+} from "@/types/config";
 
-function list(task?: ModelTask) {
-  return invokeCommand<Model[]>("list_models", {
-    task: task ?? null,
-  });
+function list(task?: ModelTask): Promise<Model[]> {
+  return commands.listModels(task ?? null);
 }
 
 function addFromUrl(
@@ -13,13 +16,8 @@ function addFromUrl(
   task: ModelTask,
   architecture: AntiSpoofArchitecture | null,
   url: string,
-) {
-  return invokeCommand<Model>("add_model_from_url", {
-    name,
-    task,
-    architecture,
-    url,
-  });
+): Promise<Model> {
+  return commands.addModelFromUrl(name, task, architecture, url);
 }
 
 function addFromFile(
@@ -27,27 +25,16 @@ function addFromFile(
   task: ModelTask,
   architecture: AntiSpoofArchitecture | null,
   srcPath: string,
-) {
-  return invokeCommand<Model>("add_model_from_file", {
-    name,
-    task,
-    architecture,
-    srcPath,
-  });
+): Promise<Model> {
+  return commands.addModelFromFile(name, task, architecture, srcPath);
 }
 
-function remove(id: string) {
-  return invokeCommand<void>("delete_model", { id });
+async function remove(id: string): Promise<void> {
+  await commands.deleteModel(id);
 }
 
-function rename(id: string, name: string) {
-  return invokeCommand<Model>("rename_model", { id, name });
-}
-
-export interface ModelDownloadProgress {
-  id: string;
-  downloaded: number;
-  total: number | null;
+function rename(id: string, name: string): Promise<Model> {
+  return commands.renameModel(id, name);
 }
 
 function onDownloadProgress(
@@ -60,7 +47,7 @@ function onDownloadProgress(
 
 // Downloads any missing built-in model. Returns the names it downloaded.
 function ensureDefaults() {
-  return invokeCommand<string[]>("ensure_default_models");
+  return commands.ensureDefaultModels();
 }
 
 function onDefaultsUpdated(cb: () => void): Promise<UnlistenFn> {

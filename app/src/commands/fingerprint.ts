@@ -1,21 +1,15 @@
-import { invokeCommand } from "./core";
+import { commands } from "@/bindings";
 
 function listEnrolled(username: string) {
-  return invokeCommand<string[]>("list_enrolled_fingerprints", { username });
+  return commands.listEnrolledFingerprints(username);
 }
 
-function enroll(username: string, fingerName: string) {
-  return invokeCommand<void>("enroll_fingerprint", {
-    username,
-    fingerName,
-  });
+async function enroll(username: string, fingerName: string): Promise<void> {
+  await commands.enrollFingerprint(username, fingerName);
 }
 
-function remove(username: string, fingerName: string) {
-  return invokeCommand<void>("remove_fingerprint", {
-    username,
-    fingerName,
-  });
+async function remove(username: string, fingerName: string): Promise<void> {
+  await commands.removeFingerprint(username, fingerName);
 }
 
 export const fingerprint = {

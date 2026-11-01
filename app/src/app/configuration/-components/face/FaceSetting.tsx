@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { CONFIG_LIMITS } from "@/bindings";
 import { NumberField } from "../NumberField";
 import { AntiSpoofingSection } from "./AntiSpoofingSection";
 import { CameraDeviceSection } from "./CameraDeviceSection";
@@ -29,15 +30,15 @@ export function FaceSetting() {
           name="methods.face.retries"
           id="face-max-retries"
           label="Max Retries"
-          min={1}
-          max={10}
+          min={CONFIG_LIMITS.face_retries.min}
+          max={CONFIG_LIMITS.face_retries.max}
         />
         <NumberField
           name="methods.face.retry_delay"
           id="face-retry-delay"
           label="Retry Delay (ms)"
-          min={0}
-          max={5000}
+          min={CONFIG_LIMITS.retry_delay_ms.min}
+          max={CONFIG_LIMITS.retry_delay_ms.max}
         />
       </div>
 

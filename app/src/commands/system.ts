@@ -1,7 +1,7 @@
-import { invokeCommand } from "./core";
+import { commands } from "@/bindings";
 
 function getCurrentUsername() {
-  return invokeCommand<string>("get_current_username");
+  return commands.getCurrentUsername();
 }
 
 export const system = {

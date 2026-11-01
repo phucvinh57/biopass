@@ -1,18 +1,40 @@
 import { toast } from "sonner";
 import { z } from "zod";
+import { CONFIG_LIMITS } from "@/bindings";
 import { cmd } from "@/commands";
 import { referencedModelIds } from "@/lib/models";
 import type { BiopassConfig } from "@/types/config";
 
-// Mirrors kMinThreshold/kMaxThreshold in auth/core/auth_config.h. The helper
-// turns face off for a threshold outside this range.
+// Ranges come from CONFIG_LIMITS in app/src-tauri/src/config.rs, which the
+// config_golden ctest checks against auth/core/auth_config.h. The helper
+// clamps retries, delays and timeouts above the maxima, and turns face off
+// for a threshold outside its range.
+const limits = CONFIG_LIMITS;
+
 const thresholdSchema = z
   .number("Threshold must be a number")
-  .min(0, "Threshold must be at least 0%")
-  .max(1, "Threshold must be at most 100%");
+  .min(
+    limits.threshold.min,
+    `Threshold must be at least ${limits.threshold.min * 100}%`,
+  )
+  .max(
+    limits.threshold.max,
+    `Threshold must be at most ${limits.threshold.max * 100}%`,
+  );
 
-// Retry, delay and timeout maxima mirror the kMax* clamps in
-// auth/core/auth_config.h; the helper clamps anything above them anyway.
+// A whole number in `range`; `unit` follows the bounds in messages.
+function intSchema(
+  label: string,
+  range: { readonly min: number; readonly max: number },
+  unit = "",
+) {
+  return z
+    .number(`${label} must be a number`)
+    .int(`${label} must be a whole number`)
+    .min(range.min, `${label} must be at least ${range.min}${unit}`)
+    .max(range.max, `${label} must be at most ${range.max}${unit}`);
+}
+
 export const biopassConfigSchema = z.object({
   schema_version: z.number(),
   strategy: z.object({
@@ -25,16 +47,8 @@ export const biopassConfigSchema = z.object({
     face: z.object({
       enable: z.boolean(),
       camera: z.string().nullable(),
-      retries: z
-        .number("Max retries must be a number")
-        .int("Max retries must be a whole number")
-        .min(1, "Max retries must be at least 1")
-        .max(10, "Max retries must be at most 10"),
-      retry_delay: z
-        .number("Retry delay must be a number")
-        .int("Retry delay must be a whole number")
-        .min(0, "Retry delay must be at least 0 ms")
-        .max(5000, "Retry delay must be at most 5000 ms"),
+      retries: intSchema("Max retries", limits.face_retries),
+      retry_delay: intSchema("Retry delay", limits.retry_delay_ms, " ms"),
       detection: z.object({
         model_id: z.string(),
         threshold: thresholdSchema,
@@ -50,30 +64,22 @@ export const biopassConfigSchema = z.object({
           threshold: thresholdSchema,
         }),
         ir_camera: z.string().nullable(),
-        ir_warmup_delay_ms: z
-          .number("IR warmup delay must be a number")
-          .int("IR warmup delay must be a whole number")
-          .min(0, "IR warmup delay must be at least 0 ms")
-          .max(5000, "IR warmup delay must be at most 5000 ms"),
-        ir_presence_timeout_ms: z
-          .number("IR presence timeout must be a number")
-          .int("IR presence timeout must be a whole number")
-          .min(0, "IR presence timeout must be at least 0 ms")
-          .max(10000, "IR presence timeout must be at most 10000 ms"),
+        ir_warmup_delay_ms: intSchema(
+          "IR warmup delay",
+          limits.ir_warmup_delay_ms,
+          " ms",
+        ),
+        ir_presence_timeout_ms: intSchema(
+          "IR presence timeout",
+          limits.ir_presence_timeout_ms,
+          " ms",
+        ),
       }),
     }),
     fingerprint: z.object({
       enable: z.boolean(),
-      retries: z
-        .number("Max retries must be a number")
-        .int("Max retries must be a whole number")
-        .min(1, "Max retries must be at least 1")
-        .max(5, "Max retries must be at most 5"),
-      timeout: z
-        .number("Timeout must be a number")
-        .int("Timeout must be a whole number")
-        .min(1, "Timeout must be at least 1 ms")
-        .max(10000, "Timeout must be at most 10000 ms"),
+      retries: intSchema("Max retries", limits.fingerprint_retries),
+      timeout: intSchema("Timeout", limits.fingerprint_timeout_ms, " ms"),
     }),
   }),
   appearance: z.string(),

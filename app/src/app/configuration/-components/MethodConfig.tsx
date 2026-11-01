@@ -1,6 +1,7 @@
 import { Fingerprint, ScanFace, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import { useFormContext, useWatch } from "react-hook-form";
+import { CONFIG_LIMITS } from "@/bindings";
 import type { BiopassConfig, MethodKind } from "@/types/config";
 import { FingerprintSetting } from "./FingerprintSetting";
 import { FaceSetting } from "./face/FaceSetting";
@@ -82,8 +83,8 @@ export function MethodConfig() {
                 name="methods.fingerprint.retries"
                 id="fingerprint-max-retries"
                 label="Max Retries"
-                min={1}
-                max={5}
+                min={CONFIG_LIMITS.fingerprint_retries.min}
+                max={CONFIG_LIMITS.fingerprint_retries.max}
               />
               {/* min stays 0, not the schema's 1: the browser counts step from min,
                 so min 1 would mark the default 5000 ms invalid on submit. */}
@@ -92,7 +93,7 @@ export function MethodConfig() {
                 id="fingerprint-timeout"
                 label="Timeout (ms)"
                 min={0}
-                max={10000}
+                max={CONFIG_LIMITS.fingerprint_timeout_ms.max}
                 step={100}
               />
             </div>

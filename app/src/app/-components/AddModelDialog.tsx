@@ -3,7 +3,6 @@ import { Loader2, Plus } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { cmd } from "@/commands";
-import type { ModelDownloadProgress } from "@/commands/models";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -24,7 +23,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import type { AntiSpoofArchitecture, Model, ModelTask } from "@/types/config";
+import type {
+  AntiSpoofArchitecture,
+  Model,
+  ModelDownloadProgress,
+  ModelTask,
+} from "@/types/config";
 import {
   type ModelSource,
   modelNameFromPath,
