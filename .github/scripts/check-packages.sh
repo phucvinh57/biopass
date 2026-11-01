@@ -2,7 +2,7 @@
 # Checks the deb and rpm that `make package` builds: package dependencies,
 # deb maintainer scripts, the files listed in tauri.conf.json, no ld.so.conf.d
 # entry, and the RUNPATH of every shipped ELF file (auth/test/runpath/check.sh).
-# Needs dpkg-deb, rpm, rpm2cpio, cpio, jq and readelf.
+# Needs dpkg-deb, rpm, bsdtar (libarchive-tools), jq and readelf.
 # Usage: check-packages.sh <bundle dir>   (app/src-tauri/target/release/bundle)
 set -Eeuo pipefail
 
@@ -78,7 +78,7 @@ rpm -qp --scripts "$rpm"
 echo "--- files"
 rpm -qpl "$rpm"
 mkdir "$work/rpm"
-rpm2cpio "$rpm" | (cd "$work/rpm" && cpio -idm --quiet)
+bsdtar -xf "$rpm" -C "$work/rpm"
 check_tree rpm "$work/rpm" "$(rpm -qp --requires "$rpm")"
 
 [ "$rc" -eq 0 ] && echo "=== packages ok"

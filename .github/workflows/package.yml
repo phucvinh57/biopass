@@ -51,11 +51,11 @@ jobs:
         with:
           lfs: true
 
-      # Same list as release.yaml, plus cpio for rpm2cpio.
+      # Same list as release.yaml, plus libarchive-tools: bsdtar unpacks the rpm (Ubuntu's rpm2cpio + cpio fails on it).
       - name: Install system dependencies
         run: |
           sudo apt update
-          sudo apt install -y librsvg2-dev libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev libpam0g-dev libcli11-dev rpm cpio pkg-config libturbojpeg0-dev meson ninja-build python3-jinja2 python3-yaml python3-ply libudev-dev libdrm-dev libegl-dev libgles-dev
+          sudo apt install -y librsvg2-dev libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev libpam0g-dev libcli11-dev rpm libarchive-tools pkg-config libturbojpeg0-dev meson ninja-build python3-jinja2 python3-yaml python3-ply libudev-dev libdrm-dev libegl-dev libgles-dev
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
