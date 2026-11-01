@@ -1,0 +1,88 @@
+name: Package
+
+# Builds the deb and rpm like release.yaml does and checks them, so packaging,
+# RUNPATH and maintainer-script regressions show up before a release. It is
+# slow (libcamera + onnxruntime + Tauri bundle), so it runs only when files
+# that change the packages are touched.
+on:
+  pull_request:
+    paths:
+      - app/src-tauri/scripts/**
+      - app/src-tauri/tauri.conf.json
+      - app/src-tauri/Cargo.toml
+      - auth/**/CMakeLists.txt
+      - auth/*.cmake
+      - auth/test/runpath/**
+      - Makefile
+      - .github/scripts/check-packages.sh
+      - .github/workflows/package.yml
+      - .github/workflows/release.yaml
+  push:
+    branches: [main]
+    paths:
+      - app/src-tauri/scripts/**
+      - app/src-tauri/tauri.conf.json
+      - app/src-tauri/Cargo.toml
+      - auth/**/CMakeLists.txt
+      - auth/*.cmake
+      - auth/test/runpath/**
+      - Makefile
+      - .github/scripts/check-packages.sh
+      - .github/workflows/package.yml
+      - .github/workflows/release.yaml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  package:
+    name: Package (deb + rpm)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          lfs: true
+
+      # Same list as release.yaml, plus cpio for rpm2cpio.
+      - name: Install system dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y librsvg2-dev libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev libpam0g-dev libcli11-dev rpm cpio pkg-config libturbojpeg0-dev meson ninja-build python3-jinja2 python3-yaml python3-ply libudev-dev libdrm-dev libegl-dev libgles-dev
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            app/src-tauri/target
+          key: ${{ runner.os }}-amd64-cargo-${{ hashFiles('app/src-tauri/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-amd64-cargo-
+
+      - name: Cache libcamera build
+        uses: actions/cache@v5
+        with:
+          path: auth/build
+          key: ${{ runner.os }}-amd64-libcamera-${{ hashFiles('auth/BundleLibcamera.cmake', 'auth/PatchLibcameraNoCrypto.cmake') }}
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Build & package
+        run: |
+          rm -rf app/src-tauri/target/release/bundle/
+          make package BUILD_TYPE="$BUILD_TYPE" VERSION=0.0.0-ci
+
+      - name: Check packages
+        run: bash .github/scripts/check-packages.sh app/src-tauri/target/release/bundle
