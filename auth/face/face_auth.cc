@@ -2,21 +2,63 @@
 
 #include <spdlog/spdlog.h>
 
-#include <fstream>
+#include <exception>
 #include <memory>
 #include <optional>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "antispoof_check.h"
+#include "auth_deadline.h"
 #include "camera_capture.h"
 #include "debug_image_io.h"
 #include "frame_darkness.h"
-#include "image_utils.h"
+#include "image_io.h"
+#include "onnx_session.h"
 #include "status_reporter.h"
+#include "user_file.h"
 
 namespace biopass {
 
-bool FaceAuth::isAvailable() const { return checkCameraAvailability(face_config_.camera); }
+// A colour capture already waiting when the run is cancelled can't be
+// interrupted. It must still end, with teardown, before the PAM module kills
+// the helper, or a result reached within the budget could be lost.
+static_assert(kAuthBudget + std::chrono::milliseconds(kColorCaptureTimeoutMs) + kTeardownMargin <=
+                  kHelperTimeout,
+              "kAuthBudget leaves no room for an in-flight capture before kHelperTimeout");
+
+namespace {
+
+// Builds a face engine from the user's model file, as the user. nullptr,
+// logged, if that throws.
+template <typename Engine, typename... Args>
+std::unique_ptr<Engine> loadModel(const char* what, const std::string& username,
+                                  const std::string& path, Args&&... args) {
+  try {
+    return makeEngineAsUser<Engine>(username, path, std::forward<Args>(args)...);
+  } catch (const std::exception& e) {
+    spdlog::error("FaceAuth: Failed to load {} model: {}, skipping", what, firstLine(e.what()));
+    return nullptr;
+  }
+}
+
+}  // namespace
+
+// The session opened to check is kept: beginAuthenticationSession() and the
+// attempts capture from it rather than closing the camera and opening it again.
+bool FaceAuth::isAvailable() const {
+  if (!camera_session_ || !camera_session_->isOpen()) {
+    // Free a dead session before opening the camera again.
+    camera_session_.reset();
+    camera_session_ = open_camera_(face_config_.camera);
+  }
+  if (!camera_session_ || !camera_session_->isOpen()) {
+    camera_session_.reset();
+    return false;
+  }
+  return true;
+}
 
 // A failed open leaves ir_camera_session_ null; checkAntiSpoof() then falls
 // back to a one-shot capture per attempt.
@@ -41,48 +83,35 @@ bool FaceAuth::ensureModelsLoaded() {
 
   const auto detectModel = model_registry_.resolveModel(face_config_.detection.model_id);
   const auto recogModel = model_registry_.resolveModel(face_config_.recognition.model_id);
-  const std::string detectModelPath = detectModel ? detectModel->path : "";
-  const std::string recogModelPath = recogModel ? recogModel->path : "";
-  if (!std::ifstream(recogModelPath).good() || !std::ifstream(detectModelPath).good()) {
-    spdlog::error("FaceAuth: Model files not found");
+  if (!detectModel || !recogModel) {
+    spdlog::error("FaceAuth: Models not found in the registry");
     return false;
   }
 
-  try {
-    detector_ =
-        std::make_unique<FaceDetection>(detectModelPath, 640, face_config_.detection.threshold);
-    spdlog::debug("FaceAuth: Detection model loaded | threshold={:.3f}",
-                  face_config_.detection.threshold);
-  } catch (const std::exception& e) {
-    std::string msg = e.what();
-    size_t first_line = msg.find('\n');
-    if (first_line != std::string::npos)
-      msg = msg.substr(0, first_line);
-    spdlog::error("FaceAuth: Failed to load detection model: {}, skipping", msg);
+  // Model paths come from the user's registry: load them as the user.
+  detector_ = loadModel<FaceDetection>("detection", username_, detectModel->path, 640,
+                                       face_config_.detection.threshold);
+  if (!detector_) {
     return false;
   }
+  spdlog::debug("FaceAuth: Detection model loaded | threshold={:.3f}",
+                face_config_.detection.threshold);
 
-  try {
-    recognizer_ =
-        std::make_unique<FaceRecognition>(recogModelPath, 112, face_config_.recognition.threshold);
-    spdlog::debug("FaceAuth: Recognition model loaded | threshold={:.3f}",
-                  face_config_.recognition.threshold);
-  } catch (const std::exception& e) {
-    std::string msg = e.what();
-    size_t first_line = msg.find('\n');
-    if (first_line != std::string::npos)
-      msg = msg.substr(0, first_line);
-    spdlog::error("FaceAuth: Failed to load recognition model: {}, skipping", msg);
+  recognizer_ = loadModel<FaceRecognition>("recognition", username_, recogModel->path, 112,
+                                           face_config_.recognition.threshold);
+  if (!recognizer_) {
     detector_.reset();
     return false;
   }
+  spdlog::debug("FaceAuth: Recognition model loaded | threshold={:.3f}",
+                face_config_.recognition.threshold);
 
   return true;
 }
 
 void FaceAuth::beginAuthenticationSession() {
   if (!camera_session_) {
-    camera_session_ = openCameraSession(face_config_.camera);
+    camera_session_ = open_camera_(face_config_.camera);
   }
   // The IR session is opened lazily in authenticate(), right before the
   // anti-spoofing check: opening it here would stream IR alongside every
@@ -111,14 +140,38 @@ void FaceAuth::endAuthenticationSession() {
   camera_session_.reset();
 }
 
+// ONNX Runtime, the image code (std::out_of_range, bad_alloc) and the
+// recognizer (zero-magnitude embedding) can throw. An attempt that threw is a
+// failed attempt, never a match. The camera sessions are dropped since the
+// throw may have left them mid-capture.
 AuthResult FaceAuth::authenticate(const std::string& username, const AuthConfig& config,
                                   std::atomic<bool>* cancel_signal) {
+  try {
+    return attempt(username, config, cancel_signal);
+  } catch (const std::exception& e) {
+    spdlog::error("FaceAuth: attempt threw, failing it: {}", e.what());
+  } catch (...) {
+    spdlog::error("FaceAuth: attempt threw, failing it");
+  }
+  ir_camera_session_.reset();
+  camera_session_.reset();
+  return AuthResult::Failure;
+}
+
+AuthResult FaceAuth::attempt(const std::string& username, const AuthConfig& config,
+                             std::atomic<bool>* cancel_signal) {
   if (!camera_session_) {
-    camera_session_ = openCameraSession(face_config_.camera);
+    camera_session_ = open_camera_(face_config_.camera);
   }
   if (!camera_session_ || !camera_session_->isOpen()) {
     spdlog::error("FaceAuth: Could not open camera");
-    if (!checkCameraAvailability(face_config_.camera)) {
+    // One more open tells a missing camera (Unavailable) from a passing
+    // failure (Retry). A session it gets is kept for the next attempt. The
+    // dead session is freed first.
+    camera_session_.reset();
+    camera_session_ = open_camera_(face_config_.camera);
+    if (!camera_session_ || !camera_session_->isOpen()) {
+      camera_session_.reset();
       return AuthResult::Unavailable;
     }
     return AuthResult::Retry;
@@ -170,10 +223,17 @@ AuthResult FaceAuth::authenticate(const std::string& username, const AuthConfig&
 
   ImageRGB face = detectedImages[0].image;
 
+  // The capture may have run past a sibling's success or the time budget;
+  // don't open the IR camera or match faces for a run that is over.
+  if (cancel_signal && cancel_signal->load()) {
+    return AuthResult::Failure;
+  }
+
   ensureIrSession();
 
   if (!checkAntiSpoof(face_config_, username, loginFace, detectedImages[0].box, config,
-                      model_registry_, detector_.get(), ir_camera_session_.get())) {
+                      model_registry_, antispoof_model_, detector_.get(), ir_camera_session_.get(),
+                      cancel_signal)) {
     spdlog::warn("FaceAuth: Anti-spoofing failed — returning Failure (no retry allowed)");
     // Always tear down the IR session so a subsequent call cannot reuse a
     // partially-warmed camera to bypass the check.
@@ -181,23 +241,8 @@ AuthResult FaceAuth::authenticate(const std::string& username, const AuthConfig&
     return AuthResult::Failure;
   }
 
-  spdlog::debug("FaceAuth: Recognition | threshold={:.3f} enrolled_count={}",
-                face_config_.recognition.threshold, enrolledFaces.size());
-  for (const auto& facePath : enrolledFaces) {
-    ImageRGB preparedFace = readImage(facePath);
-    if (preparedFace.empty()) {
-      spdlog::warn("FaceAuth: Recognition | could not load enrolled image: {}", facePath);
-      continue;
-    }
-
-    MatchResult match = recognizer_->match(preparedFace, face);
-    spdlog::debug("FaceAuth: Recognition | face='{}' score={:.4f} threshold={:.3f} similar={}",
-                  facePath, match.dist, face_config_.recognition.threshold, match.similar);
-    if (match.similar) {
-      spdlog::debug("FaceAuth: Recognition PASSED | matched face='{}' score={:.4f}", facePath,
-                    match.dist);
-      return AuthResult::Success;
-    }
+  if (matchAgainstEnrolled(username, face, enrolledFaces)) {
+    return AuthResult::Success;
   }
 
   if (config.debug) {
@@ -205,6 +250,31 @@ AuthResult FaceAuth::authenticate(const std::string& username, const AuthConfig&
   }
 
   return AuthResult::Retry;
+}
+
+// Unreadable enrolled images are skipped, never matched.
+bool FaceAuth::matchAgainstEnrolled(const std::string& username, const ImageRGB& face,
+                                    const std::vector<std::string>& enrolled_paths) {
+  spdlog::debug("FaceAuth: Recognition | threshold={:.3f} enrolled_count={}",
+                face_config_.recognition.threshold, enrolled_paths.size());
+  for (const auto& facePath : enrolled_paths) {
+    const auto faceBytes = readUserFile(username, facePath, kMaxImageFileBytes);
+    ImageRGB preparedFace = faceBytes ? decodeImage(*faceBytes) : ImageRGB{};
+    if (preparedFace.empty()) {
+      spdlog::warn("FaceAuth: Recognition | could not load enrolled image: {}", facePath);
+      continue;
+    }
+
+    MatchResult match = recognizer_->match(preparedFace, face);
+    spdlog::debug("FaceAuth: Recognition | face='{}' score={:.4f} threshold={:.3f} similar={}",
+                  facePath, match.similarity, face_config_.recognition.threshold, match.similar);
+    if (match.similar) {
+      spdlog::debug("FaceAuth: Recognition PASSED | matched face='{}' score={:.4f}", facePath,
+                    match.similarity);
+      return true;
+    }
+  }
+  return false;
 }
 
 }  // namespace biopass

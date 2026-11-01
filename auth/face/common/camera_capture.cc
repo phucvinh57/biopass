@@ -7,6 +7,7 @@
 #include <sys/stat.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
@@ -21,21 +22,14 @@
 #include <utility>
 #include <vector>
 
+#include "camera_lifecycle.h"
+#include "capture_policy.h"
+#include "frame_sampling.h"
 #include "pixel_convert.h"
 
 namespace biopass {
 
 namespace {
-
-// Detection letterboxes to 640px and recognition uses 112x112 crops, so
-// anything beyond 720p only costs USB bandwidth. Uncompressed streams are
-// capped harder: 1280x720 YUYV (~1.8 MB/frame) runs at a few fps on USB 2.0,
-// or truncates once the IR stream shares the bus.
-const libcamera::Size kMaxCompressedCaptureSize(1280, 720);
-const libcamera::Size kMaxUncompressedCaptureSize(640, 480);
-// Narrower frames leave too few pixels for a face at arm's length; prefer a
-// size above the cap over one below it.
-constexpr unsigned int kMinCaptureWidth = 640;
 
 std::string device_label(const std::optional<std::string>& linux_video_device_path) {
   return linux_video_device_path.has_value() ? *linux_video_device_path : std::string("<default>");
@@ -229,45 +223,10 @@ double meanLuma(const ImageRGB& image) {
   return static_cast<double>(sum) / (3.0 * static_cast<double>(count));
 }
 
-// Some emitters also produce washed-out (near all-white) frames, which hold no
-// more face detail than dark ones. Above this mean, a frame counts as
-// over-exposed and only wins when every sample is.
-constexpr double kIrOverexposedMeanLuma = 220.0;
-
-// Ranks an IR sample by its mean brightness: the brightest well-exposed frame
-// first, then over-exposed frames from the least washed-out.
-double irFrameScore(double mean) { return mean <= kIrOverexposedMeanLuma ? mean : -mean; }
-
-uint64_t area(const libcamera::Size& size) {
-  return static_cast<uint64_t>(size.width) * static_cast<uint64_t>(size.height);
-}
-
-// Largest size within the format's cap, unless that is narrower than
-// kMinCaptureWidth and a larger one exists; then the smallest above the cap.
-// nullopt when the camera reports no discrete sizes.
-std::optional<libcamera::Size> pickCaptureSize(const std::vector<libcamera::Size>& sizes,
-                                               const libcamera::PixelFormat& pixel_format) {
-  const libcamera::Size& max_size = pixel_format == libcamera::formats::MJPEG
-                                        ? kMaxCompressedCaptureSize
-                                        : kMaxUncompressedCaptureSize;
-
-  std::optional<libcamera::Size> best_within;
-  std::optional<libcamera::Size> smallest_above;
-  for (const auto& size : sizes) {
-    if (size.width <= max_size.width && size.height <= max_size.height) {
-      if (!best_within || area(size) > area(*best_within)) {
-        best_within = size;
-      }
-    } else if (!smallest_above || area(size) < area(*smallest_above)) {
-      smallest_above = size;
-    }
-  }
-
-  if (best_within && (best_within->width >= kMinCaptureWidth || !smallest_above)) {
-    return best_within;
-  }
-  return smallest_above;
-}
+// Dropped (failed or unconvertible) frames one capture tolerates before
+// giving up: about a second at 30 fps. Bounds the loop when there is no
+// capture deadline.
+constexpr int kMaxDroppedFrames = 30;
 
 // Picks the most preferred format the camera offers, sets a capped size and
 // validates the configuration.
@@ -276,31 +235,9 @@ bool negotiate(libcamera::CameraConfiguration& config, CameraCaptureFormat reque
   libcamera::StreamConfiguration& stream_config = config.at(0);
   const auto& formats = stream_config.formats();
 
-  // SoftISP outputs only packed RGB. BGR888 first since its bytes are
-  // already in RGB order, then the other 24-bit and 32-bit variants.
-  const std::vector<libcamera::PixelFormat> packed_rgb = {
-      libcamera::formats::BGR888,   libcamera::formats::RGB888,   libcamera::formats::XBGR8888,
-      libcamera::formats::XRGB8888, libcamera::formats::ABGR8888, libcamera::formats::ARGB8888};
-
-  std::vector<libcamera::PixelFormat> preference;
-  if (requested_format == CameraCaptureFormat::V4L2Grey) {
-    // Prefer a true grey stream, but some laptop IR sensors (e.g. Windows
-    // Hello cameras) only expose the IR stream as YUYV/MJPEG/RGB; decode
-    // those instead of failing outright.
-    preference = {libcamera::formats::R8, libcamera::formats::YUYV, libcamera::formats::MJPEG};
-    preference.insert(preference.end(), packed_rgb.begin(), packed_rgb.end());
-  } else {
-    // Prefer MJPEG for the colour stream: an uncompressed YUYV stream at a
-    // webcam's maximum size starves a USB 2.0 bus (slow frame rates or
-    // truncated frames, worse when the IR stream is open at the same time).
-    preference = {libcamera::formats::MJPEG, libcamera::formats::YUYV};
-    preference.insert(preference.end(), packed_rgb.begin(), packed_rgb.end());
-    preference.push_back(libcamera::formats::R8);
-  }
-
   const auto available = formats.pixelformats();
   bool picked = false;
-  for (const auto& candidate : preference) {
+  for (const auto& candidate : pixelFormatPreference(requested_format)) {
     if (std::find(available.begin(), available.end(), candidate) != available.end()) {
       stream_config.pixelFormat = candidate;
       picked = true;
@@ -394,7 +331,7 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
 
   ~LibcameraCaptureSession() override { close(); }
 
-  bool isOpen() const override { return started_; }
+  bool isOpen() const override { return lifecycle_.isStarted() && !events_->disconnected; }
 
   ImageRGB capture() override {
     if (!isOpen()) {
@@ -406,7 +343,10 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
                           std::chrono::milliseconds(std::max(0, capture_timeout_ms_));
 
     // A long-idle session must never return a stale frame.
-    drainPending();
+    if (!drainPending()) {
+      close();
+      return {};
+    }
 
     // Colour sessions warm up once; grey/IR sessions warm up on every capture
     // to let the IR emitter and auto-exposure settle.
@@ -417,32 +357,44 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
       if (!request) {
         return {};
       }
-      requeue(request);
+      if (!requeue(request)) {
+        close();
+        return {};
+      }
     }
 
     // Many IR emitters strobe lit/dark, and a fixed warmup count lands on the
     // same phase every time, so sample several frames and keep the brightest
     // one that isn't over-exposed.
     const int samples = is_grey_ ? kIrCaptureSampleFrames : 1;
+    FrameSampling sampling(samples, kMaxDroppedFrames);
     ImageRGB best;
     double best_mean = 0.0;
-    for (int i = 0; i < samples; ++i) {
+    while (sampling.wantsMore()) {
       libcamera::Request* request = waitForRequest(deadline, has_timeout);
       if (!request) {
         break;
       }
       ImageRGB image;
-      const bool ok = extractFrame(request, image);
-      requeue(request);
+      const bool ok = frameSucceeded(request) && extractFrame(request, image);
+      if (!requeue(request)) {
+        close();
+        return {};
+      }
       if (!ok) {
-        spdlog::error("FaceAuth: Failed to convert frame from '{}'", camera_label_);
+        sampling.recordDropped();
         continue;
       }
+      sampling.recordGood();
       const double mean = samples > 1 ? meanLuma(image) : 0.0;
       if (best.empty() || irFrameScore(mean) > irFrameScore(best_mean)) {
         best_mean = mean;
         best = std::move(image);
       }
+    }
+    if (!sampling.gotAny() && isOpen()) {
+      spdlog::error("FaceAuth: No usable frame from '{}' after {} dropped frames", camera_label_,
+                    kMaxDroppedFrames);
     }
     if (samples > 1 && !best.empty()) {
       spdlog::debug("FaceAuth: Kept brightest of {} frames from '{}' (mean={:.1f})", samples,
@@ -480,7 +432,7 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
       spdlog::error("FaceAuth: Failed to acquire camera '{}'", camera_label_);
       return false;
     }
-    acquired_ = true;
+    lifecycle_.markAcquired();
 
     if (camera_->configure(config_.get()) != 0) {
       spdlog::error("FaceAuth: Failed to configure camera '{}'", camera_label_);
@@ -513,28 +465,44 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
       requests_.push_back(std::move(request));
     }
 
-    camera_->requestCompleted.connect(&connection_token_, [this](libcamera::Request* request) {
+    // The callbacks hold `events`, never `this`: after an unplug one may still
+    // run once the session is gone (see close()).
+    auto events = events_;
+    camera_->requestCompleted.connect(events.get(), [events](libcamera::Request* request) {
       if (request->status() == libcamera::Request::RequestCancelled) {
         return;
       }
       {
-        std::lock_guard<std::mutex> lock(mutex_);
-        completed_.push_back(request);
+        std::lock_guard<std::mutex> lock(events->mutex);
+        events->completed.push_back(request);
       }
-      ready_.notify_one();
+      events->ready.notify_one();
+    });
+    // Never disconnected: an unplug is signalled from another thread at any
+    // time, libcamera calls slots without holding its lock, and disconnect()
+    // deletes the slot at once. Each session leaves this small slot behind.
+    camera_->disconnected.connect(events.get(), [events]() {
+      {
+        std::lock_guard<std::mutex> lock(events->mutex);
+        events->disconnected = true;
+      }
+      events->ready.notify_all();
     });
 
     if (camera_->start() < 0) {
       spdlog::error("FaceAuth: Failed to start camera '{}'", camera_label_);
-      camera_->requestCompleted.disconnect(&connection_token_);
+      camera_->requestCompleted.disconnect(events_.get());
       return false;
     }
-    started_ = true;
+    lifecycle_.markStarted();
 
     for (auto& request : requests_) {
       if (camera_->queueRequest(request.get()) < 0) {
+        // The camera owns the requests already queued. close() (via the
+        // destructor) stops it; the failure may be an unplug, where stop()
+        // cancels nothing, so the buffers are kept.
         spdlog::error("FaceAuth: Failed to queue initial request for '{}'", camera_label_);
-        started_ = false;
+        lifecycle_.markRequestsHeld();
         return false;
       }
     }
@@ -559,13 +527,20 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
 
   libcamera::Request* waitForRequest(std::chrono::steady_clock::time_point deadline,
                                      bool has_timeout) {
-    std::unique_lock<std::mutex> lock(mutex_);
+    std::unique_lock<std::mutex> lock(events_->mutex);
+    const auto ready = [this] { return !events_->completed.empty() || events_->disconnected; };
     bool have_request;
     if (has_timeout) {
-      have_request = ready_.wait_until(lock, deadline, [this] { return !completed_.empty(); });
+      have_request = events_->ready.wait_until(lock, deadline, ready);
     } else {
-      ready_.wait(lock, [this] { return !completed_.empty(); });
+      events_->ready.wait(lock, ready);
       have_request = true;
+    }
+    if (have_request && events_->completed.empty()) {
+      spdlog::error("FaceAuth: Camera '{}' was disconnected", camera_label_);
+      lock.unlock();
+      close();
+      return nullptr;
     }
     if (!have_request) {
       spdlog::error("FaceAuth: Timed out waiting for frame from '{}'", camera_label_);
@@ -573,63 +548,125 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
       close();
       return nullptr;
     }
-    libcamera::Request* request = completed_.front();
-    completed_.pop_front();
+    libcamera::Request* request = events_->completed.front();
+    events_->completed.pop_front();
     return request;
   }
 
-  void drainPending() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    while (!completed_.empty()) {
-      libcamera::Request* request = completed_.front();
-      completed_.pop_front();
-      request->reuse(libcamera::Request::ReuseBuffers);
-      camera_->queueRequest(request);
+  // Requeues every completed request. False if one couldn't be requeued; the
+  // caller must then close() (outside the lock).
+  bool drainPending() {
+    std::lock_guard<std::mutex> lock(events_->mutex);
+    while (!events_->completed.empty()) {
+      libcamera::Request* request = events_->completed.front();
+      events_->completed.pop_front();
+      if (!requeue(request)) {
+        return false;
+      }
     }
+    return true;
   }
 
-  void requeue(libcamera::Request* request) {
+  // A request that can't be requeued is lost, so the session would slowly run
+  // out of requests and time out. Callers treat this as a capture failure.
+  bool requeue(libcamera::Request* request) {
     request->reuse(libcamera::Request::ReuseBuffers);
-    camera_->queueRequest(request);
+    const int ret = camera_->queueRequest(request);
+    if (ret < 0) {
+      // May be an unplug whose disconnected signal hasn't fired yet.
+      spdlog::error("FaceAuth: Failed to requeue request for '{}': {}", camera_label_, ret);
+      lifecycle_.markRequestsHeld();
+      return false;
+    }
+    return true;
   }
 
+  // An errored or cancelled buffer holds partial or stale data.
+  bool frameSucceeded(libcamera::Request* request) {
+    libcamera::FrameBuffer* buffer = request->findBuffer(stream_);
+    if (buffer && buffer->metadata().status == libcamera::FrameMetadata::FrameSuccess) {
+      return true;
+    }
+    spdlog::debug("FaceAuth: Dropping frame with status {} from '{}'",
+                  buffer ? static_cast<int>(buffer->metadata().status) : -1, camera_label_);
+    return false;
+  }
+
+  // Call only after frameSucceeded(), which checks the buffer exists.
   bool extractFrame(libcamera::Request* request, ImageRGB& out) {
     libcamera::FrameBuffer* buffer = request->findBuffer(stream_);
-    if (!buffer) {
-      return false;
-    }
     const auto it = mappings_.find(buffer);
-    if (it == mappings_.end()) {
-      return false;
-    }
     const auto metadata = buffer->metadata().planes();
-    if (metadata.empty()) {
+    if (it == mappings_.end() || metadata.empty()) {
+      spdlog::error("FaceAuth: Frame from '{}' has no mapped data", camera_label_);
       return false;
     }
     const size_t bytes_used = metadata[0].bytesused;
     const uint8_t* data = static_cast<const uint8_t*>(it->second.base) + it->second.plane_offset;
-    return convertFrame(pixel_format_, data, bytes_used, width_, height_, stride_, out);
+    if (!convertFrame(pixel_format_, data, bytes_used, width_, height_, stride_, out)) {
+      spdlog::error("FaceAuth: Failed to convert frame from '{}'", camera_label_);
+      return false;
+    }
+    // Only MJPEG can differ: it decodes at its own header size.
+    if ((out.width != width_ || out.height != height_) && !warned_frame_size_) {
+      warned_frame_size_ = true;
+      spdlog::warn("FaceAuth: Camera '{}' sends {}x{} frames, configured {}x{}", camera_label_,
+                   out.width, out.height, width_, height_);
+    }
+    return true;
   }
 
+  // After a real stop() every request has completed or been cancelled.
+  bool anyRequestPending() const {
+    return std::any_of(requests_.begin(), requests_.end(), [](const auto& request) {
+      return request->status() == libcamera::Request::RequestPending;
+    });
+  }
+
+  // Safe to call more than once.
   void close() {
-    if (started_) {
-      camera_->stop();
-      started_ = false;
+    // After an unplug stop() is a no-op that leaves requests in the pipeline.
+    if (events_->disconnected) {
+      lifecycle_.markDisconnected();
     }
-    camera_->requestCompleted.disconnect(&connection_token_);
+    if (lifecycle_.needsStop()) {
+      const int ret = camera_->stop();
+      if (ret < 0) {
+        spdlog::error("FaceAuth: Failed to stop camera '{}': {}", camera_label_, ret);
+      }
+      // libcamera marks an unplugged camera stopped before it signals, so
+      // stop() may have cancelled nothing; a request still pending is held.
+      if (events_->disconnected || anyRequestPending()) {
+        lifecycle_.markRequestsHeld();
+      }
+      lifecycle_.markStopped(ret == 0);
+    }
     {
-      std::lock_guard<std::mutex> lock(mutex_);
-      completed_.clear();
+      std::lock_guard<std::mutex> lock(events_->mutex);
+      events_->completed.clear();
     }
     for (auto& [buffer, mapping] : mappings_) {
       munmap(mapping.base, mapping.size);
     }
     mappings_.clear();
-    requests_.clear();
-    allocator_.reset();
-    if (acquired_) {
+    if (lifecycle_.canFreeBuffers()) {
+      // stop() was a barrier, so requestCompleted isn't running.
+      camera_->requestCompleted.disconnect(events_.get());
+      requests_.clear();
+      allocator_.reset();
+    } else {
+      // libcamera may still hold these, and may still complete them, so the
+      // requestCompleted slot stays connected. Leaking beats a use-after-free;
+      // the leaked allocator keeps the Camera, and with it the slot, alive.
+      for (auto& request : requests_) {
+        (void)request.release();
+      }
+      requests_.clear();
+      (void)allocator_.release();
+    }
+    if (lifecycle_.needsRelease()) {
       camera_->release();
-      acquired_ = false;
+      lifecycle_.markReleased();
     }
   }
 
@@ -652,27 +689,27 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
   libcamera::PixelFormat pixel_format_;
   int width_ = 0;
   int height_ = 0;
+  bool warned_frame_size_ = false;
   int stride_ = 0;
 
   std::unique_ptr<libcamera::FrameBufferAllocator> allocator_;
   std::vector<std::unique_ptr<libcamera::Request>> requests_;
   std::map<libcamera::FrameBuffer*, Mapping> mappings_;
 
-  std::mutex mutex_;
-  std::condition_variable ready_;
-  std::deque<libcamera::Request*> completed_;
-  int connection_token_ = 0;
+  // Shared with the libcamera callbacks, which may outlive the session.
+  struct Events {
+    std::mutex mutex;
+    std::condition_variable ready;
+    std::deque<libcamera::Request*> completed;
+    // Set from libcamera's thread when the camera is unplugged.
+    std::atomic<bool> disconnected{false};
+  };
+  std::shared_ptr<Events> events_ = std::make_shared<Events>();
 
-  bool acquired_ = false;
-  bool started_ = false;
+  CameraLifecycle lifecycle_;
 };
 
 }  // namespace
-
-bool checkCameraAvailability(const std::optional<std::string>& linux_video_device_path) {
-  auto session = openCameraSession(linux_video_device_path);
-  return session && session->isOpen();
-}
 
 std::unique_ptr<ICameraCaptureSession> openCameraSession(
     const std::optional<std::string>& linux_video_device_path, CameraCaptureFormat format,

@@ -11,7 +11,7 @@ target_link_libraries(${ANTISPOOF_TEST} PRIVATE
     ${ONNXRUNTIME_LIB}
     biopass_det
     biopass_as
-    biopass_stb
+    biopass_image
     biopass_onnx
     CLI11::CLI11
 )

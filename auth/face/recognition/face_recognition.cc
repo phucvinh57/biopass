@@ -3,10 +3,13 @@
 #include <cmath>
 #include <stdexcept>
 
+#include "resize.h"
+#include "tensor.h"
+
 namespace biopass {
 
-FaceRecognition::FaceRecognition(const std::string& ckpt, int imgsz, const float threshold)
-    : threshold(threshold), imgsz(imgsz), session(ckpt, "FaceRecognition") {}
+FaceRecognition::FaceRecognition(const ModelBytes& model, int imgsz, const float threshold)
+    : threshold(threshold), imgsz(imgsz), session(model, "FaceRecognition") {}
 
 std::vector<float> FaceRecognition::preprocess(const ImageRGB& input_image) {
   ImageRGB resize_img = imageResizePad(input_image, this->imgsz, this->imgsz);
@@ -31,7 +34,7 @@ std::vector<float> FaceRecognition::inference(const ImageRGB& image) {
   return std::vector<float>(data, data + embed_dim);
 }
 
-float FaceRecognition::cosine(const std::vector<float>& feat1, const std::vector<float>& feat2) {
+float cosineSimilarity(const std::vector<float>& feat1, const std::vector<float>& feat2) {
   float dot_product = 0, norm1 = 0, norm2 = 0;
   for (size_t i = 0; i < feat1.size(); i++) {
     dot_product += feat1[i] * feat2[i];
@@ -52,11 +55,8 @@ float FaceRecognition::cosine(const std::vector<float>& feat1, const std::vector
 MatchResult FaceRecognition::match(const ImageRGB& image1, const ImageRGB& image2) {
   std::vector<float> feature1 = this->inference(image1);
   std::vector<float> feature2 = this->inference(image2);
-  float distance = this->cosine(feature1, feature2);
-  bool similar = false;
-  if (distance > this->threshold)
-    similar = true;
-  return MatchResult(distance, similar);
+  const float similarity = cosineSimilarity(feature1, feature2);
+  return MatchResult(similarity, isSameFace(similarity, this->threshold));
 }
 
 }  // namespace biopass

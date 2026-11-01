@@ -4,7 +4,9 @@ set -e
 
 case "$1" in
     configure)
-        # Register the private biopass library directory with the dynamic linker.
+        # Biopass finds /usr/lib/biopass through RUNPATH now. Packages up to
+        # 1.4.2 shipped /etc/ld.so.conf.d/biopass.conf; dpkg removes it on
+        # upgrade, this drops its entries from the linker cache.
         ldconfig
         ;;
     abort-upgrade|abort-remove|abort-deconfigure)

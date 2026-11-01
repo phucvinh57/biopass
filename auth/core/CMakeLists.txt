@@ -4,6 +4,8 @@ add_library(biopass_core STATIC
     auth_manager.cc
     auth_config.cc
     fs_user.cc
+    user_file.cc
+    user_paths.cc
     model_registry.cc
 )
 

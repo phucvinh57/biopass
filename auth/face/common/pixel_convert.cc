@@ -26,7 +26,7 @@ inline void yuvToRgbPixel(int y, int u, int v, uint8_t* dst) {
 }  // namespace
 
 bool yuyvToRgb(const uint8_t* src, size_t size, int width, int height, int stride, ImageRGB& out) {
-  if (!src || width <= 0 || height <= 0) {
+  if (!src || ImageRGB::byteSize(width, height) == 0) {
     return false;
   }
   const size_t min_stride = static_cast<size_t>(width) * 2;
@@ -55,7 +55,7 @@ bool yuyvToRgb(const uint8_t* src, size_t size, int width, int height, int strid
 }
 
 bool greyToRgb(const uint8_t* src, size_t size, int width, int height, int stride, ImageRGB& out) {
-  if (!src || width <= 0 || height <= 0) {
+  if (!src || ImageRGB::byteSize(width, height) == 0) {
     return false;
   }
   const size_t row_stride = static_cast<size_t>(std::max(stride, width));
@@ -80,7 +80,7 @@ bool greyToRgb(const uint8_t* src, size_t size, int width, int height, int strid
 
 bool packedRgbToRgb(const uint8_t* src, size_t size, int width, int height, int stride,
                     PackedRgbLayout layout, ImageRGB& out) {
-  if (!src || width <= 0 || height <= 0) {
+  if (!src || ImageRGB::byteSize(width, height) == 0) {
     return false;
   }
   const bool four_bytes = layout == PackedRgbLayout::kBgrx32 || layout == PackedRgbLayout::kRgbx32;
@@ -114,6 +114,7 @@ bool packedRgbToRgb(const uint8_t* src, size_t size, int width, int height, int 
 }
 
 bool mjpegToRgb(const uint8_t* src, size_t bytes_used, ImageRGB& out) {
+  out = ImageRGB();
   if (!src || bytes_used < 2 || src[0] != 0xFF || src[1] != 0xD8) {
     return false;
   }
@@ -132,7 +133,13 @@ bool mjpegToRgb(const uint8_t* src, size_t bytes_used, ImageRGB& out) {
     return false;
   }
 
+  // The stream's own header sizes the decode; ImageRGB caps it (an empty
+  // out means the header is over the limit).
   out = ImageRGB(width, height);
+  if (out.empty()) {
+    tjDestroy(handle);
+    return false;
+  }
   const int rc = tjDecompress2(handle, const_cast<unsigned char*>(src),
                                static_cast<unsigned long>(bytes_used), out.ptr(), width,
                                0 /* pitch: tightly packed */, height, TJPF_RGB, TJFLAG_FASTDCT);

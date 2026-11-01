@@ -1,6 +1,4 @@
-import { useEffect, useState } from "react";
 import { ModelStatus } from "@/app/-components/ModelStatus";
-import { cmd } from "@/commands";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -9,6 +7,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useModelFileStatus } from "@/hooks/useModelFileStatus";
 import { cn } from "@/lib/utils";
 import type { Model } from "@/types/config";
 
@@ -30,25 +29,7 @@ export function ModelSelect({
   onChange,
 }: Props) {
   const selectedModel = models.find((m) => m.id === value);
-  const [statusMap, setStatusMap] = useState<Record<string, boolean>>({});
-
-  useEffect(() => {
-    const checkAllModels = async () => {
-      const newStatusMap: Record<string, boolean> = {};
-      await Promise.all(
-        models.map(async (m) => {
-          try {
-            newStatusMap[m.id] = await cmd.file.exists(m.path);
-          } catch {
-            newStatusMap[m.id] = false;
-          }
-        }),
-      );
-      setStatusMap(newStatusMap);
-    };
-
-    checkAllModels();
-  }, [models]);
+  const statusMap = useModelFileStatus(models);
 
   const isValid = selectedModel && statusMap[selectedModel.id];
 

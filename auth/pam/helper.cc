@@ -9,36 +9,29 @@
 #include <CLI/CLI.hpp>
 #include <algorithm>
 #include <ctime>
+#include <exception>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "auth_config.h"
+#include "auth_deadline.h"
 #include "auth_manager.h"
 #include "common/camera_capture.h"
 #include "detection/face_detection.h"
 #include "face_auth.h"
 #include "fingerprint_auth.h"
 #include "fs_user.h"
-#include "image_utils.h"
+#include "helper_exit.h"
+#include "image_io.h"
 #include "status_reporter.h"
-#include "stb_image_write.h"
+#include "user_paths.h"
 
 using biopass::Detection;
 using biopass::FaceDetection;
 
 namespace {
-
-void appendJpegToBuffer(void* context, void* data, int size) {
-  auto* buf = static_cast<std::vector<uint8_t>*>(context);
-  buf->insert(buf->end(), static_cast<uint8_t*>(data), static_cast<uint8_t*>(data) + size);
-}
-
-bool encodeJpeg(const ImageRGB& img, int quality, std::vector<uint8_t>& out) {
-  out.clear();
-  return stbi_write_jpg_to_func(&appendJpegToBuffer, &out, img.width, img.height, 3, img.ptr(),
-                                quality) != 0;
-}
 
 std::string todayDateString() {
   std::time_t now = std::time(nullptr);
@@ -57,13 +50,15 @@ std::string todayDateString() {
 void setupBiopassLogger(const std::string& username, bool debug) {
   std::vector<spdlog::sink_ptr> sinks;
 
-  if (debug) {
+  const std::optional<biopass::UserPaths> user =
+      debug ? biopass::resolveUser(username) : std::nullopt;
+  if (user) {
     // The log lives in a user-writable dir: open it as the user so a planted
     // symlink can't make root append to (or create) a file elsewhere. The
     // sink keeps the fd, so later writes need no guard.
-    biopass::ScopedFsUser as_user(username);
-    if (as_user.ok() && biopass::setupConfig(username) == 0) {
-      const std::string log_path = biopass::getLogPath(username) + "/" + todayDateString() + ".log";
+    biopass::ScopedFsUser as_user(user->uid, user->gid);
+    if (as_user.ok() && biopass::setupDataDirs(user->data_dir) == 0) {
+      const std::string log_path = user->logsDir() + "/" + todayDateString() + ".log";
       try {
         sinks.push_back(std::make_shared<spdlog::sinks::basic_file_sink_mt>(log_path,
                                                                             /*truncate=*/false));
@@ -108,7 +103,7 @@ int previewSession(const std::string& cameraPath, const std::string& modelPath, 
   std::unique_ptr<FaceDetection> faceDetector;
   if (!modelPath.empty()) {
     try {
-      faceDetector = std::make_unique<FaceDetection>(modelPath);
+      faceDetector = std::make_unique<FaceDetection>(biopass::loadModelFile(modelPath));
     } catch (const std::exception& e) {
       std::cout << "ERR failed to load detection model: " << e.what() << "\n" << std::flush;
       return 1;
@@ -171,18 +166,22 @@ int previewSession(const std::string& cameraPath, const std::string& modelPath, 
   return 0;
 }
 
-int authenticate(const std::string& username, const std::string& service) {
+biopass::HelperExit authenticate(const std::string& username, const std::string& service) {
+  using biopass::HelperExit;
   const char* pUsername = username.c_str();
+  // Counted from here so config and model loading come out of the budget too.
+  const auto deadline = std::chrono::steady_clock::now() + biopass::kAuthBudget;
 
-  if (!biopass::configExists(pUsername)) {
-    return 2;  // PAM_IGNORE
+  const std::optional<biopass::BiopassConfig> loaded = biopass::readConfig(pUsername);
+  if (!loaded) {
+    return HelperExit::Ignore;  // no usable config.yaml
   }
-  biopass::BiopassConfig config = biopass::readConfig(pUsername);
+  const biopass::BiopassConfig& config = *loaded;
 
   if (!service.empty() &&
       std::find(config.strategy.ignore_services.begin(), config.strategy.ignore_services.end(),
                 service) != config.strategy.ignore_services.end()) {
-    return 2;  // PAM_IGNORE
+    return HelperExit::Ignore;
   }
 
   setupBiopassLogger(pUsername, config.strategy.debug);
@@ -191,33 +190,33 @@ int authenticate(const std::string& username, const std::string& service) {
   runtime_config.debug = config.strategy.debug;
 
   biopass::AuthManager manager;
-  manager.setMode(config.strategy.execution_mode == "sequential"
-                      ? biopass::ExecutionMode::Sequential
-                      : biopass::ExecutionMode::Parallel);
+  manager.setMode(config.strategy.execution_mode);
   manager.setConfig(runtime_config);
+  manager.setDeadline(deadline);
 
   int numOfMethods = 0;
-  for (const auto& method_name : config.strategy.order) {
-    if (method_name == "face" && config.methods.face.enable) {
-      manager.addMethod(std::make_unique<biopass::FaceAuth>(config.methods.face, username));
-      numOfMethods++;
-    } else if (method_name == "fingerprint" && config.methods.fingerprint.enable) {
-      manager.addMethod(std::make_unique<biopass::FingerprintAuth>(config.methods.fingerprint));
-      numOfMethods++;
+  for (const biopass::MethodKind method : config.strategy.order) {
+    switch (method) {
+      case biopass::MethodKind::Face:
+        if (config.methods.face.enable) {
+          manager.addMethod(std::make_unique<biopass::FaceAuth>(config.methods.face, username));
+          numOfMethods++;
+        }
+        break;
+      case biopass::MethodKind::Fingerprint:
+        if (config.methods.fingerprint.enable) {
+          manager.addMethod(std::make_unique<biopass::FingerprintAuth>(config.methods.fingerprint));
+          numOfMethods++;
+        }
+        break;
     }
   }
 
   if (numOfMethods == 0) {
-    return 2;  // PAM_IGNORE
+    return HelperExit::Ignore;
   }
 
-  int retval = manager.authenticate(pUsername);
-
-  if (retval == 0) {
-    return 0;  // PAM_SUCCESS
-  } else {
-    return 1;  // PAM_AUTH_ERR
-  }
+  return biopass::toHelperExit(manager.authenticate(pUsername));
 }
 
 int main(int argc, char** argv) {
@@ -249,7 +248,15 @@ int main(int argc, char** argv) {
   try {
     app.parse(argc, argv);
   } catch (const CLI::ParseError& e) {
-    return app.exit(e);
+    // CLI11 exits 0 for --help/--version, which the PAM module would read as
+    // a successful authentication, so every parse stop is an error here.
+    // Text goes to stderr, never stdout (the PAM caller's channel), and the
+    // auth path prints nothing at all.
+    const bool authMode = argc > 1 && std::string(argv[1]) == "auth";
+    if (!authMode) {
+      app.exit(e, std::cerr, std::cerr);
+    }
+    return biopass::exitCode(biopass::HelperExit::AuthErr);
   }
 
   if (app.got_subcommand(preview_cmd)) {
@@ -257,19 +264,33 @@ int main(int argc, char** argv) {
   }
 
   if (app.got_subcommand(auth_cmd)) {
+    // spdlog's default logger writes to stdout, which belongs to the PAM
+    // caller (see setupBiopassLogger). Silence it before anything can log;
+    // setupBiopassLogger replaces it once the config is known.
+    spdlog::set_default_logger(std::make_shared<spdlog::logger>("biopass"));
+    spdlog::set_level(spdlog::level::off);
     if (username.empty()) {
       spdlog::info("{}", app.help());
-      return 2;  // PAM_IGNORE
+      return biopass::exitCode(biopass::HelperExit::Ignore);
     }
     // ScopedFsUser switches only the filesystem uid/gid; root's supplementary
     // groups would still grant group access. Drop them before any thread
     // starts. Root keeps its capabilities, so nothing else changes.
     if (geteuid() == 0 && setgroups(0, nullptr) != 0) {
-      return 1;  // PAM_AUTH_ERR: fail closed
+      return biopass::exitCode(biopass::HelperExit::AuthErr);  // fail closed
     }
     // Only methods that start scanning report, so skipped runs stay silent.
     biopass::setStatusFd(statusFd);
-    return authenticate(username, pamService);
+    // An unexpected exception (config, model loading, thread start) would
+    // otherwise abort with a core dump. Fail closed with AuthErr instead.
+    try {
+      return biopass::exitCode(authenticate(username, pamService));
+    } catch (const std::exception& e) {
+      spdlog::error("Biopass: authentication threw: {}", e.what());
+    } catch (...) {
+      spdlog::error("Biopass: authentication threw");
+    }
+    return biopass::exitCode(biopass::HelperExit::AuthErr);
   }
 
   spdlog::error("No valid subcommand provided");

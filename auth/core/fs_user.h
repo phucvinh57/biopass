@@ -19,7 +19,8 @@ namespace biopass {
 class ScopedFsUser {
  public:
   ScopedFsUser(uid_t uid, gid_t gid);
-  // Resolves the user with getpwnam_r. ok() is false if the user is unknown.
+  // Resolves the user with resolveUser(). ok() is false if the user is
+  // unknown, root or not.
   explicit ScopedFsUser(const std::string& username);
   ~ScopedFsUser();
 

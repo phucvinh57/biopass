@@ -1,28 +1,27 @@
-import type { VideoDeviceInfo } from "@/types/config";
-import { invokeCommand } from "./core";
+import { commands } from "@/bindings";
 
 function listImages() {
-  return invokeCommand<string[]>("list_faces");
+  return commands.listFaces();
 }
 
-function startPreview(camera?: string | null) {
-  return invokeCommand<void>("start_face_preview", { camera: camera ?? null });
+async function startPreview(camera?: string | null): Promise<void> {
+  await commands.startFacePreview(camera ?? null);
 }
 
-function stopPreview() {
-  return invokeCommand<void>("stop_face_preview");
+async function stopPreview(): Promise<void> {
+  await commands.stopFacePreview();
 }
 
 function captureInSession() {
-  return invokeCommand<string>("capture_face_in_session");
+  return commands.captureFaceInSession();
 }
 
-function deleteImage(path: string) {
-  return invokeCommand<void>("delete_face", { path });
+async function deleteImage(path: string): Promise<void> {
+  await commands.deleteFace(path);
 }
 
 function listVideoDevices() {
-  return invokeCommand<VideoDeviceInfo[]>("list_video_devices");
+  return commands.listVideoDevices();
 }
 export const face = {
   listImages,

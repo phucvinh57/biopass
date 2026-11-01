@@ -6,7 +6,7 @@
 #include <utility>
 #include <vector>
 
-#include "image_utils.h"
+#include "image.h"
 
 namespace biopass {
 
@@ -22,6 +22,8 @@ enum class CameraCaptureFormat {
 constexpr int kIrCaptureWarmupFrames = 3;
 constexpr int kIrCaptureSampleFrames = 4;
 constexpr int kIrCaptureTimeoutMs = 3000;
+// Colour sessions: how long one capture may wait for a frame.
+constexpr int kColorCaptureTimeoutMs = 10000;
 
 class ICameraCaptureSession {
  public:
@@ -30,11 +32,10 @@ class ICameraCaptureSession {
   virtual ImageRGB capture() = 0;
 };
 
-bool checkCameraAvailability(const std::optional<std::string>& device_path);
 std::unique_ptr<ICameraCaptureSession> openCameraSession(
     const std::optional<std::string>& device_path,
     CameraCaptureFormat format = CameraCaptureFormat::Default, int warmup_frames = 5,
-    int capture_timeout_ms = 10000);
+    int capture_timeout_ms = kColorCaptureTimeoutMs);
 ImageRGB captureImageByIRCamera(const std::string& device_path,
                                 int warmup_frames = kIrCaptureWarmupFrames,
                                 int capture_timeout_ms = kIrCaptureTimeoutMs);

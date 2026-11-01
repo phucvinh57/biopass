@@ -6,7 +6,7 @@
 
 #include "face_detection.h"
 #include "face_recognition.h"
-#include "image_utils.h"
+#include "image_io.h"
 
 using biopass::Detection;
 using biopass::FaceDetection;
@@ -68,8 +68,8 @@ int main(int argc, char** argv) {
   CLI11_PARSE(app, argc, argv);
 
   try {
-    FaceDetection detector(detector_model);
-    FaceRecognition recognizer(recognition_model, 112, threshold);
+    FaceDetection detector(biopass::loadModelFile(detector_model));
+    FaceRecognition recognizer(biopass::loadModelFile(recognition_model), 112, threshold);
 
     ImageRGB face1 = extract_largest_face(detector, image_1_path, "Image1");
     ImageRGB face2 = extract_largest_face(detector, image_2_path, "Image2");
@@ -85,7 +85,7 @@ int main(int argc, char** argv) {
     }
 
     MatchResult match_result = recognizer.match(face1, face2);
-    std::cout << "Similarity score: " << match_result.dist << std::endl;
+    std::cout << "Similarity score: " << match_result.similarity << std::endl;
     std::cout << "Match result: " << (match_result.similar ? "SAME_PERSON" : "DIFFERENT_PERSON")
               << std::endl;
   } catch (const std::exception& ex) {

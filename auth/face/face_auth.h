@@ -1,21 +1,39 @@
 #pragma once
 
+#include <functional>
 #include <memory>
+#include <optional>
+#include <string>
+#include <vector>
 
 #include "auth_config.h"
 #include "auth_method.h"
 #include "camera_capture.h"
+#include "face_as.h"
 #include "face_detection.h"
 #include "face_recognition.h"
 #include "model_registry.h"
+#include "session_engine.h"
 
 namespace biopass {
 
 class FaceAuth : public IAuthMethod {
  public:
+  // Opens the colour camera at a device path (nullopt = first camera).
+  using CameraOpener = std::function<std::unique_ptr<ICameraCaptureSession>(
+      const std::optional<std::string>& device_path)>;
+
   // One sqlite connection per auth session, reused for every model_id lookup.
-  FaceAuth(const FaceMethodConfig& config, const std::string& username)
-      : face_config_(config), model_registry_(username) {}
+  // open_camera: openCameraSession() unless a test passes a fake.
+  FaceAuth(const FaceMethodConfig& config, const std::string& username,
+           CameraOpener open_camera = nullptr)
+      : face_config_(config),
+        username_(username),
+        model_registry_(username),
+        open_camera_(open_camera ? std::move(open_camera)
+                                 : [](const std::optional<std::string>& device_path) {
+                                     return openCameraSession(device_path);
+                                   }) {}
   ~FaceAuth() override = default;
 
   std::string name() const override { return "Face"; }
@@ -28,16 +46,29 @@ class FaceAuth : public IAuthMethod {
                           std::atomic<bool>* cancel_signal = nullptr) override;
 
  private:
+  // One attempt; authenticate() wraps it so nothing it throws escapes.
+  AuthResult attempt(const std::string& username, const AuthConfig& config,
+                     std::atomic<bool>* cancel_signal);
   void ensureIrSession();
   // Loads detection + recognition once; false if either fails to load.
   bool ensureModelsLoaded();
+  // True once `face` matches one of the user's enrolled images.
+  bool matchAgainstEnrolled(const std::string& username, const ImageRGB& face,
+                            const std::vector<std::string>& enrolled_paths);
 
   FaceMethodConfig face_config_;
+  // Owner of the registry and model files, which are read as this user.
+  std::string username_;
   ModelRegistry model_registry_;
-  std::unique_ptr<ICameraCaptureSession> camera_session_;
+  CameraOpener open_camera_;
+  // Opened by isAvailable() (hence mutable) and kept for the auth session.
+  mutable std::unique_ptr<ICameraCaptureSession> camera_session_;
   std::unique_ptr<ICameraCaptureSession> ir_camera_session_;
   std::unique_ptr<FaceDetection> detector_;
   std::unique_ptr<FaceRecognition> recognizer_;
+  // Loaded by the first anti-spoofing check and kept, like detector_ and
+  // recognizer_, for this object's lifetime (one helper run).
+  SessionEngine<FaceAntiSpoofing> antispoof_model_;
 
   // Tells the user why the session failed when every frame looked like a
   // covered lens, then resets the per-session feedback state below.

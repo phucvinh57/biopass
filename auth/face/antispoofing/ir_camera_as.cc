@@ -3,8 +3,8 @@
 #include <spdlog/spdlog.h>
 
 #include <chrono>
-#include <thread>
 
+#include "auth_deadline.h"
 #include "camera_capture.h"
 #include "debug_image_io.h"
 #include "face_detection.h"
@@ -14,7 +14,7 @@ namespace biopass {
 bool checkAntispoofByIRCamera(const std::string& device_path, FaceDetection* detector,
                               const std::string& username, bool debug,
                               ICameraCaptureSession* session, int warmup_delay_ms,
-                              int presence_timeout_ms) {
+                              int presence_timeout_ms, const std::atomic<bool>* cancel) {
   spdlog::debug(
       "FaceAuth: IR presence check | device='{}' warmup_delay_ms={} presence_timeout_ms={}",
       device_path, warmup_delay_ms, presence_timeout_ms);
@@ -27,7 +27,10 @@ bool checkAntispoofByIRCamera(const std::string& device_path, FaceDetection* det
   if (warmup_delay_ms > 0) {
     spdlog::debug("FaceAuth: IR presence check — sleeping {}ms for camera stabilisation",
                   warmup_delay_ms);
-    std::this_thread::sleep_for(std::chrono::milliseconds(warmup_delay_ms));
+    if (!sleepUnlessCancelled(std::chrono::milliseconds(warmup_delay_ms), cancel)) {
+      spdlog::debug("FaceAuth: IR presence check cancelled during warmup");
+      return false;
+    }
   }
 
   const auto deadline = std::chrono::steady_clock::now() +
@@ -36,6 +39,10 @@ bool checkAntispoofByIRCamera(const std::string& device_path, FaceDetection* det
   ImageRGB last_frame;
   int attempt = 0;
   do {
+    if (cancel != nullptr && cancel->load()) {
+      spdlog::debug("FaceAuth: IR presence check cancelled after {} attempt(s)", attempt);
+      return false;
+    }
     ++attempt;
 
     ImageRGB frame;

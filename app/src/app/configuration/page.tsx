@@ -1,11 +1,13 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { createFileRoute } from "@tanstack/react-router";
 import { RotateCcw, Save } from "lucide-react";
+import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
 import { FormProvider, useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { cmd } from "@/commands";
 import { Button } from "@/components/ui/button";
+import { withCurrentAppearance } from "@/hooks/useThemeSync";
 import type { BiopassConfig } from "@/types/config";
 import { MethodConfig } from "./-components/MethodConfig";
 import { StrategyConfig } from "./-components/StrategyConfig";
@@ -15,6 +17,7 @@ function ConfigurationRouteComponent() {
   const [initialConfig, setInitialConfig] = useState<BiopassConfig | null>(
     null,
   );
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     let canceled = false;
@@ -25,13 +28,34 @@ function ConfigurationRouteComponent() {
         if (!canceled) setInitialConfig(loadedConfig);
       })
       .catch((err) => {
-        if (!canceled) toast.error(`Failed to load config: ${err}`);
+        if (!canceled) setLoadError(String(err));
       });
 
     return () => {
       canceled = true;
     };
   }, []);
+
+  // No form for a config that can't be read: saving it would replace the
+  // user's file with whatever the form holds.
+  if (loadError) {
+    return (
+      <div className="w-full max-w-4xl mx-auto p-6">
+        <div className="rounded-md border border-destructive/50 bg-destructive/10 p-4 text-sm">
+          <p className="font-medium text-destructive">
+            Failed to load the Biopass config
+          </p>
+          {/* The error starts with the file's path. */}
+          <p className="mt-1 break-all font-mono text-muted-foreground">
+            {loadError}
+          </p>
+          <p className="mt-1 text-muted-foreground">
+            Fix or remove the file, then reopen this page.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (!initialConfig) {
     return (
@@ -54,14 +78,16 @@ function ConfigurationForm({
     resolver: zodResolver(biopassConfigSchema),
   });
   const { isSubmitting, isDirty } = form.formState;
+  const { theme } = useTheme();
 
   async function onSave(values: BiopassConfig) {
-    const configToSave = structuredClone(values);
-
-    const isValid = await validateConfig(configToSave);
-    if (!isValid) return;
+    const configToSave = withCurrentAppearance(values, theme);
 
     try {
+      // Inside the try: validateConfig calls commands that can reject.
+      const isValid = await validateConfig(configToSave);
+      if (!isValid) return;
+
       await cmd.config.save(configToSave);
       form.reset(configToSave);
       toast.success("Settings saved successfully!");

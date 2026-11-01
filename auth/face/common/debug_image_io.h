@@ -2,7 +2,7 @@
 
 #include <string>
 
-#include "image_utils.h"
+#include "image.h"
 
 namespace biopass {
 

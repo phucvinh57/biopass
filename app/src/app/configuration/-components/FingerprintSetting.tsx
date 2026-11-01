@@ -18,6 +18,7 @@ export function FingerprintSetting() {
   const [selectedFinger, setSelectedFinger] = useState<string>("");
   const [isAdding, setIsAdding] = useState(false);
   const [username, setUsername] = useState<string>("");
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     let canceled = false;
@@ -33,6 +34,7 @@ export function FingerprintSetting() {
         if (!canceled) setEnrolledFingers(fingers);
       } catch (err) {
         console.error("Failed to sync fingerprints:", err);
+        if (!canceled) setLoadError(String(err));
       }
     };
 
@@ -138,6 +140,10 @@ export function FingerprintSetting() {
               </div>
             ))}
           </div>
+        ) : loadError ? (
+          <p className="text-xs text-destructive">
+            Couldn't read registered fingers: {loadError}
+          </p>
         ) : (
           <p className="text-xs text-muted-foreground italic">
             No fingers registered yet.

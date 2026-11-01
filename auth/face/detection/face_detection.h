@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "image_utils.h"
+#include "image.h"
 #include "onnx_session.h"
 
 namespace biopass {
@@ -33,7 +33,7 @@ struct Detection {
 
 class FaceDetection {
  public:
-  FaceDetection(const std::string& ckpt, int imgsz = 640, const float conf = 0.50,
+  FaceDetection(const ModelBytes& model, int imgsz = 640, const float conf = 0.50,
                 const float iou = 0.50);
 
   std::vector<Detection> inference(const ImageRGB& image);

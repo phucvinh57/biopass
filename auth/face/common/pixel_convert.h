@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "image_utils.h"
+#include "image.h"
 
 namespace biopass {
 
@@ -26,7 +26,10 @@ enum class PackedRgbLayout { kBgr24, kRgb24, kBgrx32, kRgbx32 };
 bool packedRgbToRgb(const uint8_t* src, size_t size, int width, int height, int stride,
                     PackedRgbLayout layout, ImageRGB& out);
 
-// libjpeg-turbo; false on decode failure or a non-JPEG buffer.
+// libjpeg-turbo; decodes at the JPEG header's size, which may differ from
+// the configured frame size (some firmware pads, e.g. 1920x1088 for 1080p).
+// False (and an empty `out`) on decode failure, a non-JPEG buffer, or a
+// header over ImageRGB::kMaxDim.
 bool mjpegToRgb(const uint8_t* src, size_t bytes_used, ImageRGB& out);
 
 }  // namespace biopass

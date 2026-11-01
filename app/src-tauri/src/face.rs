@@ -1,10 +1,12 @@
 use std::fs;
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use tauri::AppHandle;
 
 use crate::paths::get_faces_dir;
 
 #[tauri::command]
+#[specta::specta]
 pub fn list_faces(app: AppHandle) -> Result<Vec<String>, String> {
     let faces_dir = get_faces_dir(&app)?;
 
@@ -29,14 +31,15 @@ fn face_files_in(faces_dir: &Path) -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn delete_face(app: AppHandle, path: String) -> Result<(), String> {
     let faces_dir = get_faces_dir(&app)?;
     let target = resolve_face_file(&faces_dir, Path::new(&path))?;
     fs::remove_file(&target).map_err(|e| format!("Failed to delete file: {}", e))
 }
 
-/// Returns the path to delete only if `path` names a regular .jpg/.png file
-/// directly inside `faces_dir` (the same set `list_faces` returns).
+/// Returns the path to delete only if `path` names a face image (see
+/// `is_face_file`) directly inside `faces_dir` (the same set `list_faces` returns).
 fn resolve_face_file(faces_dir: &Path, path: &Path) -> Result<PathBuf, String> {
     let invalid = || format!("Not a face image: {}", path.display());
 
@@ -55,11 +58,28 @@ fn resolve_face_file(faces_dir: &Path, path: &Path) -> Result<PathBuf, String> {
     Ok(target)
 }
 
-/// A face image is a regular (non-symlink) .jpg/.png file.
+/// A face image is a regular (non-symlink) file named as `has_image_extension`
+/// accepts.
 fn is_face_file(path: &Path) -> bool {
-    path.extension()
-        .is_some_and(|ext| ext == "jpg" || ext == "png")
+    path.file_name()
+        .is_some_and(|name| has_image_extension(name.as_bytes()))
         && fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_file())
+}
+
+/// Same rule as auth's biopass::hasImageExtension (core/auth_config.h), so
+/// the app lists exactly the faces auth matches against: .jpg, .jpeg or .png
+/// (ASCII case-insensitive) after a non-empty stem.
+pub(crate) fn has_image_extension(name: &[u8]) -> bool {
+    let Some(dot) = name.iter().rposition(|&b| b == b'.') else {
+        return false;
+    };
+    if dot == 0 {
+        return false;
+    }
+    let ext = &name[dot + 1..];
+    [&b"jpg"[..], b"jpeg", b"png"]
+        .iter()
+        .any(|want| ext.eq_ignore_ascii_case(want))
 }
 
 #[cfg(test)]
@@ -156,6 +176,28 @@ mod tests {
         let listed = face_files_in(&tmp.faces()).unwrap();
         let expected = tmp.faces().join("a.jpg").to_string_lossy().to_string();
         assert_eq!(listed, vec![expected]);
+    }
+
+    /// Same table as auth's face_image_name test, so app and auth list the
+    /// same faces.
+    #[test]
+    fn image_names_match_auth_table() {
+        let table = include_str!("../../../auth/test/face_image_name/cases.txt");
+        let mut cases = 0;
+        for line in table.lines() {
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let (name, want) = line.split_once(' ').expect("<name> <1|0>");
+            let want = match want {
+                "1" => true,
+                "0" => false,
+                _ => panic!("bad line: {line}"),
+            };
+            assert_eq!(has_image_extension(name.as_bytes()), want, "{name}");
+            cases += 1;
+        }
+        assert!(cases > 0);
     }
 
     #[test]

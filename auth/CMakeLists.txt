@@ -20,6 +20,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED YES)
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
 set(CMAKE_SKIP_BUILD_RPATH FALSE)
+# Tauri ships the build-tree binaries as they are (no install step), so their
+# build RUNPATH ships too, and biopass-helper runs as root. Keep it relative
+# ($ORIGIN, no build-machine paths) and without the ':' padding CMake adds for
+# rewriting at install time: an empty RUNPATH entry is the current directory.
+# (Install then relinks instead of editing the RUNPATH in place.)
+set(CMAKE_BUILD_RPATH_USE_ORIGIN ON)
+set(CMAKE_NO_BUILTIN_CHRPATH ON)
 include(Dependencies.cmake)
 
 set(FaceDetection_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/face/detection)
@@ -31,6 +38,12 @@ add_subdirectory(face)
 add_subdirectory(fingerprint)
 add_subdirectory(pam)
 
+# Shipped next to the bundled onnxruntime and libcamera in /usr/lib/biopass
+# (tauri.conf.json): find them there, not through a global ld.so.conf.d entry.
+set_target_properties(biopass_det biopass_reg biopass_as PROPERTIES
+    BUILD_RPATH "$ORIGIN"
+)
+
 option(BUILD_TESTS "Build test configurations" OFF)
 if(BUILD_TESTS)
     enable_testing()
@@ -39,8 +52,33 @@ if(BUILD_TESTS)
     add_subdirectory(test/antispoof)
     add_subdirectory(test/antispoof_output)
     add_subdirectory(test/pixel_convert)
+    add_subdirectory(test/image_bounds)
+    add_subdirectory(test/image_ops)
+    add_subdirectory(test/camera_lifecycle)
+    add_subdirectory(test/frame_sampling)
     add_subdirectory(test/frame_darkness)
     add_subdirectory(test/fs_user)
+    add_subdirectory(test/helper_config)
+    add_subdirectory(test/user_file)
+    add_subdirectory(test/model_registry)
+    add_subdirectory(test/onnx_external_data)
+    add_subdirectory(test/fprint_signal)
+    add_subdirectory(test/auth_manager)
+    add_subdirectory(test/helper_exit)
+    add_subdirectory(test/helper_argv)
+    add_subdirectory(test/helper_wait)
+    add_subdirectory(test/config_limits)
+    add_subdirectory(test/config_validation)
+    add_subdirectory(test/config_golden)
+    add_subdirectory(test/user_paths)
+    add_subdirectory(test/ir_presence)
+    add_subdirectory(test/face_image_name)
+    add_subdirectory(test/first_line)
+    add_subdirectory(test/capture_policy)
+    add_subdirectory(test/face_match)
+    add_subdirectory(test/session_engine)
+    add_subdirectory(test/face_camera_reuse)
+    add_subdirectory(test/runpath)
 endif()
 
 install(

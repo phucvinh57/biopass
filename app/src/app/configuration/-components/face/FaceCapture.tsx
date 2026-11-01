@@ -1,33 +1,37 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Camera, Circle, Square, Trash2 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { useWatch } from "react-hook-form";
 import { toast } from "sonner";
-import { cmd } from "@/commands";
 import { Button } from "@/components/ui/button";
 import type { BiopassConfig } from "@/types/config";
+import { useFaceImages } from "./useFaceImages";
+import { usePreviewSession } from "./usePreviewSession";
 
 export function FaceCapture() {
   const previewRef = useRef<HTMLImageElement>(null);
-  const [capturing, setCapturing] = useState(false);
-  const [faceImages, setFaceImages] = useState<string[]>([]);
   const camera = useWatch<BiopassConfig, "methods.face.camera">({
     name: "methods.face.camera",
   });
-
-  async function loadFaceImages() {
-    try {
-      const images = await cmd.face.listImages();
-      setFaceImages(images);
-    } catch (err) {
-      console.error("Failed to load face images:", err);
-    }
-  }
-
-  useEffect(() => {
-    loadFaceImages();
-  }, [loadFaceImages]);
+  const {
+    active: capturing,
+    start: startCamera,
+    stop: stopCamera,
+  } = usePreviewSession(
+    camera,
+    (err) => {
+      toast.error(`Failed to start camera: ${err}`);
+      console.error(err);
+    },
+    // Drop the last frame so a failed start or camera switch doesn't show it.
+    () => previewRef.current?.removeAttribute("src"),
+  );
+  const {
+    faceImages,
+    capture: capturePhoto,
+    remove: deleteFace,
+  } = useFaceImages();
 
   useEffect(() => {
     if (!capturing) return;
@@ -52,74 +56,6 @@ export function FaceCapture() {
       unlisten?.();
     };
   }, [capturing]);
-
-  useEffect(() => {
-    return () => {
-      cmd.face.stopPreview().catch(() => {});
-    };
-  }, []);
-
-  // Restart session when camera selection changes while preview is running.
-  useEffect(() => {
-    if (!capturing) return;
-    let alive = true;
-    (async () => {
-      try {
-        await cmd.face.stopPreview();
-        await cmd.face.startPreview(camera);
-      } catch (err) {
-        if (alive) {
-          toast.error(`Failed to switch camera: ${err}`);
-          setCapturing(false);
-        }
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [camera, capturing]);
-
-  async function startCamera() {
-    try {
-      await cmd.face.startPreview(camera);
-      setCapturing(true);
-    } catch (err) {
-      toast.error(`Failed to start camera: ${err}`);
-      console.error(err);
-    }
-  }
-
-  async function stopCamera() {
-    try {
-      await cmd.face.stopPreview();
-    } catch (err) {
-      console.error("stopPreview failed:", err);
-    }
-    setCapturing(false);
-    if (previewRef.current) {
-      previewRef.current.removeAttribute("src");
-    }
-  }
-
-  async function capturePhoto() {
-    try {
-      await cmd.face.captureInSession();
-      toast.success("Face image saved!");
-      await loadFaceImages();
-    } catch (err) {
-      toast.error(`${err}`);
-    }
-  }
-
-  async function deleteFace(path: string) {
-    try {
-      await cmd.face.deleteImage(path);
-      toast.success("Face image deleted");
-      await loadFaceImages();
-    } catch (err) {
-      toast.error(`Failed to delete: ${err}`);
-    }
-  }
 
   return (
     <div className="p-4 rounded-lg bg-muted/50 border border-border/50">

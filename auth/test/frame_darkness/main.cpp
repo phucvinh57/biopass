@@ -9,6 +9,7 @@
 #include <random>
 
 #include "frame_darkness.h"
+#include "image_io.h"
 
 namespace {
 

@@ -5,6 +5,8 @@
 #include <stdexcept>
 
 #include "antispoof_output.h"
+#include "resize.h"
+#include "tensor.h"
 
 namespace biopass {
 
@@ -27,12 +29,12 @@ std::optional<AntiSpoofArchitecture> parseAntiSpoofArchitecture(const std::strin
   return std::nullopt;
 }
 
-FaceAntiSpoofing::FaceAntiSpoofing(const std::string& ckpt, AntiSpoofArchitecture architecture,
+FaceAntiSpoofing::FaceAntiSpoofing(const ModelBytes& model, AntiSpoofArchitecture architecture,
                                    int imgsz, const float threshold)
     : threshold(threshold),
       imgsz(imgsz),
       architecture(architecture),
-      session(ckpt, "FaceAntiSpoofing") {
+      session(model, "FaceAntiSpoofing") {
   // Use the model's own input size (NCHW) when it is fixed and square.
   const std::vector<int64_t> shape = this->session.inputShape();
   if (shape.size() == 4 && shape[2] > 0 && shape[2] == shape[3]) {

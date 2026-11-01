@@ -29,60 +29,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import type { BiopassConfig } from "@/types/config";
+import type { BiopassConfig, ExecutionMode } from "@/types/config";
+import { areServicesEqual, parseIgnoredServicesInput } from "./ignoredServices";
 
 const PAM_MANUAL_SETUP_GUIDE_URL =
   "https://github.com/phucvinh57/biopass/blob/main/docs/PAM.md";
 
-function parseIgnoredServicesInput(raw: string): string[] {
-  return raw
-    .split(",")
-    .map((service) => service.trim())
-    .filter((service, index, services) => {
-      if (!service) return false;
-      return services.indexOf(service) === index;
-    });
-}
-
-function areServicesEqual(left: string[], right: string[]): boolean {
-  return (
-    left.length === right.length &&
-    left.every((service, index) => service === right[index])
-  );
-}
-
 export function StrategyConfig() {
   const { setValue } = useFormContext<BiopassConfig>();
   const strategy = useWatch<BiopassConfig, "strategy">({ name: "strategy" });
-  const ignoreServices = strategy.ignore_services;
-  const [ignoredServicesInput, setIgnoredServicesInput] = useState("");
-  const sensors = useSensors(
-    useSensor(PointerSensor),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    }),
-  );
-
-  useEffect(() => {
-    if (!ignoreServices) return;
-    setIgnoredServicesInput(ignoreServices.join(", "));
-  }, [ignoreServices]);
-
-  const strategyConfig = strategy;
-
-  function handleDragEnd(event: DragEndEvent) {
-    const { active, over } = event;
-
-    if (over && active.id !== over.id) {
-      const oldIndex = strategyConfig.order.indexOf(active.id as string);
-      const newIndex = strategyConfig.order.indexOf(over.id as string);
-      const newOrder = arrayMove(strategyConfig.order, oldIndex, newIndex);
-      setValue("strategy.order", newOrder, {
-        shouldDirty: true,
-        shouldValidate: true,
-      });
-    }
-  }
 
   return (
     <div className="rounded-xl border border-border/50 bg-card/50 backdrop-blur-sm p-6 shadow-lg">
@@ -126,7 +81,7 @@ export function StrategyConfig() {
           </div>
           <Switch
             id="debug-enabled"
-            checked={strategyConfig.debug}
+            checked={strategy.debug}
             onCheckedChange={(checked) =>
               setValue("strategy.debug", checked, {
                 shouldDirty: true,
@@ -141,16 +96,12 @@ export function StrategyConfig() {
             Execution Mode
           </Label>
           <Select
-            value={strategyConfig.execution_mode}
+            value={strategy.execution_mode}
             onValueChange={(value) =>
-              setValue(
-                "strategy.execution_mode",
-                value as "sequential" | "parallel",
-                {
-                  shouldDirty: true,
-                  shouldValidate: true,
-                },
-              )
+              setValue("strategy.execution_mode", value as ExecutionMode, {
+                shouldDirty: true,
+                shouldValidate: true,
+              })
             }
           >
             <SelectTrigger className="w-full h-10 transition-all">
@@ -166,14 +117,14 @@ export function StrategyConfig() {
             </SelectContent>
           </Select>
           <p className="text-xs text-muted-foreground">
-            {strategyConfig.execution_mode === "sequential"
+            {strategy.execution_mode === "sequential"
               ? "Methods are tried in order until one succeeds"
               : "All methods run simultaneously, first success wins"}
           </p>
         </div>
 
         {/* Method Order - Only show in sequential mode */}
-        {strategyConfig.execution_mode === "sequential" && (
+        {strategy.execution_mode === "sequential" && (
           <div className="grid gap-2.5">
             <Label className="text-sm font-medium text-muted-foreground">
               Method Priority Order
@@ -181,62 +132,99 @@ export function StrategyConfig() {
                 (drag to reorder)
               </span>
             </Label>
-            <DndContext
-              sensors={sensors}
-              collisionDetection={closestCenter}
-              onDragEnd={handleDragEnd}
-            >
-              <SortableContext
-                items={strategyConfig.order}
-                strategy={verticalListSortingStrategy}
-              >
-                <div className="flex flex-col gap-2">
-                  {strategyConfig.order.map((method, index) => (
-                    <SortableMethodItem
-                      key={method}
-                      id={method}
-                      index={index}
-                    />
-                  ))}
-                </div>
-              </SortableContext>
-            </DndContext>
+            <MethodOrder order={strategy.order} />
           </div>
         )}
 
-        <div className="grid gap-2.5">
-          <Label
-            htmlFor="ignored-services"
-            className="text-sm font-medium text-muted-foreground"
-          >
-            Ignored PAM Services (optional)
-          </Label>
-          <Input
-            id="ignored-services"
-            value={ignoredServicesInput}
-            onChange={(event) => {
-              const value = event.target.value;
-              const ignoreServices = parseIgnoredServicesInput(value);
-
-              setIgnoredServicesInput(value);
-              if (
-                areServicesEqual(ignoreServices, strategyConfig.ignore_services)
-              ) {
-                return;
-              }
-
-              setValue("strategy.ignore_services", ignoreServices, {
-                shouldDirty: true,
-                shouldValidate: true,
-              });
-            }}
-          />
-          <p className="text-xs text-muted-foreground">
-            Comma-separated PAM service names to bypass Biopass. Example:{" "}
-            <code>polkit-1</code>, <code>pkexec</code> or <code>sudo</code>.
-          </p>
-        </div>
+        <IgnoredServicesField ignoreServices={strategy.ignore_services} />
       </div>
+    </div>
+  );
+}
+
+function MethodOrder({ order }: { order: string[] }) {
+  const { setValue } = useFormContext<BiopassConfig>();
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+
+    if (over && active.id !== over.id) {
+      const oldIndex = order.indexOf(active.id as string);
+      const newIndex = order.indexOf(over.id as string);
+      const newOrder = arrayMove(order, oldIndex, newIndex);
+      setValue("strategy.order", newOrder, {
+        shouldDirty: true,
+        shouldValidate: true,
+      });
+    }
+  }
+
+  return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      onDragEnd={handleDragEnd}
+    >
+      <SortableContext items={order} strategy={verticalListSortingStrategy}>
+        <div className="flex flex-col gap-2">
+          {order.map((method, index) => (
+            <SortableMethodItem key={method} id={method} index={index} />
+          ))}
+        </div>
+      </SortableContext>
+    </DndContext>
+  );
+}
+
+function IgnoredServicesField({
+  ignoreServices,
+}: {
+  ignoreServices: string[];
+}) {
+  const { setValue } = useFormContext<BiopassConfig>();
+  const [ignoredServicesInput, setIgnoredServicesInput] = useState("");
+
+  useEffect(() => {
+    if (!ignoreServices) return;
+    setIgnoredServicesInput(ignoreServices.join(", "));
+  }, [ignoreServices]);
+
+  return (
+    <div className="grid gap-2.5">
+      <Label
+        htmlFor="ignored-services"
+        className="text-sm font-medium text-muted-foreground"
+      >
+        Ignored PAM Services (optional)
+      </Label>
+      <Input
+        id="ignored-services"
+        value={ignoredServicesInput}
+        onChange={(event) => {
+          const value = event.target.value;
+          const parsed = parseIgnoredServicesInput(value);
+
+          setIgnoredServicesInput(value);
+          if (areServicesEqual(parsed, ignoreServices)) {
+            return;
+          }
+
+          setValue("strategy.ignore_services", parsed, {
+            shouldDirty: true,
+            shouldValidate: true,
+          });
+        }}
+      />
+      <p className="text-xs text-muted-foreground">
+        Comma-separated PAM service names to bypass Biopass. Example:{" "}
+        <code>polkit-1</code>, <code>pkexec</code> or <code>sudo</code>.
+      </p>
     </div>
   );
 }

@@ -63,4 +63,4 @@ sudo systemctl enable --now linux-enable-ir-emitter
 
 ## 4. If The IR Presence Check Fails Intermittently
 
-Some IR emitters blink, so a single frame can be all-white or all-dark with no detectable face. Biopass retries the IR presence check (capture + detection) for up to `anti_spoofing.ir_presence_timeout_ms` (default `1500`) in `config.yaml`. If failures persist, increase it.
+Some IR emitters blink, so a single frame can be all-white or all-dark with no detectable face. Biopass retries the IR presence check (capture + detection) for up to `anti_spoofing.ir_presence_timeout_ms` (default `1500`) in `config.yaml`. If failures persist, increase it. Values above `10000` are capped to `10000`, and `anti_spoofing.ir_warmup_delay_ms` is capped to `5000`. A whole Biopass login (all methods and retries) also stops after 40 seconds, and the next PAM step (usually the password prompt) takes over.

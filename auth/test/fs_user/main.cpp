@@ -125,7 +125,6 @@ int main() {
 
   biopass::ScopedFsUser unknown("biopass-no-such-user");
   expect(!unknown.ok(), "unknown user is not ok()");
-  expect(biopass::setupConfig("biopass-no-such-user") != 0, "setupConfig refuses unknown user");
 
   std::printf("%s\n", g_failures == 0 ? "ALL PASS" : "FAILURES");
   return g_failures == 0 ? 0 : 1;

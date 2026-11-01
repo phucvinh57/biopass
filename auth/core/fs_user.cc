@@ -1,29 +1,22 @@
 #include "fs_user.h"
 
-#include <pwd.h>
 #include <sys/fsuid.h>
 #include <unistd.h>
 
-#include <vector>
+#include <optional>
+
+#include "user_paths.h"
 
 namespace biopass {
 
 ScopedFsUser::ScopedFsUser(uid_t uid, gid_t gid) { enter(uid, gid); }
 
 ScopedFsUser::ScopedFsUser(const std::string& username) {
-  if (geteuid() != 0) {
-    ok_ = true;
+  const std::optional<UserPaths> user = resolveUser(username);
+  if (!user) {
     return;
   }
-  long size = sysconf(_SC_GETPW_R_SIZE_MAX);
-  std::vector<char> buf(size > 0 ? static_cast<size_t>(size) : 16384);
-  struct passwd pw{};
-  struct passwd* result = nullptr;
-  if (getpwnam_r(username.c_str(), &pw, buf.data(), buf.size(), &result) != 0 ||
-      result == nullptr) {
-    return;
-  }
-  enter(pw.pw_uid, pw.pw_gid);
+  enter(user->uid, user->gid);
 }
 
 void ScopedFsUser::enter(uid_t uid, gid_t gid) {

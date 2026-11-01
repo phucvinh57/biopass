@@ -1,0 +1,24 @@
+# Face image file names: "<name> <1|0>" (1 = a face image).
+# Shared by auth (auth/test/face_image_name, biopass::hasImageExtension) and
+# the app (app/src-tauri/src/face.rs, has_image_extension): both must agree.
+# Set: .jpg/.jpeg/.png, ASCII case-insensitive, with a non-empty stem.
+face_1.jpg 1
+face.jpeg 1
+face.png 1
+FACE.JPG 1
+face.Jpeg 1
+face.pNg 1
+a.b.jpg 1
+..jpg 1
+face.bmp 0
+face.tga 0
+face.gif 0
+face.webp 0
+face.jpg.txt 0
+face.jpgx 0
+facejpg 0
+jpg 0
+.jpg 0
+.png 0
+face. 0
+face 0

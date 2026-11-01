@@ -168,6 +168,13 @@ biopass/
 └── Makefile              # Root build (CMake + Tauri)
 ```
 
+### Config schema and generated files
+
+`app/src-tauri/src/config.rs` is the source of truth for `config.yaml`. `cargo test` checks these committed files and fails when one is out of date; regenerate them with `BIOPASS_UPDATE_GENERATED=1 cargo test` in `app/src-tauri` and commit the result:
+
+- `app/src/bindings.ts`: TypeScript types, typed commands and `CONFIG_LIMITS` (specta, tauri-specta). Don't edit it by hand.
+- `auth/test/config/defaults.yaml` and `limits.yaml`: the `config_golden` ctest checks the helper reads the same defaults and ranges (`auth/core/auth_config.h`). The C++ structs are still hand-written; change both sides.
+
 ## 4. Development Warnings and Debugging
 
 When changing C++ auth logic, enable **Debug Mode** in the app (or the `debug` flag in `~/.config/com.ticklab.biopass/config.yaml`). It prints detailed logs and saves failed or spoof-flagged face captures as `.bmp` to `~/.local/share/com.ticklab.biopass/debugs/`.
@@ -177,5 +184,6 @@ When changing C++ auth logic, enable **Debug Mode** in the app (or the `debug` f
 Editing your distro PAM include file (typically `/etc/pam.d/common-auth` on Debian/Ubuntu, `/etc/pam.d/system-auth` on Fedora) incorrectly can **lock you out of your system permanently**. To stay safe:
 
 - **Use a VM** (strongly recommended, e.g. QEMU + KVM) so you can roll back snapshots if a module crashes or corrupts the PAM stack. Fingerprint readers usually can't be passed through to a VM.
-- **Make the PAM file you test user-writable**, e.g. `sudo chown $USER:root /etc/pam.d/common-auth && sudo chmod 644 /etc/pam.d/common-auth`.
+- **Edit PAM files as root with `sudoedit`** (e.g. `sudoedit /etc/pam.d/common-auth`) and keep them owned by root. Never `chown` them to your user: whoever can write a PAM file can make `sudo` let them in without a password.
+- **Open a root shell before you edit** (`sudo -i` in another terminal; `sudo` itself goes through PAM) and keep it open while you test, so you can revert a broken change without authenticating again.
 - **Keep a rescue USB** to mount the filesystem and fix the config if you reboot into a locked system.

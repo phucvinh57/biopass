@@ -6,7 +6,7 @@
 
 #include "face_as.h"
 #include "face_detection.h"
-#include "image_utils.h"
+#include "image_io.h"
 
 using biopass::AntiSpoofArchitecture;
 using biopass::Detection;
@@ -51,8 +51,9 @@ int main(int argc, char** argv) {
   }
 
   try {
-    FaceDetection detector(detector_model);
-    FaceAntiSpoofing face_as(antispoof_model, *architecture, 128, threshold);
+    FaceDetection detector(biopass::loadModelFile(detector_model));
+    FaceAntiSpoofing face_as(biopass::loadModelFile(antispoof_model), *architecture, 128,
+                             threshold);
 
     for (const auto& path : image_paths) {
       ImageRGB frame = readImage(path);

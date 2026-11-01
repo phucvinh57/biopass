@@ -6,10 +6,16 @@ import {
 } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import { getVersion } from "@tauri-apps/api/app";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Cpu, Laptop, Moon, Settings, Sun, User } from "lucide-react";
-import { useTheme } from "next-themes";
-import { useEffect, useRef, useState } from "react";
+import {
+  Cpu,
+  Laptop,
+  type LucideIcon,
+  Moon,
+  Settings,
+  Sun,
+  User,
+} from "lucide-react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import logo from "@/assets/logo.svg";
 import { cmd } from "@/commands";
@@ -20,44 +26,78 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { type Appearance, useThemeSync } from "@/hooks/useThemeSync";
+
+interface NavLinkProps {
+  to: "/configuration" | "/models";
+  icon: LucideIcon;
+  label: string;
+}
+
+function NavLink({ to, icon: Icon, label }: NavLinkProps) {
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
+  });
+  return (
+    <Link
+      to={to}
+      className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors cursor-pointer ${
+        pathname === to
+          ? "bg-primary/10 text-primary"
+          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+      }`}
+    >
+      <Icon className="w-4 h-4" />
+      <span className="text-sm font-medium">{label}</span>
+    </Link>
+  );
+}
+
+function ThemeMenu({
+  chooseTheme,
+}: {
+  chooseTheme: (theme: Appearance) => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon" className="cursor-pointer">
+          <Sun className="h-[1.2rem] w-[1.2rem] rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
+          <Moon className="absolute h-[1.2rem] w-[1.2rem] rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
+          <span className="sr-only">Toggle theme</span>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem
+          onClick={() => chooseTheme("light")}
+          className="cursor-pointer"
+        >
+          <Sun className="mr-2 h-4 w-4" />
+          <span>Light</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={() => chooseTheme("dark")}
+          className="cursor-pointer"
+        >
+          <Moon className="mr-2 h-4 w-4" />
+          <span>Dark</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={() => chooseTheme("system")}
+          className="cursor-pointer"
+        >
+          <Laptop className="mr-2 h-4 w-4" />
+          <span>System</span>
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
 function App() {
   const [username, setUsername] = useState("");
   const [version, setVersion] = useState("");
-  const { setTheme, theme } = useTheme();
-  const pathname = useRouterState({
-    select: (state) => state.location.pathname,
-  });
-
-  useEffect(() => {
-    // Listen for system theme changes from Tauri (more reliable on Linux)
-    const window = getCurrentWindow();
-
-    const sync = async () => {
-      if (theme === "system") {
-        const sysTheme = await window.theme();
-        if (sysTheme)
-          document.documentElement.classList.toggle(
-            "dark",
-            sysTheme === "dark",
-          );
-      }
-    };
-
-    sync();
-
-    const unlisten = window.onThemeChanged(({ payload: newTheme }) => {
-      if (theme === "system") {
-        document.documentElement.classList.toggle("dark", newTheme === "dark");
-      }
-    });
-
-    return () => {
-      unlisten.then((fn) => fn());
-    };
-  }, [theme]);
-
-  const initialized = useRef(false);
+  const { chooseTheme } = useThemeSync();
 
   useEffect(() => {
     const loadUsername = async () => {
@@ -66,20 +106,6 @@ function App() {
         setUsername(u);
       } catch (err) {
         console.error("Failed to get username:", err);
-      }
-    };
-
-    const loadInitialTheme = async () => {
-      if (initialized.current) return;
-      initialized.current = true;
-
-      try {
-        const config = await cmd.config.load();
-        if (config.appearance) {
-          setTheme(config.appearance);
-        }
-      } catch (err) {
-        console.error("Failed to load initial theme from config:", err);
       }
     };
 
@@ -92,9 +118,8 @@ function App() {
     };
 
     loadUsername();
-    loadInitialTheme();
     loadVersion();
-  }, [setTheme]);
+  }, []);
 
   useEffect(() => {
     cmd.models
@@ -107,21 +132,6 @@ function App() {
         toast.error(`${err}. Check your network and restart Biopass.`),
       );
   }, []);
-
-  useEffect(() => {
-    const updateConfigTheme = async () => {
-      try {
-        const config = await cmd.config.load();
-        if (config.appearance !== theme) {
-          config.appearance = theme ?? "dark";
-          await cmd.config.save(config);
-        }
-      } catch (err) {
-        console.debug("Theme sync to config skipped or failed:", err);
-      }
-    };
-    if (theme) updateConfigTheme();
-  }, [theme]);
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -142,69 +152,18 @@ function App() {
               </div>
 
               <div className="flex items-center gap-2">
-                <Link
+                <NavLink
                   to="/configuration"
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors cursor-pointer ${
-                    pathname === "/configuration"
-                      ? "bg-primary/10 text-primary"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                  }`}
-                >
-                  <Settings className="w-4 h-4" />
-                  <span className="text-sm font-medium">Configuration</span>
-                </Link>
-                <Link
-                  to="/models"
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors cursor-pointer ${
-                    pathname === "/models"
-                      ? "bg-primary/10 text-primary"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                  }`}
-                >
-                  <Cpu className="w-4 h-4" />
-                  <span className="text-sm font-medium">AI Models</span>
-                </Link>
+                  icon={Settings}
+                  label="Configuration"
+                />
+                <NavLink to="/models" icon={Cpu} label="AI Models" />
               </div>
             </div>
 
             {username && (
               <div className="flex items-center gap-4">
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="cursor-pointer"
-                    >
-                      <Sun className="h-[1.2rem] w-[1.2rem] rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
-                      <Moon className="absolute h-[1.2rem] w-[1.2rem] rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
-                      <span className="sr-only">Toggle theme</span>
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem
-                      onClick={() => setTheme("light")}
-                      className="cursor-pointer"
-                    >
-                      <Sun className="mr-2 h-4 w-4" />
-                      <span>Light</span>
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => setTheme("dark")}
-                      className="cursor-pointer"
-                    >
-                      <Moon className="mr-2 h-4 w-4" />
-                      <span>Dark</span>
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => setTheme("system")}
-                      className="cursor-pointer"
-                    >
-                      <Laptop className="mr-2 h-4 w-4" />
-                      <span>System</span>
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                <ThemeMenu chooseTheme={chooseTheme} />
 
                 <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted/50 border border-border/50">
                   <User className="w-4 h-4 text-muted-foreground" />

@@ -2,14 +2,19 @@
 
 #include <algorithm>
 
+#include "resize.h"
+#include "tensor.h"
 #include "utils.h"
 
 namespace biopass {
 
-FaceDetection::FaceDetection(const std::string& ckpt, int imgsz, const float conf, const float iou)
-    : conf(conf), iou(iou), imgsz(imgsz), session(ckpt, "FaceDetection") {}
+FaceDetection::FaceDetection(const ModelBytes& model, int imgsz, const float conf, const float iou)
+    : conf(conf), iou(iou), imgsz(imgsz), session(model, "FaceDetection") {}
 
 std::vector<Detection> FaceDetection::inference(const ImageRGB& image) {
+  if (image.empty()) {
+    return {};
+  }
   ImageRGB input_image = imageLetterbox(image, this->imgsz, this->imgsz);
   std::vector<float> image_data = this->preprocess(input_image);
 
@@ -27,17 +32,13 @@ std::vector<Detection> FaceDetection::inference(const ImageRGB& image) {
 
   std::vector<Detection> results;
   for (auto& d : raw_dets) {
-    int x1 = std::max(0, (int)d.x1);
-    int y1 = std::max(0, (int)d.y1);
-    int x2 = std::min(image.width, (int)d.x2);
-    int y2 = std::min(image.height, (int)d.y2);
-
-    if (x2 - x1 <= 0 || y2 - y1 <= 0) {
+    const std::optional<PixelBox> box = clampBoxToImage(d, image.width, image.height);
+    if (!box) {
       continue;
     }
 
-    Box xyxy_box(x1, y1, x2, y2);
-    ImageRGB crop_face = image.crop(x1, y1, x2, y2);
+    Box xyxy_box(box->x1, box->y1, box->x2, box->y2);
+    ImageRGB crop_face = image.crop(box->x1, box->y1, box->x2, box->y2);
     Detection det(d.cls, std::string("face"), d.conf, xyxy_box, crop_face);
     results.push_back(det);
   }

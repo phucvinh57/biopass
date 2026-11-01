@@ -1,15 +1,21 @@
+import { commands } from "@/bindings";
 import type { BiopassConfig } from "@/types/config";
-import { invokeCommand } from "./core";
 
-function load() {
-  return invokeCommand<BiopassConfig>("load_config");
+function load(): Promise<BiopassConfig> {
+  return commands.loadConfig();
 }
 
-function save(config: BiopassConfig) {
-  return invokeCommand<void>("save_config", { config });
+async function save(config: BiopassConfig): Promise<void> {
+  await commands.saveConfig(config);
+}
+
+// Changes only `appearance` in config.yaml; every other value is kept.
+async function setAppearance(appearance: string): Promise<void> {
+  await commands.setAppearance(appearance);
 }
 
 export const config = {
   load,
   save,
+  setAppearance,
 };

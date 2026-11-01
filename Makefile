@@ -5,11 +5,11 @@
 #         meson, ninja-build, python3-jinja2, python3-yaml, python3-ply,
 #         libudev-dev, libdrm-dev, libegl-dev, libgles-dev.
 #   app:  bun, rustup/cargo, tauri-cli v2, webkit2gtk, libssl-dev.
+# Full package lists: CONTRIBUTING.md, "Install Dependencies".
 
 .PHONY: all build build-auth build-app test-auth \
         package package-app \
-        clean clean-auth clean-app \
-        install-deps
+        clean clean-auth clean-app help
 
 BUILD_TYPE   ?= Release
 AUTH_BUILD   := auth/build
@@ -46,17 +46,20 @@ clean-auth:
 	rm -rf $(AUTH_BUILD)
 
 # Tauri bundles the auth .so files, so build them first.
+# Cargo.toml carries the app version (CARGO_PKG_VERSION, bundle names), so
+# VERSION is stamped in for the build and Cargo.toml/Cargo.lock are put back
+# after, even on failure, so a build never leaves tracked files modified.
 build-app: build-auth
 	@echo "==> [app] Installing JS dependencies…"
 	cd $(APP_DIR) && bun install --frozen-lockfile
-	@echo "==> [app] Pinning model downloader to release $(VERSION)…"
-	sed -i -E 's#^const DEFAULT_MODELS_URL: &str = "https://github.com/phucvinh57/biopass/releases/(latest/download|download/[^"]+)";#const DEFAULT_MODELS_URL: \&str = "https://github.com/phucvinh57/biopass/releases/download/$(VERSION)";#' \
-	    $(APP_DIR)/src-tauri/src/models.rs
-	@echo "==> [app] Pinning app version to $(VERSION)…"
-	sed -i -E 's/^version = "[^"]*"/version = "$(VERSION)"/' \
-	    $(APP_DIR)/src-tauri/Cargo.toml
-	@echo "==> [app] Building Tauri application…"
-	cd $(APP_DIR) && bun run tauri build
+	@echo "==> [app] Building Tauri application (version $(VERSION))…"
+	@set -e; \
+	  src="$(CURDIR)/$(APP_DIR)/src-tauri"; bak="$$src/target/version-stamp"; \
+	  mkdir -p "$$bak"; cp "$$src/Cargo.toml" "$$src/Cargo.lock" "$$bak/"; \
+	  trap 'cp "$$bak/Cargo.toml" "$$bak/Cargo.lock" "$$src/"' EXIT; \
+	  trap 'exit 130' INT TERM; \
+	  sed -i -E 's/^version = "[^"]*"/version = "$(VERSION)"/' "$$src/Cargo.toml"; \
+	  cd $(APP_DIR) && bun run tauri build
 
 package-app: build-app
 	@echo "==> [app] Tauri packages are in app/src-tauri/target/release/bundle/"

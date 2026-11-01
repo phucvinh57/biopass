@@ -12,7 +12,7 @@
 #include <vector>
 
 #include "camera_capture.h"
-#include "image_utils.h"
+#include "image_io.h"
 
 namespace {
 

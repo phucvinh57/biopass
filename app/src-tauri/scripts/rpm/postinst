@@ -1,9 +1,0 @@
-#!/bin/bash
-# In RPM, $1 is the number of installed versions after the transaction.
-
-set -e
-
-# Refresh linker cache after installing the private Biopass library path.
-ldconfig
-
-exit 0

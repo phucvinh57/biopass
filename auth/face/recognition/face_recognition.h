@@ -4,27 +4,34 @@
 #include <string>
 #include <vector>
 
-#include "image_utils.h"
+#include "image.h"
 #include "onnx_session.h"
 
 namespace biopass {
 
+// Cosine similarity of two embeddings, in [-1, 1]: higher = more alike.
+// Throws std::runtime_error if either has zero magnitude.
+float cosineSimilarity(const std::vector<float>& feat1, const std::vector<float>& feat2);
+
+// Same face iff the similarity is strictly above the threshold (NaN never is).
+inline bool isSameFace(float similarity, float threshold) { return similarity > threshold; }
+
 struct MatchResult {
-  float dist;
+  // Cosine similarity of the two faces' embeddings.
+  float similarity;
   bool similar;
-  MatchResult(float dist, bool similar) : dist(dist), similar(similar) {}
+  MatchResult(float similarity, bool similar) : similarity(similarity), similar(similar) {}
 };
 
 class FaceRecognition {
  public:
-  FaceRecognition(const std::string& ckpt, int imgsz = 112, const float threshold = 0.50);
+  FaceRecognition(const ModelBytes& model, int imgsz = 112, const float threshold = 0.50);
 
   MatchResult match(const ImageRGB& image1, const ImageRGB& image2);
 
  private:
   std::vector<float> inference(const ImageRGB& image);
   std::vector<float> preprocess(const ImageRGB& image);
-  float cosine(const std::vector<float>& feat1, const std::vector<float>& feat2);
 
   float threshold;
   int imgsz;

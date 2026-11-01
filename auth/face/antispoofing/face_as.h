@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "face_detection.h"
-#include "image_utils.h"
+#include "image.h"
 #include "onnx_session.h"
 
 namespace biopass {
@@ -27,7 +27,7 @@ std::optional<AntiSpoofArchitecture> parseAntiSpoofArchitecture(const std::strin
 class FaceAntiSpoofing {
  public:
   // imgsz is only used when the model's input height/width are dynamic.
-  FaceAntiSpoofing(const std::string& ckpt, AntiSpoofArchitecture architecture, int imgsz = 128,
+  FaceAntiSpoofing(const ModelBytes& model, AntiSpoofArchitecture architecture, int imgsz = 128,
                    const float threshold = 0.8);
 
   // frame: the full camera frame; face_box: the detected face in it.

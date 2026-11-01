@@ -1,5 +1,7 @@
 # PAM Setup Guide
 
+Biopass is meant as `auth sufficient`, an alternative to the password, not a second factor: when no method can run (e.g. no camera, fprintd not reachable) it returns `PAM_IGNORE` and the stack falls through to the next rule.
+
 ## Debian/Ubuntu
 
 1. Verify the Biopass PAM profile exists:

@@ -1,21 +1,135 @@
+use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 use rusqlite::{params, Connection, OptionalExtension};
 use rusqlite_migration::{Migrations, M};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
 
-use crate::paths::{get_config_dir, get_data_dir, get_db_path};
+use crate::paths::{
+    ensure_private_dir, ensure_private_file, get_config_dir, get_data_dir, get_db_path,
+};
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+/// A fieldless enum kept as fixed strings: the same text in the database
+/// (TEXT column), in JSON for the frontend, and from `as_str`/`parse`.
+macro_rules! text_enum {
+    ($(#[$meta:meta])* $name:ident { $($variant:ident => $text:literal),+ $(,)? }) => {
+        $(#[$meta])*
+        #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, specta::Type)]
+        pub enum $name {
+            $(#[serde(rename = $text)] $variant),+
+        }
+
+        impl $name {
+            pub const ALL: &'static [$name] = &[$($name::$variant),+];
+
+            pub fn as_str(self) -> &'static str {
+                match self {
+                    $($name::$variant => $text),+
+                }
+            }
+
+            pub fn parse(text: &str) -> Option<Self> {
+                match text {
+                    $($text => Some($name::$variant),)+
+                    _ => None,
+                }
+            }
+        }
+
+        impl ToSql for $name {
+            fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+                Ok(self.as_str().into())
+            }
+        }
+
+        impl FromSql for $name {
+            fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+                let text = value.as_str()?;
+                $name::parse(text).ok_or_else(|| {
+                    FromSqlError::Other(
+                        format!("unknown {} '{}'", stringify!($name), text).into(),
+                    )
+                })
+            }
+        }
+    };
+}
+
+text_enum! {
+    /// The model's job in the face pipeline (`task` column).
+    ModelTask {
+        Detection => "detection",
+        Recognition => "recognition",
+        AntiSpoofing => "anti_spoofing",
+    }
+}
+
+/// Where a model came from (`source` column). The app writes only
+/// "builtin" and "user", but the column has no CHECK constraint, so any
+/// other stored value is kept as `Other`: such a row still lists, renames
+/// and deletes, and keeps its string in the DB and in JSON.
+#[derive(Debug, Clone, PartialEq, Eq, specta::Type)]
+#[specta(type = String)]
+pub enum ModelSource {
+    Builtin,
+    User,
+    Other(String),
+}
+
+impl ModelSource {
+    pub fn as_str(&self) -> &str {
+        match self {
+            ModelSource::Builtin => "builtin",
+            ModelSource::User => "user",
+            ModelSource::Other(text) => text,
+        }
+    }
+
+    pub fn parse(text: &str) -> Self {
+        match text {
+            "builtin" => ModelSource::Builtin,
+            "user" => ModelSource::User,
+            _ => ModelSource::Other(text.to_string()),
+        }
+    }
+}
+
+impl Serialize for ModelSource {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for ModelSource {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(ModelSource::parse(&String::deserialize(deserializer)?))
+    }
+}
+
+impl ToSql for ModelSource {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        Ok(self.as_str().into())
+    }
+}
+
+impl FromSql for ModelSource {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+        Ok(ModelSource::parse(value.as_str()?))
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, specta::Type)]
 pub struct Model {
     pub id: String,
     pub name: String,
-    pub task: String,
+    pub task: ModelTask,
     pub architecture: Option<String>,
     pub path: String,
     pub version: Option<String>,
     pub checksum: Option<String>,
-    pub source: String,
+    pub source: ModelSource,
+    // Unix seconds: well inside a JS number's exact integer range.
+    #[specta(type = specta_typescript::Number)]
     pub installed_at: i64,
 }
 
@@ -23,8 +137,12 @@ pub struct KnownModel {
     pub slug: &'static str,
     pub filename: &'static str,
     pub display_name: &'static str,
-    pub task: &'static str,
+    pub task: ModelTask,
     pub architecture: Option<&'static str>,
+    /// Hex SHA-256 and byte size of the release asset: the Git LFS `oid`
+    /// and `size` of auth/face/models/<filename>. Update them together.
+    pub sha256: &'static str,
+    pub size: u64,
 }
 
 /// Built-in models. The app downloads any that are missing on startup
@@ -34,36 +152,46 @@ pub const KNOWN_MODELS: &[KnownModel] = &[
         slug: "yolov8n-face",
         filename: "yolov8n-face.onnx",
         display_name: "YOLOv8n Face",
-        task: "detection",
+        task: ModelTask::Detection,
         architecture: None,
+        sha256: "3e81709ceaae911db2dd23bed39aa1fc980b6320e8a8bbf8b587b2a8feaa5a5a",
+        size: 12667296,
     },
     KnownModel {
         slug: "edgeface-s-gamma-05",
         filename: "edgeface_s_gamma_05.onnx",
         display_name: "EdgeFace S (gamma 0.5)",
-        task: "recognition",
+        task: ModelTask::Recognition,
         architecture: None,
+        sha256: "cdc2ced431b4bf071c92f2fe8bb6ed4b5017be4175b4375eaa6e14b255f831ce",
+        size: 14847458,
     },
     KnownModel {
         slug: "edgeface-xs-gamma-06",
         filename: "edgeface_xs_gamma_06.onnx",
         display_name: "EdgeFace XS (gamma 0.6)",
-        task: "recognition",
+        task: ModelTask::Recognition,
         architecture: None,
+        sha256: "619ffe6f9df592e250e900ed135c2de3d620f6bc0a913f7d0432fa0735073a53",
+        size: 7319208,
     },
     KnownModel {
         slug: "mobilenetv3-antispoof",
         filename: "mobilenetv3_antispoof.onnx",
         display_name: "MobileNetV3 Anti-Spoof",
-        task: "anti_spoofing",
+        task: ModelTask::AntiSpoofing,
         architecture: Some("mobilenetv3"),
+        sha256: "a90d32b1f217658d1eb1ea05d9248d07fbd05c8ee41b4baa4c36b5cde30d40f4",
+        size: 12152984,
     },
     KnownModel {
         slug: "minifas-v2",
         filename: "minifas_v2.onnx",
         display_name: "MiniFASNet V2",
-        task: "anti_spoofing",
+        task: ModelTask::AntiSpoofing,
         architecture: Some("minifasv2"),
+        sha256: "af2381b88f38769222ed93379e12444e2a50814575de1c46170de570c55a42b6",
+        size: 1912594,
     },
 ];
 
@@ -84,12 +212,12 @@ fn migrations() -> Migrations<'static> {
 /// Opens biopass.db, runs pending migrations, and seeds built-in models.
 pub fn open(app: &AppHandle) -> Result<Connection, String> {
     let config_dir = get_config_dir(app)?;
-    if !config_dir.exists() {
-        std::fs::create_dir_all(&config_dir)
-            .map_err(|e| format!("Failed to create config directory: {}", e))?;
-    }
+    ensure_private_dir(&config_dir)
+        .map_err(|e| format!("Failed to create config directory: {}", e))?;
 
+    // Create it 0600 before SQLite does (it would use the umask).
     let db_path = get_db_path(app)?;
+    ensure_private_file(&db_path).map_err(|e| format!("Failed to create database file: {}", e))?;
     let mut conn =
         Connection::open(&db_path).map_err(|e| format!("Failed to open database: {}", e))?;
     conn.busy_timeout(Duration::from_secs(2))
@@ -110,18 +238,20 @@ fn seed_default_models(conn: &Connection, app: &AppHandle) -> Result<(), String>
 
     for known in KNOWN_MODELS {
         let path = models_dir.join(known.filename);
-        if !path.exists() {
+        // A 0-byte file is a failed download, not a model.
+        if !std::fs::metadata(&path).is_ok_and(|m| m.is_file() && m.len() > 0) {
             continue;
         }
         conn.execute(
             "INSERT OR IGNORE INTO models (id, name, task, architecture, path, version, checksum, source, installed_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL, 'builtin', ?6)",
+             VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL, ?6, ?7)",
             params![
                 known.slug,
                 known.display_name,
                 known.task,
                 known.architecture,
                 path.to_string_lossy(),
+                ModelSource::Builtin,
                 now
             ],
         )
@@ -148,7 +278,7 @@ fn row_to_model(row: &rusqlite::Row) -> rusqlite::Result<Model> {
 const MODEL_COLUMNS: &str =
     "id, name, task, architecture, path, version, checksum, source, installed_at";
 
-pub fn list_models(conn: &Connection, task: Option<&str>) -> Result<Vec<Model>, String> {
+pub fn list_models(conn: &Connection, task: Option<ModelTask>) -> Result<Vec<Model>, String> {
     let query = format!(
         "SELECT {} FROM models WHERE (?1 IS NULL OR task = ?1) ORDER BY installed_at",
         MODEL_COLUMNS
@@ -168,6 +298,13 @@ pub fn get_model(conn: &Connection, id: &str) -> Result<Option<Model>, String> {
     conn.query_row(&query, params![id], row_to_model)
         .optional()
         .map_err(|e| format!("Failed to query model '{}': {}", id, e))
+}
+
+/// True when a user model already holds `id`. Old versions could hand a
+/// built-in's slug to a user model, whose file then sits at the built-in's
+/// path; the built-in download must not overwrite it.
+pub fn is_user_model(conn: &Connection, id: &str) -> Result<bool, String> {
+    Ok(get_model(conn, id)?.is_some_and(|m| m.source == ModelSource::User))
 }
 
 pub fn resolve_model_path(conn: &Connection, id: &str) -> Result<Option<String>, String> {
@@ -199,45 +336,64 @@ pub fn update_model_name(conn: &Connection, id: &str, name: &str) -> Result<(), 
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn upsert_model(
+pub struct NewModel<'a> {
+    pub name: &'a str,
+    pub task: ModelTask,
+    pub architecture: Option<&'a str>,
+    pub checksum: Option<&'a str>,
+    pub source: ModelSource,
+}
+
+/// Inserts `model` under the first free id of `base`, `base-2`, ... and
+/// returns that id; `path_for(id)` gives the row's path.
+///
+/// Atomic: there is no separate "is it free?" read. A plain INSERT either
+/// claims the id or hits the PRIMARY KEY, so two concurrent adds can never
+/// share an id (or the `<id>.onnx` file). Built-in slugs are skipped even
+/// before the built-in is seeded, so a user model never takes its file.
+pub fn insert_with_unique_id(
     conn: &Connection,
-    id: &str,
-    name: &str,
-    task: &str,
-    architecture: Option<&str>,
-    path: &str,
-    version: Option<&str>,
-    checksum: Option<&str>,
-    source: &str,
-) -> Result<(), String> {
-    conn.execute(
-        "INSERT INTO models (id, name, task, architecture, path, version, checksum, source, installed_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
-         ON CONFLICT(id) DO UPDATE SET \
-             name = excluded.name, task = excluded.task, architecture = excluded.architecture, \
-             path = excluded.path, \
-             version = excluded.version, checksum = excluded.checksum, source = excluded.source, \
-             installed_at = excluded.installed_at",
-        params![
-            id,
-            name,
-            task,
-            architecture,
-            path,
-            version,
-            checksum,
-            source,
-            now_unix()
-        ],
-    )
-    .map_err(|e| format!("Failed to upsert model '{}': {}", id, e))?;
-    Ok(())
+    base: &str,
+    model: &NewModel,
+    path_for: impl Fn(&str) -> String,
+) -> Result<String, String> {
+    for n in 1..1000 {
+        let candidate = if n == 1 {
+            base.to_string()
+        } else {
+            format!("{base}-{n}")
+        };
+        if KNOWN_MODELS.iter().any(|k| k.slug == candidate) {
+            continue;
+        }
+        let inserted = conn.execute(
+            "INSERT INTO models (id, name, task, architecture, path, version, checksum, source, installed_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?8)",
+            params![
+                candidate,
+                model.name,
+                model.task,
+                model.architecture,
+                path_for(&candidate),
+                model.checksum,
+                model.source,
+                now_unix()
+            ],
+        );
+        match inserted {
+            Ok(_) => return Ok(candidate),
+            Err(rusqlite::Error::SqliteFailure(e, _))
+                if e.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_PRIMARYKEY => {}
+            Err(e) => return Err(format!("Failed to insert model '{}': {}", candidate, e)),
+        }
+    }
+    Err("Failed to allocate a unique model id".to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::TransactionBehavior;
 
     #[test]
     fn migration_002_backfills_architecture() {
@@ -265,13 +421,241 @@ mod tests {
         let mut conn = Connection::open_in_memory().unwrap();
         migrations().to_latest(&mut conn).unwrap();
 
-        let insert = |task: &str, arch: Option<&str>| {
-            upsert_model(&conn, "m", "m", task, arch, "/m.onnx", None, None, "user")
+        let insert = |task: ModelTask, arch: Option<&str>| {
+            let model = NewModel {
+                task,
+                architecture: arch,
+                ..user_model("m")
+            };
+            insert_with_unique_id(&conn, "m", &model, path_for)
         };
-        assert!(insert("anti_spoofing", None).is_err());
-        assert!(insert("anti_spoofing", Some("resnet")).is_err());
-        assert!(insert("detection", Some("minifasv2")).is_err());
-        assert!(insert("anti_spoofing", Some("minifasv2")).is_ok());
-        assert!(insert("detection", None).is_ok());
+        assert!(insert(ModelTask::AntiSpoofing, None).is_err());
+        assert!(insert(ModelTask::AntiSpoofing, Some("resnet")).is_err());
+        assert!(insert(ModelTask::Detection, Some("minifasv2")).is_err());
+        assert!(insert(ModelTask::AntiSpoofing, Some("minifasv2")).is_ok());
+        assert!(insert(ModelTask::Detection, None).is_ok());
+    }
+
+    fn user_model<'a>(name: &'a str) -> NewModel<'a> {
+        NewModel {
+            name,
+            task: ModelTask::Detection,
+            architecture: None,
+            checksum: None,
+            source: ModelSource::User,
+        }
+    }
+
+    fn path_for(id: &str) -> String {
+        format!("/m/{id}.onnx")
+    }
+
+    #[test]
+    fn unique_id_takes_next_free_suffix_without_overwriting() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrations().to_latest(&mut conn).unwrap();
+
+        let a = insert_with_unique_id(&conn, "face", &user_model("A"), path_for).unwrap();
+        let b = insert_with_unique_id(&conn, "face", &user_model("B"), path_for).unwrap();
+        let c = insert_with_unique_id(&conn, "face", &user_model("C"), path_for).unwrap();
+        assert_eq!(
+            (a.as_str(), b.as_str(), c.as_str()),
+            ("face", "face-2", "face-3")
+        );
+        assert_eq!(get_model(&conn, "face").unwrap().unwrap().name, "A");
+        assert_eq!(
+            get_model(&conn, "face-2").unwrap().unwrap().path,
+            "/m/face-2.onnx"
+        );
+    }
+
+    #[test]
+    fn unique_id_never_takes_a_builtin_slug() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrations().to_latest(&mut conn).unwrap();
+
+        // The built-in is not seeded yet (its file is not downloaded).
+        let id =
+            insert_with_unique_id(&conn, "yolov8n-face", &user_model("Mine"), path_for).unwrap();
+        assert_eq!(id, "yolov8n-face-2");
+    }
+
+    #[test]
+    fn unique_id_reports_non_conflict_errors() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrations().to_latest(&mut conn).unwrap();
+
+        let bad = NewModel {
+            task: ModelTask::AntiSpoofing,
+            ..user_model("No arch")
+        };
+        assert!(insert_with_unique_id(&conn, "x", &bad, path_for).is_err());
+        assert!(get_model(&conn, "x").unwrap().is_none());
+    }
+
+    #[test]
+    fn concurrent_adds_get_distinct_ids() {
+        const ADDERS: usize = 8;
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("biopass.db");
+        migrations()
+            .to_latest(&mut Connection::open(&db_path).unwrap())
+            .unwrap();
+
+        let barrier = std::sync::Barrier::new(ADDERS);
+        let ids: Vec<String> = std::thread::scope(|s| {
+            let handles: Vec<_> = (0..ADDERS)
+                .map(|i| {
+                    let (db_path, barrier) = (&db_path, &barrier);
+                    s.spawn(move || {
+                        let conn = Connection::open(db_path).unwrap();
+                        conn.busy_timeout(Duration::from_secs(10)).unwrap();
+                        let name = format!("adder {i}");
+                        barrier.wait();
+                        let mut conn = conn;
+                        let tx = conn
+                            .transaction_with_behavior(TransactionBehavior::Immediate)
+                            .unwrap();
+                        let id = insert_with_unique_id(&tx, "face", &user_model(&name), path_for)
+                            .unwrap();
+                        // Widen the window between allocation and commit.
+                        std::thread::sleep(Duration::from_millis(20));
+                        tx.commit().unwrap();
+                        id
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+
+        let mut unique = ids.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), ADDERS, "duplicate ids: {ids:?}");
+        let conn = Connection::open(&db_path).unwrap();
+        assert_eq!(list_models(&conn, None).unwrap().len(), ADDERS);
+    }
+
+    fn db_with_each_task() -> Connection {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrations().to_latest(&mut conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO models (id, name, task, architecture, path, source, installed_at) VALUES \
+                 ('det', 'D', 'detection', NULL, '/m/det.onnx', 'builtin', 0), \
+                 ('rec', 'R', 'recognition', NULL, '/m/rec.onnx', 'builtin', 1), \
+                 ('as', 'A', 'anti_spoofing', 'minifasv2', '/m/as.onnx', 'user', 2);",
+        )
+        .unwrap();
+        conn
+    }
+
+    /// The frontend's Model type (app/src/types/config.ts) reads these strings.
+    #[test]
+    fn model_json_keeps_the_stored_strings() {
+        let conn = db_with_each_task();
+        let json = serde_json::to_value(list_models(&conn, None).unwrap()).unwrap();
+        let fields = |i: usize| {
+            (
+                json[i]["task"].as_str().unwrap().to_string(),
+                json[i]["source"].as_str().unwrap().to_string(),
+            )
+        };
+        assert_eq!(fields(0), ("detection".into(), "builtin".into()));
+        assert_eq!(fields(1), ("recognition".into(), "builtin".into()));
+        assert_eq!(fields(2), ("anti_spoofing".into(), "user".into()));
+        assert_eq!(json[2]["architecture"], "minifasv2");
+    }
+
+    #[test]
+    fn list_models_filters_by_task() {
+        let conn = db_with_each_task();
+        let ids = |task| -> Vec<String> {
+            list_models(&conn, task)
+                .unwrap()
+                .into_iter()
+                .map(|m| m.id)
+                .collect()
+        };
+        assert_eq!(ids(None), ["det", "rec", "as"]);
+        assert_eq!(ids(Some(ModelTask::Detection)), ["det"]);
+        assert_eq!(ids(Some(ModelTask::Recognition)), ["rec"]);
+        assert_eq!(ids(Some(ModelTask::AntiSpoofing)), ["as"]);
+    }
+
+    /// Rows keep the strings the auth side and older app versions read.
+    #[test]
+    fn inserted_rows_store_task_and_source_strings() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrations().to_latest(&mut conn).unwrap();
+        let model = NewModel {
+            task: ModelTask::AntiSpoofing,
+            architecture: Some("minifasv2"),
+            ..user_model("A")
+        };
+        let id = insert_with_unique_id(&conn, "a", &model, path_for).unwrap();
+        let stored: (String, String) = conn
+            .query_row(
+                "SELECT task, source FROM models WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(stored, ("anti_spoofing".into(), "user".into()));
+    }
+
+    #[test]
+    fn text_enums_parse_their_own_strings_only() {
+        for &task in ModelTask::ALL {
+            assert_eq!(ModelTask::parse(task.as_str()), Some(task));
+            assert_eq!(serde_json::to_value(task).unwrap(), task.as_str());
+        }
+        for bad in ["", "Detection", "anti-spoofing", "bogus"] {
+            assert_eq!(ModelTask::parse(bad), None, "{bad}");
+        }
+        for (text, source) in [
+            ("builtin", ModelSource::Builtin),
+            ("user", ModelSource::User),
+            ("Builtin", ModelSource::Other("Builtin".into())),
+            ("", ModelSource::Other(String::new())),
+        ] {
+            assert_eq!(ModelSource::parse(text), source);
+            assert_eq!(source.as_str(), text);
+            assert_eq!(serde_json::to_value(&source).unwrap(), text);
+        }
+    }
+
+    /// `source` has no CHECK constraint. A row with another value still
+    /// lists, keeps its stored string, is neither built-in (so it can be
+    /// deleted) nor a user model.
+    #[test]
+    fn unknown_source_reads_like_any_other_row() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrations().to_latest(&mut conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO models (id, name, task, path, source, installed_at) VALUES \
+                 ('m', 'M', 'detection', '/m/m.onnx', 'custom', 0);",
+        )
+        .unwrap();
+        let json = serde_json::to_value(list_models(&conn, None).unwrap()).unwrap();
+        assert_eq!(json[0]["source"], "custom");
+        let model = get_model(&conn, "m").unwrap().unwrap();
+        assert_ne!(model.source, ModelSource::Builtin);
+        assert!(!is_user_model(&conn, "m").unwrap());
+    }
+
+    #[test]
+    fn is_user_model_only_for_user_rows() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrations().to_latest(&mut conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO models (id, name, task, path, source, installed_at) VALUES \
+                 ('yolov8n-face', 'Mine', 'detection', '/m/yolov8n-face.onnx', 'user', 0), \
+                 ('edgeface-s-gamma-05', 'E', 'recognition', '/m/e.onnx', 'builtin', 0);",
+        )
+        .unwrap();
+
+        assert!(is_user_model(&conn, "yolov8n-face").unwrap());
+        assert!(!is_user_model(&conn, "edgeface-s-gamma-05").unwrap());
+        assert!(!is_user_model(&conn, "minifas-v2").unwrap());
     }
 }
