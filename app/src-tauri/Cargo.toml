@@ -32,3 +32,6 @@ tempfile = "3"
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "stream"] }
 sha2 = "0.11.0"
 futures-util = "0.3"
+specta = { version = "=2.0.0-rc.26", features = ["derive"] }
+tauri-specta = { version = "=2.0.0-rc.26", features = ["typescript"] }
+specta-typescript = "=0.0.13"

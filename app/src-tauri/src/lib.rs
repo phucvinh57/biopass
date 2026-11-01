@@ -1,3 +1,4 @@
+pub mod bindings;
 pub mod blocking;
 pub mod config;
 pub mod db;
@@ -11,15 +12,7 @@ pub mod models;
 pub mod paths;
 pub mod system;
 
-use config::{load_config, save_config, set_appearance};
-use face::{delete_face, list_faces};
-use face_session::{capture_face_in_session, start_face_preview, stop_face_preview, PreviewState};
-use fingerprint::{enroll_fingerprint, list_enrolled_fingerprints, remove_fingerprint};
-use models::{
-    add_model_from_file, add_model_from_url, delete_model, ensure_default_models, list_models,
-    rename_model,
-};
-use system::{get_current_username, list_video_devices};
+use face_session::PreviewState;
 
 use tauri::Manager;
 
@@ -53,27 +46,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            load_config,
-            save_config,
-            set_appearance,
-            get_current_username,
-            start_face_preview,
-            stop_face_preview,
-            capture_face_in_session,
-            list_faces,
-            list_video_devices,
-            delete_face,
-            enroll_fingerprint,
-            remove_fingerprint,
-            list_enrolled_fingerprints,
-            list_models,
-            add_model_from_url,
-            add_model_from_file,
-            delete_model,
-            rename_model,
-            ensure_default_models
-        ])
+        .invoke_handler(bindings::builder().invoke_handler())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -8,6 +8,7 @@ use tauri::AppHandle;
 const TASK: &str = "Fingerprint";
 
 #[tauri::command]
+#[specta::specta]
 pub async fn list_enrolled_fingerprints(username: String) -> Result<Vec<String>, String> {
     run_blocking(TASK, move || {
         FingerprintAuth::new().list_enrolled_fingers(&username)
@@ -16,6 +17,7 @@ pub async fn list_enrolled_fingerprints(username: String) -> Result<Vec<String>,
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn enroll_fingerprint(
     app: AppHandle,
     username: String,
@@ -47,6 +49,7 @@ pub async fn enroll_fingerprint(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn remove_fingerprint(
     _app: AppHandle,
     username: String,

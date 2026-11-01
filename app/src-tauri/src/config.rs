@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use specta::Type;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
@@ -10,7 +11,7 @@ use crate::paths::{ensure_private_dir, get_config_dir, get_config_path};
 /// CURRENT_SCHEMA_VERSION in auth/core/auth_config.h.
 pub const CURRENT_SCHEMA_VERSION: u32 = 2;
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Type)]
 #[serde(default)]
 pub struct BiopassConfig {
     pub schema_version: u32,
@@ -19,7 +20,7 @@ pub struct BiopassConfig {
     pub appearance: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Type)]
 #[serde(default)]
 pub struct StrategyConfig {
     pub debug: bool,
@@ -33,7 +34,7 @@ pub struct StrategyConfig {
 /// so the app shows and saves what applies instead of rejecting the config.
 /// A value that is not a string differs: the app rejects the config, while
 /// the helper reads a scalar (e.g. `1`, `~`) as parallel.
-#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "lowercase")]
 pub enum ExecutionMode {
     Sequential,
@@ -49,14 +50,14 @@ impl<'de> Deserialize<'de> for ExecutionMode {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Type)]
 #[serde(default)]
 pub struct MethodsConfig {
     pub face: FaceMethodConfig,
     pub fingerprint: FingerprintMethodConfig,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Type)]
 #[serde(default)]
 pub struct FaceMethodConfig {
     pub enable: bool,
@@ -68,28 +69,31 @@ pub struct FaceMethodConfig {
     pub anti_spoofing: AntiSpoofingConfig,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Type)]
 #[serde(default)]
 pub struct DetectionConfig {
     pub model_id: String,
+    #[specta(type = specta_typescript::Number)]
     pub threshold: f32,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Type)]
 #[serde(default)]
 pub struct RecognitionConfig {
     pub model_id: String,
+    #[specta(type = specta_typescript::Number)]
     pub threshold: f32,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Type)]
 #[serde(default)]
 pub struct AntiSpoofingModelConfig {
     pub model_id: String,
+    #[specta(type = specta_typescript::Number)]
     pub threshold: f32,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Type)]
 #[serde(default)]
 pub struct AntiSpoofingConfig {
     pub enable: bool,
@@ -99,7 +103,7 @@ pub struct AntiSpoofingConfig {
     pub ir_presence_timeout_ms: i32,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Type)]
 #[serde(default)]
 pub struct FingerprintMethodConfig {
     pub enable: bool,
@@ -308,6 +312,7 @@ fn parse_config(content: &str) -> Result<BiopassConfig, String> {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn load_config(app: AppHandle) -> Result<BiopassConfig, String> {
     read_config_file(&get_config_path(&app)?)
 }
@@ -325,6 +330,7 @@ fn read_config_file(path: &Path) -> Result<BiopassConfig, String> {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn save_config(app: AppHandle, config: BiopassConfig) -> Result<(), String> {
     let yaml_content =
         serde_yaml::to_string(&config).map_err(|e| format!("Failed to serialize config: {}", e))?;
@@ -356,6 +362,7 @@ fn with_appearance(content: Option<&str>, appearance: &str) -> Result<String, St
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn set_appearance(app: AppHandle, appearance: String) -> Result<(), String> {
     let config_path = get_config_path(&app)?;
     let content = if config_path.exists() {

@@ -25,6 +25,7 @@ const PROGRESS_THROTTLE_MS: u128 = 150;
 const MAX_NAME_LEN: usize = 200;
 
 #[tauri::command]
+#[specta::specta]
 pub fn list_models(app: AppHandle, task: Option<String>) -> Result<Vec<Model>, String> {
     let task = match task.as_deref().map(ModelTask::parse) {
         None => None,
@@ -36,10 +37,14 @@ pub fn list_models(app: AppHandle, task: Option<String>) -> Result<Vec<Model>, S
     db::list_models(&conn, task)
 }
 
-#[derive(Clone, Serialize)]
-struct DownloadProgress {
+/// Payload of the "model-download-progress" event.
+#[derive(Clone, Serialize, specta::Type)]
+pub struct DownloadProgress {
     id: String,
+    // Byte counts; a JS number is exact up to 2^53.
+    #[specta(type = specta_typescript::Number)]
     downloaded: u64,
+    #[specta(type = Option<specta_typescript::Number>)]
     total: Option<u64>,
 }
 
@@ -376,6 +381,7 @@ fn require_https(url: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn add_model_from_url(
     app: AppHandle,
     name: String,
@@ -462,6 +468,7 @@ async fn ensure_builtin(
 /// db::open registers them on the next read. Returns the downloaded names;
 /// if any model fails, the others are still tried and all errors returned.
 #[tauri::command]
+#[specta::specta]
 pub async fn ensure_default_models(app: AppHandle) -> Result<Vec<String>, String> {
     let dir = models_dir(&app)?;
     let sweep_dir = dir.clone();
@@ -510,6 +517,7 @@ pub async fn ensure_default_models(app: AppHandle) -> Result<Vec<String>, String
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn add_model_from_file(
     app: AppHandle,
     name: String,
@@ -561,6 +569,7 @@ fn is_model_referenced(config: &BiopassConfig, id: &str) -> bool {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn delete_model(app: AppHandle, id: String) -> Result<(), String> {
     let conn = db::open(&app)?;
     let model = db::get_model(&conn, &id)?.ok_or_else(|| format!("Model '{}' not found", id))?;
@@ -588,6 +597,7 @@ pub fn delete_model(app: AppHandle, id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn rename_model(app: AppHandle, id: String, name: String) -> Result<Model, String> {
     let name = validate_name(&name)?;
     let conn = db::open(&app)?;

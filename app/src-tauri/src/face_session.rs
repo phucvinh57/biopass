@@ -459,6 +459,7 @@ fn capture(app: &AppHandle, slot: &Slot) -> Result<String, String> {
 const TASK: &str = "Preview";
 
 #[tauri::command]
+#[specta::specta]
 pub async fn start_face_preview(
     app: AppHandle,
     state: State<'_, PreviewState>,
@@ -469,6 +470,7 @@ pub async fn start_face_preview(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn stop_face_preview(state: State<'_, PreviewState>) -> Result<(), String> {
     let slot = state.0.clone();
     run_blocking(TASK, move || {
@@ -481,6 +483,7 @@ pub async fn stop_face_preview(state: State<'_, PreviewState>) -> Result<(), Str
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn capture_face_in_session(
     app: AppHandle,
     state: State<'_, PreviewState>,

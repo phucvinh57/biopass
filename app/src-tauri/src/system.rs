@@ -1,7 +1,7 @@
 use serde::Serialize;
 use std::fs;
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, specta::Type)]
 pub struct VideoDeviceInfo {
     pub path: String,
     pub name: String,
@@ -9,6 +9,7 @@ pub struct VideoDeviceInfo {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn get_current_username() -> Result<String, String> {
     username_from(|key| std::env::var(key).ok())
         .ok_or_else(|| "Could not determine current username".to_string())
@@ -34,6 +35,7 @@ fn video_device_sort_key(path: &str) -> i32 {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn list_video_devices() -> Result<Vec<VideoDeviceInfo>, String> {
     let mut devices = Vec::new();
     let entries = fs::read_dir("/dev").map_err(|e| format!("Failed to read /dev: {}", e))?;

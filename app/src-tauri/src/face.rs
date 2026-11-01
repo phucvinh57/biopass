@@ -6,6 +6,7 @@ use tauri::AppHandle;
 use crate::paths::get_faces_dir;
 
 #[tauri::command]
+#[specta::specta]
 pub fn list_faces(app: AppHandle) -> Result<Vec<String>, String> {
     let faces_dir = get_faces_dir(&app)?;
 
@@ -30,6 +31,7 @@ fn face_files_in(faces_dir: &Path) -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn delete_face(app: AppHandle, path: String) -> Result<(), String> {
     let faces_dir = get_faces_dir(&app)?;
     let target = resolve_face_file(&faces_dir, Path::new(&path))?;

@@ -14,7 +14,7 @@ use crate::paths::{
 macro_rules! text_enum {
     ($(#[$meta:meta])* $name:ident { $($variant:ident => $text:literal),+ $(,)? }) => {
         $(#[$meta])*
-        #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+        #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, specta::Type)]
         pub enum $name {
             $(#[serde(rename = $text)] $variant),+
         }
@@ -68,7 +68,8 @@ text_enum! {
 /// "builtin" and "user", but the column has no CHECK constraint, so any
 /// other stored value is kept as `Other`: such a row still lists, renames
 /// and deletes, and keeps its string in the DB and in JSON.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, specta::Type)]
+#[specta(type = String)]
 pub enum ModelSource {
     Builtin,
     User,
@@ -117,7 +118,7 @@ impl FromSql for ModelSource {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, specta::Type)]
 pub struct Model {
     pub id: String,
     pub name: String,
@@ -127,6 +128,8 @@ pub struct Model {
     pub version: Option<String>,
     pub checksum: Option<String>,
     pub source: ModelSource,
+    // Unix seconds: well inside a JS number's exact integer range.
+    #[specta(type = specta_typescript::Number)]
     pub installed_at: i64,
 }
 
