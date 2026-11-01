@@ -21,10 +21,14 @@ inline constexpr int kCurrentSchemaVersion = 2;
 
 // Mirrors app/src-tauri/src/config.rs.
 
+// A `strategy.order` entry: "face" or "fingerprint" in config.yaml.
+enum class MethodKind { Face, Fingerprint };
+
 struct StrategyConfig {
   bool debug = false;
-  std::string execution_mode = "parallel";
-  std::vector<std::string> order = {"face", "fingerprint"};
+  // config.yaml: "sequential" or "parallel"; anything else is parallel.
+  ExecutionMode execution_mode = ExecutionMode::Parallel;
+  std::vector<MethodKind> order = {MethodKind::Face, MethodKind::Fingerprint};
   std::vector<std::string> ignore_services = {"polkit-1", "pkexec"};
 };
 
@@ -109,15 +113,16 @@ inline constexpr float kMaxThreshold = 1.0f;
 // - A face threshold outside [kMinThreshold, kMaxThreshold] (or NaN) turns
 //   face off: there is no safe value to clamp it to. The anti-spoofing
 //   threshold only counts while anti-spoofing is on.
-// - order keeps each known method once and appends the missing ones;
-//   ignore_services drops empty and repeated names; an unknown
-//   execution_mode means "parallel".
+// - order keeps each method once and appends the missing ones;
+//   ignore_services drops empty and repeated names.
 // - Retries, delays and timeouts are clamped into [0, max].
 //   fingerprint.timeout 0 used to mean "wait forever"; it now means the
 //   maximum.
 void validateConfig(BiopassConfig& config);
 
 // Parses config.yaml's text and runs validateConfig() on the result.
+// execution_mode is "sequential" only when spelled exactly so; order drops
+// names other than "face" and "fingerprint".
 // nullopt for a config with any bad value or another schema_version: never
 // a mix of parsed values and defaults, and never defaults alone (they would
 // turn face back on for a user who turned it off).

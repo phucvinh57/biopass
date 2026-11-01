@@ -190,20 +190,25 @@ biopass::HelperExit authenticate(const std::string& username, const std::string&
   runtime_config.debug = config.strategy.debug;
 
   biopass::AuthManager manager;
-  manager.setMode(config.strategy.execution_mode == "sequential"
-                      ? biopass::ExecutionMode::Sequential
-                      : biopass::ExecutionMode::Parallel);
+  manager.setMode(config.strategy.execution_mode);
   manager.setConfig(runtime_config);
   manager.setDeadline(deadline);
 
   int numOfMethods = 0;
-  for (const auto& method_name : config.strategy.order) {
-    if (method_name == "face" && config.methods.face.enable) {
-      manager.addMethod(std::make_unique<biopass::FaceAuth>(config.methods.face, username));
-      numOfMethods++;
-    } else if (method_name == "fingerprint" && config.methods.fingerprint.enable) {
-      manager.addMethod(std::make_unique<biopass::FingerprintAuth>(config.methods.fingerprint));
-      numOfMethods++;
+  for (const biopass::MethodKind method : config.strategy.order) {
+    switch (method) {
+      case biopass::MethodKind::Face:
+        if (config.methods.face.enable) {
+          manager.addMethod(std::make_unique<biopass::FaceAuth>(config.methods.face, username));
+          numOfMethods++;
+        }
+        break;
+      case biopass::MethodKind::Fingerprint:
+        if (config.methods.fingerprint.enable) {
+          manager.addMethod(std::make_unique<biopass::FingerprintAuth>(config.methods.fingerprint));
+          numOfMethods++;
+        }
+        break;
     }
   }
 

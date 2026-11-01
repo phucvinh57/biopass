@@ -1,6 +1,8 @@
 // Checks validateConfig (core/auth_config.h): out-of-range thresholds turn
-// the face method off instead of loosening it, and order, ignore_services
-// and execution_mode come out normalised. Exits non-zero on any failure.
+// the face method off instead of loosening it, and order and
+// ignore_services come out normalised. parseConfig: execution_mode and
+// order names are read the way the helper always has. Exits non-zero on any
+// failure.
 
 #include <cstdio>
 #include <limits>
@@ -14,6 +16,7 @@
 namespace {
 
 using biopass::BiopassConfig;
+using biopass::MethodKind;
 
 int g_failures = 0;
 
@@ -48,9 +51,18 @@ void checkThreshold(const char* name, Setter set) {
 
 // The parsed strategy as config.yaml spells it, so the cases below read
 // like the YAML they come from.
-std::string modeName(const BiopassConfig& c) { return c.strategy.execution_mode; }
+std::string modeName(const BiopassConfig& c) {
+  return c.strategy.execution_mode == biopass::ExecutionMode::Sequential ? "sequential"
+                                                                         : "parallel";
+}
 
-std::vector<std::string> orderNames(const BiopassConfig& c) { return c.strategy.order; }
+std::vector<std::string> orderNames(const BiopassConfig& c) {
+  std::vector<std::string> names;
+  for (const MethodKind method : c.strategy.order) {
+    names.push_back(method == MethodKind::Face ? "face" : "fingerprint");
+  }
+  return names;
+}
 
 // A config expected to parse; a failure shows up as a FAIL line.
 BiopassConfig parseOrDie(const std::string& text) {
@@ -242,17 +254,17 @@ int main() {
 
   {
     BiopassConfig c;
-    c.strategy.order = {"fingerprint", "bogus", "fingerprint"};
+    c.strategy.order = {MethodKind::Fingerprint, MethodKind::Fingerprint};
     biopass::validateConfig(c);
-    expect(c.strategy.order == std::vector<std::string>{"fingerprint", "face"},
-           "order: unknown and repeated methods dropped, missing ones appended");
+    expect(orderNames(c) == std::vector<std::string>{"fingerprint", "face"},
+           "order: repeated methods dropped, missing ones appended");
   }
 
   {
     BiopassConfig c;
     c.strategy.order = {};
     biopass::validateConfig(c);
-    expect(c.strategy.order == std::vector<std::string>{"face", "fingerprint"},
+    expect(orderNames(c) == std::vector<std::string>{"face", "fingerprint"},
            "order: empty -> every method in the default order");
   }
 
@@ -269,18 +281,6 @@ int main() {
     c.strategy.ignore_services = {};
     biopass::validateConfig(c);
     expect(c.strategy.ignore_services.empty(), "ignore_services: an empty list stays empty");
-  }
-
-  for (const auto& [mode, want] : std::vector<std::pair<std::string, std::string>>{
-           {"sequential", "sequential"},
-           {"parallel", "parallel"},
-           {"bogus", "parallel"},
-           {"", "parallel"},
-       }) {
-    BiopassConfig c;
-    c.strategy.execution_mode = mode;
-    biopass::validateConfig(c);
-    expect(c.strategy.execution_mode == want, "execution_mode '" + mode + "' -> " + want);
   }
 
   if (g_failures != 0) {

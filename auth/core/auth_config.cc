@@ -22,23 +22,21 @@ constexpr size_t kMaxConfigBytes = 1 << 20;
 
 namespace {
 
-const std::vector<std::string> kSupportedMethods = {"face", "fingerprint"};
+constexpr MethodKind kAllMethods[] = {MethodKind::Face, MethodKind::Fingerprint};
 
 // NaN fails both comparisons, so it is out of range too.
 bool thresholdInRange(float t) { return t >= kMinThreshold && t <= kMaxThreshold; }
 
-// Keeps known methods once each, in the user's order, then appends any the
-// user left out.
-std::vector<std::string> normalizeOrder(const std::vector<std::string>& order) {
-  std::vector<std::string> out;
-  for (const auto& method : order) {
-    if (std::find(kSupportedMethods.begin(), kSupportedMethods.end(), method) !=
-            kSupportedMethods.end() &&
-        std::find(out.begin(), out.end(), method) == out.end()) {
+// Keeps each method once, in the user's order, then appends any the user
+// left out.
+std::vector<MethodKind> normalizeOrder(const std::vector<MethodKind>& order) {
+  std::vector<MethodKind> out;
+  for (const MethodKind method : order) {
+    if (std::find(out.begin(), out.end(), method) == out.end()) {
       out.push_back(method);
     }
   }
-  for (const auto& method : kSupportedMethods) {
+  for (const MethodKind method : kAllMethods) {
     if (std::find(out.begin(), out.end(), method) == out.end()) {
       out.push_back(method);
     }
@@ -74,9 +72,6 @@ bool faceThresholdsValid(const FaceMethodConfig& face) {
 
 void validateConfig(BiopassConfig& config) {
   StrategyConfig& strategy = config.strategy;
-  if (strategy.execution_mode != "sequential") {
-    strategy.execution_mode = "parallel";
-  }
   strategy.order = normalizeOrder(strategy.order);
   strategy.ignore_services = dedupeServices(strategy.ignore_services);
 
@@ -117,13 +112,33 @@ void readOptionalString(const YAML::Node& node, const char* key, std::optional<s
   }
 }
 
+// Only the exact name picks sequential; any other value means parallel.
+ExecutionMode parseExecutionMode(const std::string& name) {
+  return name == "sequential" ? ExecutionMode::Sequential : ExecutionMode::Parallel;
+}
+
+// nullopt for a name that is not a method; such names are dropped.
+std::optional<MethodKind> parseMethodKind(const std::string& name) {
+  if (name == "face") {
+    return MethodKind::Face;
+  }
+  if (name == "fingerprint") {
+    return MethodKind::Fingerprint;
+  }
+  return std::nullopt;
+}
+
 void parseStrategy(const YAML::Node& s, StrategyConfig& out) {
   readIf(s, "debug", out.debug);
-  readIf(s, "execution_mode", out.execution_mode);
+  if (s["execution_mode"]) {
+    out.execution_mode = parseExecutionMode(s["execution_mode"].as<std::string>());
+  }
   if (s["order"] && s["order"].IsSequence()) {
     out.order.clear();
     for (const auto& m : s["order"]) {
-      out.order.push_back(m.as<std::string>());
+      if (const std::optional<MethodKind> method = parseMethodKind(m.as<std::string>())) {
+        out.order.push_back(*method);
+      }
     }
   }
   if (s["ignore_services"]) {
