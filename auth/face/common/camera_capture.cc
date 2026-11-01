@@ -24,6 +24,7 @@
 
 #include "camera_lifecycle.h"
 #include "capture_policy.h"
+#include "frame_darkness.h"
 #include "frame_sampling.h"
 #include "pixel_convert.h"
 
@@ -207,22 +208,6 @@ std::string listAvailableFormats(const libcamera::StreamFormats& formats) {
   return oss.str();
 }
 
-// Mean brightness in [0, 255], sampling every 4th pixel; enough to tell a
-// lit IR frame from a dark one.
-double meanLuma(const ImageRGB& image) {
-  const size_t pixels = static_cast<size_t>(image.width) * static_cast<size_t>(image.height);
-  if (pixels == 0 || image.data.size() < pixels * 3) {
-    return 0.0;
-  }
-  const uint8_t* data = image.data.data();
-  uint64_t sum = 0;
-  size_t count = 0;
-  for (size_t i = 0; i < pixels; i += 4, ++count) {
-    sum += data[i * 3] + data[i * 3 + 1] + data[i * 3 + 2];
-  }
-  return static_cast<double>(sum) / (3.0 * static_cast<double>(count));
-}
-
 // Dropped (failed or unconvertible) frames one capture tolerates before
 // giving up: about a second at 30 fps. Bounds the loop when there is no
 // capture deadline.
@@ -386,7 +371,7 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
         continue;
       }
       sampling.recordGood();
-      const double mean = samples > 1 ? meanLuma(image) : 0.0;
+      const double mean = samples > 1 ? measureLuma(image).mean : 0.0;
       if (best.empty() || irFrameScore(mean) > irFrameScore(best_mean)) {
         best_mean = mean;
         best = std::move(image);

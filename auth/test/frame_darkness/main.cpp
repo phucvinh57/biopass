@@ -5,6 +5,7 @@
 // tune thresholds against frames saved from a real camera:
 //   frame_darkness_test shutter_closed.jpg dim_room.jpg
 
+#include <algorithm>
 #include <cstdio>
 #include <random>
 
@@ -63,6 +64,14 @@ int main(int argc, char** argv) {
 
   const auto stats = measureLuma(ImageRGB(16, 16));
   expect(stats.mean == 0.0 && stats.stddev == 0.0, "black frame stats are zero");
+
+  // IR frames are grey (R = G = B); the camera picks the brightest one by
+  // this mean, so it must equal the grey level exactly (77 + 150 + 29 = 256).
+  for (int v : {1, 37, 128, 219, 220, 221, 255}) {
+    ImageRGB grey(8, 8);
+    std::fill(grey.data.begin(), grey.data.end(), static_cast<uint8_t>(v));
+    expect(measureLuma(grey).mean == v, "grey frame mean equals its grey level");
+  }
 
   for (int i = 1; i < argc; ++i) {
     ImageRGB img = readImage(argv[i]);
