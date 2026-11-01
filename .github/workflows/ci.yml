@@ -33,6 +33,10 @@ jobs:
         working-directory: app
         run: bunx tsc --noEmit
 
+      - name: Unit tests
+        working-directory: app
+        run: bun test
+
   shell:
     name: Shell scripts (shellcheck)
     runs-on: ubuntu-24.04
