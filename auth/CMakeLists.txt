@@ -20,6 +20,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED YES)
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
 set(CMAKE_SKIP_BUILD_RPATH FALSE)
+# Tauri ships the build-tree binaries as they are (no install step), so their
+# build RUNPATH ships too, and biopass-helper runs as root. Keep it relative
+# ($ORIGIN, no build-machine paths) and without the ':' padding CMake adds for
+# rewriting at install time: an empty RUNPATH entry is the current directory.
+# (Install then relinks instead of editing the RUNPATH in place.)
+set(CMAKE_BUILD_RPATH_USE_ORIGIN ON)
+set(CMAKE_NO_BUILTIN_CHRPATH ON)
 include(Dependencies.cmake)
 
 set(FaceDetection_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/face/detection)
@@ -64,6 +71,7 @@ if(BUILD_TESTS)
     add_subdirectory(test/face_match)
     add_subdirectory(test/session_engine)
     add_subdirectory(test/face_camera_reuse)
+    add_subdirectory(test/runpath)
 endif()
 
 install(
