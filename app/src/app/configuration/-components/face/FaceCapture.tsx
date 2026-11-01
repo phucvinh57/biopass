@@ -1,17 +1,16 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Camera, Circle, Square, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { useWatch } from "react-hook-form";
 import { toast } from "sonner";
-import { cmd } from "@/commands";
 import { Button } from "@/components/ui/button";
 import type { BiopassConfig } from "@/types/config";
+import { useFaceImages } from "./useFaceImages";
 import { usePreviewSession } from "./usePreviewSession";
 
 export function FaceCapture() {
   const previewRef = useRef<HTMLImageElement>(null);
-  const [faceImages, setFaceImages] = useState<string[]>([]);
   const camera = useWatch<BiopassConfig, "methods.face.camera">({
     name: "methods.face.camera",
   });
@@ -28,21 +27,11 @@ export function FaceCapture() {
     // Drop the last frame so a failed start or camera switch doesn't show it.
     () => previewRef.current?.removeAttribute("src"),
   );
-
-  // Stable identity: the effect below depends on it, and a new function per
-  // render would reload (and re-render) forever.
-  const loadFaceImages = useCallback(async () => {
-    try {
-      const images = await cmd.face.listImages();
-      setFaceImages(images);
-    } catch (err) {
-      console.error("Failed to load face images:", err);
-    }
-  }, []);
-
-  useEffect(() => {
-    loadFaceImages();
-  }, [loadFaceImages]);
+  const {
+    faceImages,
+    capture: capturePhoto,
+    remove: deleteFace,
+  } = useFaceImages();
 
   useEffect(() => {
     if (!capturing) return;
@@ -67,26 +56,6 @@ export function FaceCapture() {
       unlisten?.();
     };
   }, [capturing]);
-
-  async function capturePhoto() {
-    try {
-      await cmd.face.captureInSession();
-      toast.success("Face image saved!");
-      await loadFaceImages();
-    } catch (err) {
-      toast.error(`${err}`);
-    }
-  }
-
-  async function deleteFace(path: string) {
-    try {
-      await cmd.face.deleteImage(path);
-      toast.success("Face image deleted");
-      await loadFaceImages();
-    } catch (err) {
-      toast.error(`Failed to delete: ${err}`);
-    }
-  }
 
   return (
     <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
