@@ -7,9 +7,11 @@
 #include "auth_config.h"
 #include "auth_method.h"
 #include "camera_capture.h"
+#include "face_as.h"
 #include "face_detection.h"
 #include "face_recognition.h"
 #include "model_registry.h"
+#include "session_engine.h"
 
 namespace biopass {
 
@@ -48,6 +50,8 @@ class FaceAuth : public IAuthMethod {
   std::unique_ptr<ICameraCaptureSession> ir_camera_session_;
   std::unique_ptr<FaceDetection> detector_;
   std::unique_ptr<FaceRecognition> recognizer_;
+  // Loaded by the first anti-spoofing check, reused by later attempts.
+  SessionEngine<FaceAntiSpoofing> antispoof_model_;
 
   // Tells the user why the session failed when every frame looked like a
   // covered lens, then resets the per-session feedback state below.

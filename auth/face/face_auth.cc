@@ -213,7 +213,8 @@ AuthResult FaceAuth::attempt(const std::string& username, const AuthConfig& conf
   ensureIrSession();
 
   if (!checkAntiSpoof(face_config_, username, loginFace, detectedImages[0].box, config,
-                      model_registry_, detector_.get(), ir_camera_session_.get(), cancel_signal)) {
+                      model_registry_, antispoof_model_, detector_.get(), ir_camera_session_.get(),
+                      cancel_signal)) {
     spdlog::warn("FaceAuth: Anti-spoofing failed — returning Failure (no retry allowed)");
     // Always tear down the IR session so a subsequent call cannot reuse a
     // partially-warmed camera to bypass the check.
