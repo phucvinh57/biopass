@@ -161,297 +161,15 @@ gboolean on_verify_timeout(gpointer user_data) {
   return G_SOURCE_REMOVE;
 }
 
-}  // namespace
-
-bool FingerprintAuth::isAvailable() const {
-  GError* error = nullptr;
-  GDBusProxy* manager = g_dbus_proxy_new_for_bus_sync(
-      G_BUS_TYPE_SYSTEM, G_DBUS_PROXY_FLAGS_DO_NOT_LOAD_PROPERTIES, nullptr, FPRINT_SERVICE,
-      FPRINT_MANAGER_PATH, FPRINT_MANAGER_INTERFACE, nullptr, &error);
-  if (error) {
-    spdlog::error("FingerprintAuth: Failed to connect to fprintd manager: {}", error->message);
-    g_error_free(error);
-    return false;
-  }
-
-  GVariant* ret =
-      g_dbus_proxy_call_sync(manager, "GetDefaultDevice", nullptr, G_DBUS_CALL_FLAGS_NONE,
-                             kFprintdCallTimeoutMs, nullptr, &error);
-
-  bool available = false;
-  if (ret) {
-    // Enrollment is checked per user in authenticate().
-    available = true;
-    g_variant_unref(ret);
-  } else {
-    if (error)
-      g_error_free(error);
-  }
-
-  g_object_unref(manager);
-  return available;
-}
-
-AuthResult FingerprintAuth::authenticate(const std::string& username, const AuthConfig& config,
-                                         std::atomic<bool>* cancel_signal) {
-  GError* error = nullptr;
-  GDBusConnection* connection = g_bus_get_sync(G_BUS_TYPE_SYSTEM, nullptr, &error);
-  GDBusProxy* manager = nullptr;
-  GDBusProxy* device = nullptr;
-  bool device_claimed = false;
-  bool verification_started = false;
-  guint verify_status_subscription_id = 0;
-  guint owner_changed_subscription_id = 0;
-  guint cancel_poll_source_id = 0;
-  guint verify_timeout_source_id = 0;
-  AuthContext ctx;
-
-  auto cleanup = [&]() {
-    if (cancel_poll_source_id != 0) {
-      g_source_remove(cancel_poll_source_id);
-      cancel_poll_source_id = 0;
-    }
-
-    if (verify_timeout_source_id != 0 && !ctx.verify_timeout_fired) {
-      g_source_remove(verify_timeout_source_id);
-      verify_timeout_source_id = 0;
-    }
-
-    if (verify_status_subscription_id != 0 && connection) {
-      g_dbus_connection_signal_unsubscribe(connection, verify_status_subscription_id);
-      verify_status_subscription_id = 0;
-    }
-
-    if (owner_changed_subscription_id != 0 && connection) {
-      g_dbus_connection_signal_unsubscribe(connection, owner_changed_subscription_id);
-      owner_changed_subscription_id = 0;
-    }
-
-    if (ctx.loop != nullptr) {
-      g_main_loop_unref(ctx.loop);
-      ctx.loop = nullptr;
-    }
-
-    if (verification_started && device) {
-      GVariant* stop_ret =
-          g_dbus_proxy_call_sync(device, "VerifyStop", nullptr, G_DBUS_CALL_FLAGS_NONE,
-                                 kFprintdStopTimeoutMs, nullptr, nullptr);
-      if (stop_ret)
-        g_variant_unref(stop_ret);
-      verification_started = false;
-    }
-
-    if (device_claimed && device) {
-      GVariant* release_ret =
-          g_dbus_proxy_call_sync(device, "Release", nullptr, G_DBUS_CALL_FLAGS_NONE,
-                                 kFprintdStopTimeoutMs, nullptr, nullptr);
-      if (release_ret)
-        g_variant_unref(release_ret);
-      device_claimed = false;
-    }
-
-    if (device) {
-      g_object_unref(device);
-      device = nullptr;
-    }
-
-    if (manager) {
-      g_object_unref(manager);
-      manager = nullptr;
-    }
-
-    if (connection) {
-      g_object_unref(connection);
-      connection = nullptr;
-    }
-  };
-
-  // Checked before every fprintd call, so a cancelled run is in at most one
-  // call when it notices (see the static_assert at the top).
-  auto cancelled = [&]() { return cancel_signal != nullptr && cancel_signal->load(); };
-
-  if (!connection) {
-    spdlog::error("FingerprintAuth: Failed to get system bus: {}", error->message);
-    g_error_free(error);
-    return AuthResult::Unavailable;
-  }
-
-  manager = g_dbus_proxy_new_sync(connection, G_DBUS_PROXY_FLAGS_DO_NOT_LOAD_PROPERTIES, nullptr,
-                                  FPRINT_SERVICE, FPRINT_MANAGER_PATH, FPRINT_MANAGER_INTERFACE,
-                                  nullptr, &error);
-
-  if (!manager) {
-    spdlog::error("FingerprintAuth: Failed to get manager proxy: {}", error->message);
-    g_error_free(error);
-    cleanup();
-    return AuthResult::Unavailable;
-  }
-
-  if (cancelled()) {
-    cleanup();
-    return AuthResult::Failure;
-  }
-  GVariant* dev_ret =
-      g_dbus_proxy_call_sync(manager, "GetDefaultDevice", nullptr, G_DBUS_CALL_FLAGS_NONE,
-                             kFprintdCallTimeoutMs, nullptr, &error);
-  if (!dev_ret) {
-    spdlog::error("FingerprintAuth: No fingerprint device found: {}",
-                  (error ? error->message : "Unknown"));
-    if (error)
-      g_error_free(error);
-    cleanup();
-    return AuthResult::Unavailable;
-  }
-
-  const gchar* device_path;
-  g_variant_get(dev_ret, "(&o)", &device_path);
-  std::string dev_path_str = device_path;
-  g_variant_unref(dev_ret);
-
-  device = g_dbus_proxy_new_sync(connection, G_DBUS_PROXY_FLAGS_DO_NOT_LOAD_PROPERTIES, nullptr,
-                                 FPRINT_SERVICE, dev_path_str.c_str(), FPRINT_DEVICE_INTERFACE,
-                                 nullptr, &error);
-
-  if (!device) {
-    spdlog::error("FingerprintAuth: Failed to get device proxy: {}", error->message);
-    g_error_free(error);
-    cleanup();
-    return AuthResult::Unavailable;
-  }
-
-  if (cancelled()) {
-    cleanup();
-    return AuthResult::Failure;
-  }
-  GVariant* enrolled_ret =
-      g_dbus_proxy_call_sync(device, "ListEnrolledFingers", g_variant_new("(s)", username.c_str()),
-                             G_DBUS_CALL_FLAGS_NONE, kFprintdCallTimeoutMs, nullptr, &error);
-
-  if (!enrolled_ret) {
-    spdlog::error(
-        "FingerprintAuth: Failed to list enrolled fingers (user might not exist or permission "
-        "denied): {}",
-        (error ? error->message : ""));
-    if (error)
-      g_error_free(error);
-    cleanup();
-    return AuthResult::Unavailable;
-  }
-
-  GVariantIter* iter;
-  gchar* finger_name;
-  bool has_fingers = false;
-  g_variant_get(enrolled_ret, "(as)", &iter);
-  while (g_variant_iter_loop(iter, "s", &finger_name)) {
-    has_fingers = true;
-  }
-  g_variant_iter_free(iter);
-  g_variant_unref(enrolled_ret);
-
-  if (!has_fingers) {
-    spdlog::error("FingerprintAuth: User {} has no enrolled fingerprints.", username);
-    cleanup();
-    return AuthResult::Unavailable;
-  }
-
-  if (cancelled()) {
-    cleanup();
-    return AuthResult::Failure;
-  }
-  GVariant* claim_ret =
-      g_dbus_proxy_call_sync(device, "Claim", g_variant_new("(s)", username.c_str()),
-                             G_DBUS_CALL_FLAGS_NONE, kFprintdCallTimeoutMs, nullptr, &error);
-
-  if (!claim_ret) {
-    spdlog::error("FingerprintAuth: Failed to claim device: {}", (error ? error->message : ""));
-    if (error)
-      g_error_free(error);
-    cleanup();
-    return AuthResult::Unavailable;
-  }
-  g_variant_unref(claim_ret);
-  device_claimed = true;
-
-  ctx.loop = g_main_loop_new(nullptr, FALSE);
-  ctx.debug = config.debug;
-  ctx.cancel_signal = cancel_signal;
-  ctx.verify_timeout_ms = config_.timeout;
-
-  // Watch fprintd's name before resolving its owner, so a restart in between
-  // is still seen once the loop runs.
-  owner_changed_subscription_id = g_dbus_connection_signal_subscribe(
-      connection, DBUS_SERVICE, DBUS_INTERFACE, "NameOwnerChanged", DBUS_PATH, FPRINT_SERVICE,
-      G_DBUS_SIGNAL_FLAGS_NONE, on_fprintd_owner_changed, &ctx, nullptr);
-
-  // Pin VerifyStatus to fprintd's unique name.
-  if (cancelled()) {
-    cleanup();
-    return AuthResult::Failure;
-  }
-  ctx.fprintd_owner = resolveFprintdOwner(connection);
-  if (ctx.fprintd_owner.empty()) {
-    cleanup();
-    return AuthResult::Unavailable;
-  }
-
-  // Subscribe before VerifyStart so no early status is missed.
-  verify_status_subscription_id = g_dbus_connection_signal_subscribe(
-      connection, ctx.fprintd_owner.c_str(), FPRINT_DEVICE_INTERFACE, "VerifyStatus",
-      dev_path_str.c_str(), nullptr, G_DBUS_SIGNAL_FLAGS_NONE, on_verify_status, &ctx, nullptr);
-
-  // "any" accepts any enrolled finger
-  if (cancelled()) {
-    cleanup();
-    return AuthResult::Failure;
-  }
-  GVariant* verify_ret =
-      g_dbus_proxy_call_sync(device, "VerifyStart", g_variant_new("(s)", "any"),
-                             G_DBUS_CALL_FLAGS_NONE, kFprintdCallTimeoutMs, nullptr, &error);
-
-  if (!verify_ret) {
-    spdlog::error("FingerprintAuth: Failed to start verification: {}",
-                  (error ? error->message : ""));
-    if (error)
-      g_error_free(error);
-    cleanup();
-    return AuthResult::Failure;
-  }
-  g_variant_unref(verify_ret);
-  verification_started = true;
-
-  // Announce once per session, only once the reader is actually listening.
-  if (!scan_announced_) {
-    scan_announced_ = true;
-    reportInfo("Biopass: place your finger on the fingerprint reader");
-  }
-
-  cancel_poll_source_id = g_timeout_add(50, on_cancel_timeout, &ctx);
-
-  if (config_.timeout > 0) {
-    verify_timeout_source_id = g_timeout_add(config_.timeout, on_verify_timeout, &ctx);
-    spdlog::debug("Waiting for fingerprint (timeout {} ms)...", config_.timeout);
-  } else {
-    spdlog::debug("Waiting for fingerprint...");
-  }
-
-  g_main_loop_run(ctx.loop);
-
-  cleanup();
-  return ctx.result;
-}
-
-namespace {
-
-using EnrollCallback = void (*)(bool done, const char* status, void* user_data);
-
 // The app's Claim, EnrollStart and DeleteEnrolledFinger can wait on a polkit
 // password prompt (fprintd's enroll action is auth_self_keep by default), so
 // they get longer than kFprintdCallTimeoutMs, but still a finite limit.
 constexpr int kFprintdPromptCallTimeoutMs = 60000;
 
-// fprintd's default device on the system bus, for the app's list, enroll and
-// remove. Every call has a finite timeout, and the destructor releases the
-// device if it was claimed, so each exit path gives the reader back.
+// fprintd's default device on the system bus, for authentication and the
+// app's list, enroll and remove. Every call has a finite timeout, and the
+// destructor releases the device if it was claimed, so each exit path gives
+// the reader back.
 class FprintdDevice {
  public:
   FprintdDevice() = default;
@@ -497,12 +215,14 @@ class FprintdDevice {
     return true;
   }
 
-  bool claim(const std::string& username) {
+  // Claims the device for `username`, waiting up to `timeout_ms`. With
+  // `release_if_timed_out`, a timed-out Claim is followed by a Release.
+  bool claim(const std::string& username, int timeout_ms, bool release_if_timed_out) {
     CallError err;
-    GVariant* ret = call("Claim", g_variant_new("(s)", username.c_str()), nullptr,
-                         kFprintdPromptCallTimeoutMs, "claim device", &err);
+    GVariant* ret = call("Claim", g_variant_new("(s)", username.c_str()), nullptr, timeout_ms,
+                         "claim device", &err);
     if (!ret) {
-      if (err.timed_out) {
+      if (err.timed_out && release_if_timed_out) {
         // fprintd may still finish the Claim (e.g. the polkit prompt was
         // answered late) and would then hold the reader for this shared bus
         // connection until the app exits. Release it just in case; when the
@@ -527,8 +247,8 @@ class FprintdDevice {
   };
 
   // Calls a device method. Returns the reply (caller unrefs) or nullptr after
-  // logging the error, which is also described in `err` if given. Consumes a
-  // floating `params`.
+  // logging the error (unless `what` is null), which is also described in
+  // `err` if given. Consumes a floating `params`.
   GVariant* call(const char* method, GVariant* params, const GVariantType* reply_type,
                  int timeout_ms, const char* what, CallError* err = nullptr) {
     GError* error = nullptr;
@@ -536,7 +256,8 @@ class FprintdDevice {
         connection_, FPRINT_SERVICE, path_.c_str(), FPRINT_DEVICE_INTERFACE, method, params,
         reply_type, G_DBUS_CALL_FLAGS_NONE, timeout_ms, nullptr, &error);
     if (!ret) {
-      spdlog::error("FingerprintAuth: Failed to {}: {}", what, error ? error->message : "");
+      if (what)
+        spdlog::error("FingerprintAuth: Failed to {}: {}", what, error ? error->message : "");
       if (err && error) {
         err->timed_out = g_error_matches(error, G_IO_ERROR, G_IO_ERROR_TIMED_OUT);
         gchar* remote = g_dbus_error_get_remote_error(error);
@@ -559,6 +280,198 @@ class FprintdDevice {
   std::string path_;
   bool claimed_ = false;
 };
+
+}  // namespace
+
+bool FingerprintAuth::isAvailable() const {
+  GError* error = nullptr;
+  GDBusProxy* manager = g_dbus_proxy_new_for_bus_sync(
+      G_BUS_TYPE_SYSTEM, G_DBUS_PROXY_FLAGS_DO_NOT_LOAD_PROPERTIES, nullptr, FPRINT_SERVICE,
+      FPRINT_MANAGER_PATH, FPRINT_MANAGER_INTERFACE, nullptr, &error);
+  if (error) {
+    spdlog::error("FingerprintAuth: Failed to connect to fprintd manager: {}", error->message);
+    g_error_free(error);
+    return false;
+  }
+
+  GVariant* ret =
+      g_dbus_proxy_call_sync(manager, "GetDefaultDevice", nullptr, G_DBUS_CALL_FLAGS_NONE,
+                             kFprintdCallTimeoutMs, nullptr, &error);
+
+  bool available = false;
+  if (ret) {
+    // Enrollment is checked per user in authenticate().
+    available = true;
+    g_variant_unref(ret);
+  } else {
+    if (error)
+      g_error_free(error);
+  }
+
+  g_object_unref(manager);
+  return available;
+}
+
+AuthResult FingerprintAuth::authenticate(const std::string& username, const AuthConfig& config,
+                                         std::atomic<bool>* cancel_signal) {
+  // Declared first so it is destroyed last: its destructor releases a claimed
+  // device after cleanup() has stopped the verification.
+  FprintdDevice device;
+  bool verification_started = false;
+  guint verify_status_subscription_id = 0;
+  guint owner_changed_subscription_id = 0;
+  guint cancel_poll_source_id = 0;
+  guint verify_timeout_source_id = 0;
+  AuthContext ctx;
+
+  auto cleanup = [&]() {
+    GDBusConnection* connection = device.connection();
+
+    if (cancel_poll_source_id != 0) {
+      g_source_remove(cancel_poll_source_id);
+      cancel_poll_source_id = 0;
+    }
+
+    if (verify_timeout_source_id != 0 && !ctx.verify_timeout_fired) {
+      g_source_remove(verify_timeout_source_id);
+      verify_timeout_source_id = 0;
+    }
+
+    if (verify_status_subscription_id != 0 && connection) {
+      g_dbus_connection_signal_unsubscribe(connection, verify_status_subscription_id);
+      verify_status_subscription_id = 0;
+    }
+
+    if (owner_changed_subscription_id != 0 && connection) {
+      g_dbus_connection_signal_unsubscribe(connection, owner_changed_subscription_id);
+      owner_changed_subscription_id = 0;
+    }
+
+    if (ctx.loop != nullptr) {
+      g_main_loop_unref(ctx.loop);
+      ctx.loop = nullptr;
+    }
+
+    if (verification_started) {
+      GVariant* stop_ret = device.call("VerifyStop", nullptr, nullptr, kFprintdStopTimeoutMs,
+                                       /*what=*/nullptr);
+      if (stop_ret)
+        g_variant_unref(stop_ret);
+      verification_started = false;
+    }
+  };
+
+  // Checked before every fprintd call, so a cancelled run is in at most one
+  // call when it notices (see the static_assert at the top).
+  auto cancelled = [&]() { return cancel_signal != nullptr && cancel_signal->load(); };
+
+  if (cancelled()) {
+    return AuthResult::Failure;
+  }
+  if (!device.open()) {
+    return AuthResult::Unavailable;
+  }
+
+  if (cancelled()) {
+    return AuthResult::Failure;
+  }
+  GVariant* enrolled_ret = device.call(
+      "ListEnrolledFingers", g_variant_new("(s)", username.c_str()), G_VARIANT_TYPE("(as)"),
+      kFprintdCallTimeoutMs, "list enrolled fingers (user might not exist or permission denied)");
+  if (!enrolled_ret) {
+    return AuthResult::Unavailable;
+  }
+
+  GVariantIter* iter;
+  gchar* finger_name;
+  bool has_fingers = false;
+  g_variant_get(enrolled_ret, "(as)", &iter);
+  while (g_variant_iter_loop(iter, "s", &finger_name)) {
+    has_fingers = true;
+  }
+  g_variant_iter_free(iter);
+  g_variant_unref(enrolled_ret);
+
+  if (!has_fingers) {
+    spdlog::error("FingerprintAuth: User {} has no enrolled fingerprints.", username);
+    return AuthResult::Unavailable;
+  }
+
+  // The helper's bus connection closes when it exits, which makes fprintd
+  // drop a late claim, so no Release after a timed-out Claim here.
+  if (cancelled()) {
+    return AuthResult::Failure;
+  }
+  if (!device.claim(username, kFprintdCallTimeoutMs, /*release_if_timed_out=*/false)) {
+    return AuthResult::Unavailable;
+  }
+
+  GDBusConnection* connection = device.connection();
+  ctx.loop = g_main_loop_new(nullptr, FALSE);
+  ctx.debug = config.debug;
+  ctx.cancel_signal = cancel_signal;
+  ctx.verify_timeout_ms = config_.timeout;
+
+  // Watch fprintd's name before resolving its owner, so a restart in between
+  // is still seen once the loop runs.
+  owner_changed_subscription_id = g_dbus_connection_signal_subscribe(
+      connection, DBUS_SERVICE, DBUS_INTERFACE, "NameOwnerChanged", DBUS_PATH, FPRINT_SERVICE,
+      G_DBUS_SIGNAL_FLAGS_NONE, on_fprintd_owner_changed, &ctx, nullptr);
+
+  // Pin VerifyStatus to fprintd's unique name.
+  if (cancelled()) {
+    cleanup();
+    return AuthResult::Failure;
+  }
+  ctx.fprintd_owner = resolveFprintdOwner(connection);
+  if (ctx.fprintd_owner.empty()) {
+    cleanup();
+    return AuthResult::Unavailable;
+  }
+
+  // Subscribe before VerifyStart so no early status is missed.
+  verify_status_subscription_id = g_dbus_connection_signal_subscribe(
+      connection, ctx.fprintd_owner.c_str(), FPRINT_DEVICE_INTERFACE, "VerifyStatus",
+      device.path().c_str(), nullptr, G_DBUS_SIGNAL_FLAGS_NONE, on_verify_status, &ctx, nullptr);
+
+  // "any" accepts any enrolled finger
+  if (cancelled()) {
+    cleanup();
+    return AuthResult::Failure;
+  }
+  GVariant* verify_ret = device.call("VerifyStart", g_variant_new("(s)", "any"), nullptr,
+                                     kFprintdCallTimeoutMs, "start verification");
+  if (!verify_ret) {
+    cleanup();
+    return AuthResult::Failure;
+  }
+  g_variant_unref(verify_ret);
+  verification_started = true;
+
+  // Announce once per session, only once the reader is actually listening.
+  if (!scan_announced_) {
+    scan_announced_ = true;
+    reportInfo("Biopass: place your finger on the fingerprint reader");
+  }
+
+  cancel_poll_source_id = g_timeout_add(50, on_cancel_timeout, &ctx);
+
+  if (config_.timeout > 0) {
+    verify_timeout_source_id = g_timeout_add(config_.timeout, on_verify_timeout, &ctx);
+    spdlog::debug("Waiting for fingerprint (timeout {} ms)...", config_.timeout);
+  } else {
+    spdlog::debug("Waiting for fingerprint...");
+  }
+
+  g_main_loop_run(ctx.loop);
+
+  cleanup();
+  return ctx.result;
+}
+
+namespace {
+
+using EnrollCallback = void (*)(bool done, const char* status, void* user_data);
 
 struct EnrollContext {
   using Clock = std::chrono::steady_clock;
@@ -760,7 +673,8 @@ std::optional<std::vector<std::string>> FingerprintAuth::listEnrolledFingers(
 bool FingerprintAuth::enroll(const std::string& username, const std::string& finger_name,
                              EnrollCallback callback, void* user_data) {
   FprintdDevice device;
-  if (!device.open() || !device.claim(username)) {
+  if (!device.open() || !device.claim(username, kFprintdPromptCallTimeoutMs,
+                                      /*release_if_timed_out=*/true)) {
     return false;
   }
   return runEnrollment(device, finger_name, callback, user_data);
@@ -768,7 +682,8 @@ bool FingerprintAuth::enroll(const std::string& username, const std::string& fin
 
 bool FingerprintAuth::removeFinger(const std::string& username, const std::string& finger_name) {
   FprintdDevice device;
-  if (!device.open() || !device.claim(username)) {
+  if (!device.open() || !device.claim(username, kFprintdPromptCallTimeoutMs,
+                                      /*release_if_timed_out=*/true)) {
     return false;
   }
 
