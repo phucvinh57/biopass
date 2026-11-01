@@ -66,7 +66,8 @@ class FaceAuth : public IAuthMethod {
   std::unique_ptr<ICameraCaptureSession> ir_camera_session_;
   std::unique_ptr<FaceDetection> detector_;
   std::unique_ptr<FaceRecognition> recognizer_;
-  // Loaded by the first anti-spoofing check, reused by later attempts.
+  // Loaded by the first anti-spoofing check and kept, like detector_ and
+  // recognizer_, for this object's lifetime (one helper run).
   SessionEngine<FaceAntiSpoofing> antispoof_model_;
 
   // Tells the user why the session failed when every frame looked like a

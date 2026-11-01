@@ -5,8 +5,8 @@
 
 namespace biopass {
 
-// An engine kept for one auth session: the first get() that loads it keeps
-// it, and later attempts reuse it instead of loading the model again. A load
+// An engine kept for its owner's lifetime: the first get() that loads it
+// keeps it, and later attempts reuse it instead of loading the model again. A load
 // that fails (returns nullptr or throws) keeps nothing, so the next get()
 // loads again. Not thread-safe: one attempt at a time.
 template <typename Engine>

@@ -18,7 +18,7 @@ struct Box;
 
 // shared_detector / model_registry: the caller's, reused instead of loading
 // the model or opening the DB again.
-// ai_model: the session's anti-spoofing model. The first check that needs it
+// ai_model: the caller's anti-spoofing model slot. The first check that needs it
 // loads it (as the user) and later attempts reuse it; a failed load keeps
 // nothing and fails the check.
 // frame/face_box: the full frame and the detected face; the model builds its
