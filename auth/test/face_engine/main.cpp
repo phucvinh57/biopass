@@ -85,7 +85,7 @@ int main(int argc, char** argv) {
     }
 
     MatchResult match_result = recognizer.match(face1, face2);
-    std::cout << "Similarity score: " << match_result.dist << std::endl;
+    std::cout << "Similarity score: " << match_result.similarity << std::endl;
     std::cout << "Match result: " << (match_result.similar ? "SAME_PERSON" : "DIFFERENT_PERSON")
               << std::endl;
   } catch (const std::exception& ex) {

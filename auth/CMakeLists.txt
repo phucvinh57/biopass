@@ -61,6 +61,7 @@ if(BUILD_TESTS)
     add_subdirectory(test/face_image_name)
     add_subdirectory(test/first_line)
     add_subdirectory(test/capture_policy)
+    add_subdirectory(test/face_match)
 endif()
 
 install(

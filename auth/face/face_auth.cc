@@ -247,10 +247,10 @@ bool FaceAuth::matchAgainstEnrolled(const std::string& username, const ImageRGB&
 
     MatchResult match = recognizer_->match(preparedFace, face);
     spdlog::debug("FaceAuth: Recognition | face='{}' score={:.4f} threshold={:.3f} similar={}",
-                  facePath, match.dist, face_config_.recognition.threshold, match.similar);
+                  facePath, match.similarity, face_config_.recognition.threshold, match.similar);
     if (match.similar) {
       spdlog::debug("FaceAuth: Recognition PASSED | matched face='{}' score={:.4f}", facePath,
-                    match.dist);
+                    match.similarity);
       return true;
     }
   }
