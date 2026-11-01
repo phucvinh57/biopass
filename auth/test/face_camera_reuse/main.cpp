@@ -5,6 +5,7 @@
 // Uses a fake camera and an unknown user, so no camera or model is needed.
 // Exits non-zero on any failure.
 
+#include <algorithm>
 #include <cstdio>
 #include <deque>
 #include <memory>
@@ -27,38 +28,48 @@ void expect(bool cond, const std::string& what) {
 
 constexpr const char* kUser = "biopass-no-such-user";
 
+enum class Open { Ok, Fail, Dead };
+
 struct CameraLog {
   int opens = 0;
   int closes = 0;
-  // Result of each open, in order: true = an open session, false = nullptr.
-  // Opens past the end succeed.
-  std::deque<bool> results;
+  // Sessions alive right now, and the most alive when an open started.
+  int live = 0;
+  int max_live_at_open = 0;
+  // Result of each open, in order: an open session, nullptr, or a session
+  // that is not open. Opens past the end succeed.
+  std::deque<Open> results;
 };
 
 class FakeSession : public biopass::ICameraCaptureSession {
  public:
-  explicit FakeSession(CameraLog& log) : log_(log) {}
-  ~FakeSession() override { log_.closes++; }
-  bool isOpen() const override { return true; }
+  FakeSession(CameraLog& log, bool open) : log_(log), open_(open) { log_.live++; }
+  ~FakeSession() override {
+    log_.closes++;
+    log_.live--;
+  }
+  bool isOpen() const override { return open_; }
   ImageRGB capture() override { return {}; }
 
  private:
   CameraLog& log_;
+  bool open_;
 };
 
 biopass::FaceAuth::CameraOpener fakeOpener(CameraLog& log) {
   return
       [&log](const std::optional<std::string>&) -> std::unique_ptr<biopass::ICameraCaptureSession> {
         log.opens++;
-        bool ok = true;
+        log.max_live_at_open = std::max(log.max_live_at_open, log.live);
+        Open result = Open::Ok;
         if (!log.results.empty()) {
-          ok = log.results.front();
+          result = log.results.front();
           log.results.pop_front();
         }
-        if (!ok) {
+        if (result == Open::Fail) {
           return nullptr;
         }
-        return std::make_unique<FakeSession>(log);
+        return std::make_unique<FakeSession>(log, result == Open::Ok);
       };
 }
 
@@ -83,7 +94,7 @@ void checkAvailabilitySessionIsReused() {
 
 void checkMissingCamera() {
   CameraLog log;
-  log.results = {false};
+  log.results = {Open::Fail};
   biopass::FaceAuth face(biopass::FaceMethodConfig{}, kUser, fakeOpener(log));
   expect(!face.isAvailable(), "camera missing: not available");
   expect(log.opens == 1, "camera missing: one open attempt");
@@ -93,7 +104,7 @@ void checkMissingCamera() {
 // camera is gone (Unavailable), as before.
 void checkAttemptOpenFailsTwice() {
   CameraLog log;
-  log.results = {false, false};
+  log.results = {Open::Fail, Open::Fail};
   biopass::FaceAuth face(biopass::FaceMethodConfig{}, kUser, fakeOpener(log));
   const auto result = face.authenticate(kUser, biopass::AuthConfig{});
   expect(result == biopass::AuthResult::Unavailable, "both opens fail: Unavailable");
@@ -104,7 +115,7 @@ void checkAttemptOpenFailsTwice() {
 // session it opened is kept, so the next attempt doesn't open again.
 void checkAttemptOpenRecovers() {
   CameraLog log;
-  log.results = {false, true};
+  log.results = {Open::Fail, Open::Ok};
   biopass::FaceAuth face(biopass::FaceMethodConfig{}, kUser, fakeOpener(log));
   auto result = face.authenticate(kUser, biopass::AuthConfig{});
   expect(result == biopass::AuthResult::Retry, "first open fails, second works: Retry");
@@ -119,6 +130,22 @@ void checkAttemptOpenRecovers() {
          "next attempt reuses the kept session (opens=" + std::to_string(log.opens) + ")");
 }
 
+// A session that came back not open is freed before the camera is opened
+// again, so two sessions never hold the device at once.
+void checkDeadSessionFreedBeforeReopen() {
+  CameraLog log;
+  log.results = {Open::Dead, Open::Dead};
+  biopass::FaceAuth face(biopass::FaceMethodConfig{}, kUser, fakeOpener(log));
+  expect(!face.isAvailable(), "dead session: not available");
+  expect(log.live == 0, "dead session from the availability check is freed");
+
+  log.results = {Open::Dead, Open::Ok};
+  const auto result = face.authenticate(kUser, biopass::AuthConfig{});
+  expect(result == biopass::AuthResult::Retry, "dead session, then a working one: Retry");
+  expect(log.max_live_at_open == 0, "no session alive when the camera is opened again (max=" +
+                                        std::to_string(log.max_live_at_open) + ")");
+}
+
 }  // namespace
 
 int main() {
@@ -126,6 +153,7 @@ int main() {
   checkMissingCamera();
   checkAttemptOpenFailsTwice();
   checkAttemptOpenRecovers();
+  checkDeadSessionFreedBeforeReopen();
 
   std::printf("%s\n", g_failures == 0 ? "All checks passed" : "Some checks FAILED");
   return g_failures == 0 ? 0 : 1;

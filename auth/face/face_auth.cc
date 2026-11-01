@@ -49,6 +49,8 @@ std::unique_ptr<Engine> loadModel(const char* what, const std::string& username,
 // attempts capture from it rather than closing the camera and opening it again.
 bool FaceAuth::isAvailable() const {
   if (!camera_session_ || !camera_session_->isOpen()) {
+    // Free a dead session before opening the camera again.
+    camera_session_.reset();
     camera_session_ = open_camera_(face_config_.camera);
   }
   if (!camera_session_ || !camera_session_->isOpen()) {
@@ -164,7 +166,9 @@ AuthResult FaceAuth::attempt(const std::string& username, const AuthConfig& conf
   if (!camera_session_ || !camera_session_->isOpen()) {
     spdlog::error("FaceAuth: Could not open camera");
     // One more open tells a missing camera (Unavailable) from a passing
-    // failure (Retry). A session it gets is kept for the next attempt.
+    // failure (Retry). A session it gets is kept for the next attempt. The
+    // dead session is freed first.
+    camera_session_.reset();
     camera_session_ = open_camera_(face_config_.camera);
     if (!camera_session_ || !camera_session_->isOpen()) {
       camera_session_.reset();
