@@ -9,7 +9,7 @@ set(LIBCAMERA_VERSION "v0.7.0")
 
 # libcamera compiles in absolute IPA paths, so build for the final package
 # layout (must match app/src-tauri/tauri.conf.json), staged via DESTDIR:
-#   libcamera.so.X.Y   /usr/lib/biopass/                  (ld.so.conf.d/biopass.conf)
+#   libcamera.so.X.Y   /usr/lib/biopass/                  (found via RUNPATH)
 #   IPA modules        /usr/lib/biopass/libcamera/ipa/     (libdir/libcamera/ipa)
 #   proxy workers      /usr/lib/biopass/libcamera/         (libexecdir/libcamera)
 #   IPA tuning files   /usr/share/biopass/libcamera/ipa/   (datadir/libcamera/ipa)
@@ -26,6 +26,11 @@ set(LIBCAMERA_SODIR   "${LIBCAMERA_ROOT}/${LIBCAMERA_LIBDIR}")
 # Headers land in <prefix>/include/libcamera/libcamera/*.h.
 set(LIBCAMERA_INCDIR  "${LIBCAMERA_ROOT}/include/libcamera")
 file(MAKE_DIRECTORY "${LIBCAMERA_INCDIR}")
+# RUNPATH of everything libcamera installs (meson keeps link-arg rpaths on
+# install): $ORIGIN lets libcamera.so find libcamera-base.so next to it; the
+# absolute dir lets soft_ipa_proxy (in libcamera/) find both, also when exec'd
+# AT_SECURE, where ld.so expands an executable's $ORIGIN only into trusted dirs.
+set(LIBCAMERA_RPATH "$ORIGIN:${LIBCAMERA_PREFIX}/${LIBCAMERA_LIBDIR}")
 
 ExternalProject_Add(libcamera_ext
     GIT_REPOSITORY https://git.libcamera.org/libcamera/libcamera.git
@@ -38,6 +43,7 @@ ExternalProject_Add(libcamera_ext
         --prefix=${LIBCAMERA_PREFIX} --libdir=${LIBCAMERA_LIBDIR}
         --libexecdir=${LIBCAMERA_LIBDIR} --datadir=${LIBCAMERA_DATADIR}
         --sysconfdir=${LIBCAMERA_SYSCONFDIR}
+        -Dcpp_link_args=-Wl,-rpath,${LIBCAMERA_RPATH}
         -Dpipelines=uvcvideo,simple -Dipas=simple -Dgstreamer=disabled -Dv4l2=disabled
         -Dcam=disabled -Dqcam=disabled -Dlc-compliance=disabled
         -Dtracing=disabled -Ddocumentation=disabled -Dpycamera=disabled -Dtest=false -Dudev=enabled

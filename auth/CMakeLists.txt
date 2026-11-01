@@ -38,6 +38,12 @@ add_subdirectory(face)
 add_subdirectory(fingerprint)
 add_subdirectory(pam)
 
+# Shipped next to the bundled onnxruntime and libcamera in /usr/lib/biopass
+# (tauri.conf.json): find them there, not through a global ld.so.conf.d entry.
+set_target_properties(biopass_det biopass_reg biopass_as PROPERTIES
+    BUILD_RPATH "$ORIGIN"
+)
+
 option(BUILD_TESTS "Build test configurations" OFF)
 if(BUILD_TESTS)
     enable_testing()

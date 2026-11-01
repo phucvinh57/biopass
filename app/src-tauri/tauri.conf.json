@@ -59,14 +59,11 @@
           "/usr/lib/biopass/libcamera/ipa/ipa_soft_simple.so": "../../auth/build/libcamera-bundle/libcamera/ipa/ipa_soft_simple.so",
           "/usr/lib/biopass/libcamera/soft_ipa_proxy": "../../auth/build/libcamera-bundle/libcamera/soft_ipa_proxy",
           "/usr/share/biopass/libcamera/ipa/simple/uncalibrated.yaml": "../../auth/build/libcamera-bundle/ipa/simple/uncalibrated.yaml",
-          "/etc/ld.so.conf.d/biopass.conf": "scripts/ldconf",
           "/usr/share/pam-configs/biopass": "scripts/pam.conf"
         }
       },
       "rpm": {
         "depends": ["fprintd", "turbojpeg", "libglvnd-egl", "libglvnd-gles"],
-        "postInstallScript": "scripts/rpm/postinst",
-        "postRemoveScript": "scripts/rpm/postrm",
         "desktopTemplate": "scripts/biopass.desktop",
         "files": {
           "/lib64/security/libbiopass_pam.so": "../../auth/build/pam/libbiopass_pam.so",
@@ -80,7 +77,6 @@
           "/usr/lib/biopass/libcamera/ipa/ipa_soft_simple.so": "../../auth/build/libcamera-bundle/libcamera/ipa/ipa_soft_simple.so",
           "/usr/lib/biopass/libcamera/soft_ipa_proxy": "../../auth/build/libcamera-bundle/libcamera/soft_ipa_proxy",
           "/usr/share/biopass/libcamera/ipa/simple/uncalibrated.yaml": "../../auth/build/libcamera-bundle/ipa/simple/uncalibrated.yaml",
-          "/etc/ld.so.conf.d/biopass.conf": "scripts/ldconf",
           "/usr/share/pam-configs/biopass": "scripts/pam.conf"
         }
       }

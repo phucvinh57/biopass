@@ -37,6 +37,18 @@ target_link_libraries(biopass-helper
     biopass_face
     biopass_fingerprint
     spdlog::spdlog_header_only
+    # Linked last, so it ends the RUNPATH after the build-tree entries (a dev
+    # build never picks up an installed copy). Needed when the helper is
+    # exec'd AT_SECURE (a setuid caller such as su): ld.so then expands an
+    # executable's $ORIGIN only into trusted system dirs, and /usr/lib is not
+    # one everywhere (Fedora: /lib64, /usr/lib64).
+    -Wl,-rpath,/usr/lib/biopass
+)
+
+# Shipped as /usr/bin/biopass-helper with its libraries in /usr/lib/biopass
+# (tauri.conf.json). BUILD_RPATH entries come first in the RUNPATH.
+set_target_properties(biopass-helper PROPERTIES
+    BUILD_RPATH "$ORIGIN/../lib/biopass"
 )
 
 install(TARGETS biopass-helper RUNTIME DESTINATION "/usr/bin")

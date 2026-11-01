@@ -1,9 +1,0 @@
-#!/bin/bash
-# In RPM, $1 is 0 on full uninstall and 1 on upgrade.
-
-set -e
-
-# Refresh linker cache after package files are removed.
-ldconfig
-
-exit 0
