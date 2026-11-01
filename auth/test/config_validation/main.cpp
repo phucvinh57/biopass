@@ -46,6 +46,12 @@ void checkThreshold(const char* name, Setter set) {
   }
 }
 
+// The parsed strategy as config.yaml spells it, so the cases below read
+// like the YAML they come from.
+std::string modeName(const BiopassConfig& c) { return c.strategy.execution_mode; }
+
+std::vector<std::string> orderNames(const BiopassConfig& c) { return c.strategy.order; }
+
 // A config expected to parse; a failure shows up as a FAIL line.
 BiopassConfig parseOrDie(const std::string& text) {
   const std::optional<BiopassConfig> c = biopass::parseConfig(text);
@@ -85,8 +91,8 @@ void checkParse() {
     expect(parsed.has_value(), "parse: full config parses");
     const BiopassConfig c = parsed.value_or(BiopassConfig{});
     const auto& f = c.methods.face;
-    expect(c.schema_version == 2 && c.strategy.debug && c.strategy.execution_mode == "sequential" &&
-               c.strategy.order == std::vector<std::string>{"fingerprint", "face"} &&
+    expect(c.schema_version == 2 && c.strategy.debug && modeName(c) == "sequential" &&
+               orderNames(c) == std::vector<std::string>{"fingerprint", "face"} &&
                c.strategy.ignore_services == std::vector<std::string>{"sudo"},
            "parse: strategy read");
     expect(f.enable && f.retries == 3 && f.retry_delay == 100 && f.camera == "/dev/video0" &&
@@ -117,6 +123,8 @@ void checkParse() {
             "methods:\n  face: {enable: false, recognition: {threshold: [1]}}\n"},
            {"bad order entry",
             "schema_version: 2\nstrategy: {debug: true, order: [face, {a: 1}]}\n"},
+           {"execution_mode not a scalar",
+            "schema_version: 2\nstrategy: {debug: true, execution_mode: [sequential]}\n"},
            {"YAML syntax error", "schema_version: 2\nstrategy: {debug: true\n"},
            {"not a map", "just a string\n"},
            {"other schema_version", "schema_version: 1\nstrategy: {debug: true}\n"},
@@ -151,10 +159,52 @@ void checkParse() {
   }
 }
 
+// execution_mode is matched exactly: only "sequential" picks sequential,
+// anything else (or nothing) means parallel.
+void checkParseExecutionMode() {
+  for (const auto& [value, want] : std::vector<std::pair<std::string, std::string>>{
+           {"sequential", "sequential"},
+           {"parallel", "parallel"},
+           {"Sequential", "parallel"},
+           {"bogus", "parallel"},
+           {"''", "parallel"},
+           {"~", "parallel"},
+           {"1", "parallel"},
+       }) {
+    const BiopassConfig c =
+        parseOrDie("schema_version: 2\nstrategy: {execution_mode: " + value + "}\n");
+    expect(modeName(c) == want, "parse: execution_mode " + value + " -> " + want);
+  }
+  const BiopassConfig c = parseOrDie("schema_version: 2\nstrategy: {debug: true}\n");
+  expect(modeName(c) == "parallel", "parse: missing execution_mode -> parallel");
+}
+
+// order keeps each known method once, in the user's order, then appends
+// the missing ones. Names are matched exactly.
+void checkParseOrder() {
+  using Names = std::vector<std::string>;
+  for (const auto& [value, want] : std::vector<std::pair<std::string, Names>>{
+           {"[face, fingerprint]", {"face", "fingerprint"}},
+           {"[fingerprint, face]", {"fingerprint", "face"}},
+           {"[fingerprint]", {"fingerprint", "face"}},
+           {"[fingerprint, bogus, fingerprint]", {"fingerprint", "face"}},
+           {"[Fingerprint, '']", {"face", "fingerprint"}},
+           {"[]", {"face", "fingerprint"}},
+           {"fingerprint", {"face", "fingerprint"}},
+       }) {
+    const BiopassConfig c = parseOrDie("schema_version: 2\nstrategy: {order: " + value + "}\n");
+    expect(orderNames(c) == want, "parse: order " + value);
+  }
+  const BiopassConfig c = parseOrDie("schema_version: 2\nstrategy: {debug: true}\n");
+  expect(orderNames(c) == Names{"face", "fingerprint"}, "parse: missing order -> default");
+}
+
 }  // namespace
 
 int main() {
   checkParse();
+  checkParseExecutionMode();
+  checkParseOrder();
 
   {
     BiopassConfig c;
