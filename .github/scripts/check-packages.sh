@@ -4,13 +4,15 @@
 # entry, and the RUNPATH of every shipped ELF file (auth/test/runpath/check.sh).
 # Needs dpkg-deb, rpm, rpm2cpio, cpio, jq and readelf.
 # Usage: check-packages.sh <bundle dir>   (app/src-tauri/target/release/bundle)
-set -euo pipefail
+set -Eeuo pipefail
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
 conf="$root/app/src-tauri/tauri.conf.json"
 bundle=${1:?usage: check-packages.sh <bundle dir>}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
+# set -e stops silently; say which command failed.
+trap 'echo "FAIL line $LINENO: $BASH_COMMAND" >&2' ERR
 rc=0
 fail() {
   echo "FAIL $*"
@@ -21,10 +23,10 @@ fail() {
 only() {
   local m
   m=$(compgen -G "$1" || true)
-  [ -n "$m" ] && [ "$(printf '%s\n' "$m" | wc -l)" -eq 1 ] || {
+  if [ -z "$m" ] || [ "$(printf '%s\n' "$m" | wc -l)" -ne 1 ]; then
     echo "FAIL expected exactly one $1, got: ${m:-none}" >&2
     return 1
-  }
+  fi
   printf '%s\n' "$m"
 }
 
