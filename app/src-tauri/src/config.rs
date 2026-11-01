@@ -23,9 +23,29 @@ pub struct BiopassConfig {
 #[serde(default)]
 pub struct StrategyConfig {
     pub debug: bool,
-    pub execution_mode: String,
+    pub execution_mode: ExecutionMode,
     pub order: Vec<String>,
     pub ignore_services: Vec<String>,
+}
+
+/// Saved as "sequential" or "parallel". Any other string loads as Parallel,
+/// as the helper reads it (parseExecutionMode in auth/core/auth_config.cc),
+/// so the app shows and saves what applies instead of rejecting the config.
+/// A value that is not a string is still an error.
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ExecutionMode {
+    Sequential,
+    Parallel,
+}
+
+impl<'de> Deserialize<'de> for ExecutionMode {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(match String::deserialize(deserializer)?.as_str() {
+            "sequential" => ExecutionMode::Sequential,
+            _ => ExecutionMode::Parallel,
+        })
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -99,7 +119,7 @@ fn get_default_config() -> BiopassConfig {
         schema_version: CURRENT_SCHEMA_VERSION,
         strategy: StrategyConfig {
             debug: false,
-            execution_mode: "parallel".to_string(),
+            execution_mode: ExecutionMode::Parallel,
             order: vec!["face".to_string(), "fingerprint".to_string()],
             ignore_services: default_ignored_services(),
         },
@@ -540,10 +560,24 @@ mod tests {
         assert_eq!(json["strategy"]["execution_mode"], "parallel");
     }
 
+    /// The frontend gets and sends the same strings.
     #[test]
-    fn unknown_execution_mode_does_not_reject_the_config() {
+    fn execution_mode_json_is_the_yaml_string() {
+        let mut config = get_default_config();
+        config.strategy.execution_mode = ExecutionMode::Sequential;
+        let json = serde_json::to_value(&config).unwrap();
+        assert_eq!(json["strategy"]["execution_mode"], "sequential");
+        assert_eq!(
+            serde_json::from_value::<BiopassConfig>(json).unwrap(),
+            config
+        );
+    }
+
+    #[test]
+    fn unknown_execution_mode_loads_as_parallel() {
+        // As the helper reads it.
         for mode in ["bogus", "Sequential", "''"] {
-            assert!(reloaded_execution_mode(mode).is_ok(), "{mode}");
+            assert_eq!(reloaded_execution_mode(mode).unwrap(), "parallel", "{mode}");
         }
     }
 
