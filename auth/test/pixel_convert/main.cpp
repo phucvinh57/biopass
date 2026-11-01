@@ -1,5 +1,6 @@
 // Byte-order checks for the packed RGB converters (face/common/pixel_convert.h)
-// used for libcamera SoftISP output. Exits non-zero on any failure.
+// used for libcamera SoftISP output, and the values the YUYV (BT.601 limited
+// range) and GREY converters produce. Exits non-zero on any failure.
 
 #include <cstdio>
 #include <vector>
@@ -94,6 +95,79 @@ void checkLibcameraRgb888Bytes() {
          "libcamera RGB888 bytes {0,0,255} decode to red");
 }
 
+bool pixelIs(const ImageRGB& img, int x, int y, Rgb want) {
+  const uint8_t* px = img.ptr() + (static_cast<size_t>(y) * img.width + x) * 3;
+  return px[0] == want.r && px[1] == want.g && px[2] == want.b;
+}
+
+// YUYV packs two pixels in four bytes: Y0 U Y1 V, sharing U and V.
+void checkYuyv() {
+  ImageRGB out;
+
+  // Limited range: Y 16 is black and Y 235 white; one pair shares U and V.
+  const uint8_t black_white[4] = {16, 128, 235, 128};
+  expect(biopass::yuyvToRgb(black_white, sizeof(black_white), 2, 1, 4, out) && out.width == 2 &&
+             out.height == 1 && pixelIs(out, 0, 0, {0, 0, 0}) &&
+             pixelIs(out, 1, 0, {255, 255, 255}),
+         "YUYV: Y 16 -> black, Y 235 -> white, chroma shared by the pair");
+
+  // BT.601 red (Y 81, U 90, V 240) and green (Y 145, U 54, V 34).
+  const uint8_t red[4] = {81, 90, 81, 240};
+  expect(biopass::yuyvToRgb(red, sizeof(red), 2, 1, 4, out) && pixelIs(out, 0, 0, {255, 0, 0}) &&
+             pixelIs(out, 1, 0, {255, 0, 0}),
+         "YUYV: BT.601 red decodes to (255, 0, 0)");
+  const uint8_t green[4] = {145, 54, 145, 34};
+  expect(biopass::yuyvToRgb(green, sizeof(green), 2, 1, 4, out) && pixelIs(out, 0, 0, {0, 255, 1}),
+         "YUYV: BT.601 green decodes to (0, 255, 1)");
+
+  // Out-of-range results clamp to [0, 255].
+  const uint8_t hot[4] = {255, 255, 255, 255};
+  expect(biopass::yuyvToRgb(hot, sizeof(hot), 2, 1, 4, out) && pixelIs(out, 0, 0, {255, 125, 255}),
+         "YUYV: Y/U/V 255 clamps to (255, 125, 255)");
+
+  // Row padding (0xEE) is skipped: row 1 is read from `stride`, not 2*width.
+  const uint8_t padded[16] = {16,  128, 16,  128, 0xEE, 0xEE, 0xEE, 0xEE,
+                              235, 128, 235, 128, 0xEE, 0xEE, 0xEE, 0xEE};
+  expect(biopass::yuyvToRgb(padded, sizeof(padded), 2, 2, 8, out) &&
+             pixelIs(out, 1, 0, {0, 0, 0}) && pixelIs(out, 0, 1, {255, 255, 255}),
+         "YUYV: row padding is skipped");
+
+  // A stride below 2*width is read as packed rows.
+  const uint8_t packed[8] = {235, 128, 235, 128, 16, 128, 16, 128};
+  expect(biopass::yuyvToRgb(packed, sizeof(packed), 2, 2, 0, out) &&
+             pixelIs(out, 0, 0, {255, 255, 255}) && pixelIs(out, 0, 1, {0, 0, 0}),
+         "YUYV: stride 0 means packed rows");
+
+  // Odd width: the trailing unpaired column is left black.
+  const uint8_t odd[6] = {235, 128, 235, 128, 235, 128};
+  expect(biopass::yuyvToRgb(odd, sizeof(odd), 3, 1, 6, out) && out.width == 3 &&
+             pixelIs(out, 1, 0, {255, 255, 255}) && pixelIs(out, 2, 0, {0, 0, 0}),
+         "YUYV: odd width leaves the last column black");
+
+  // The last row needs only 2*width bytes, not a full stride.
+  expect(biopass::yuyvToRgb(padded, 12, 2, 2, 8, out), "YUYV: last row may omit its padding");
+  expect(!biopass::yuyvToRgb(padded, 11, 2, 2, 8, out), "YUYV: rejects a truncated buffer");
+  expect(!biopass::yuyvToRgb(nullptr, 4, 2, 1, 4, out), "YUYV: rejects a null buffer");
+  expect(!biopass::yuyvToRgb(black_white, sizeof(black_white), 0, 1, 4, out),
+         "YUYV: rejects zero width");
+}
+
+// GREY copies each byte to R, G and B.
+void checkGrey() {
+  ImageRGB out;
+  const uint8_t grey[6] = {0, 77, 0xEE, 255, 128, 0xEE};
+  expect(biopass::greyToRgb(grey, sizeof(grey), 2, 2, 3, out) && out.width == 2 &&
+             out.height == 2 && pixelIs(out, 0, 0, {0, 0, 0}) && pixelIs(out, 1, 0, {77, 77, 77}) &&
+             pixelIs(out, 0, 1, {255, 255, 255}) && pixelIs(out, 1, 1, {128, 128, 128}),
+         "GREY: value copied to R, G, B; row padding skipped");
+  expect(biopass::greyToRgb(grey, 4, 2, 2, 0, out) && pixelIs(out, 0, 1, {0xEE, 0xEE, 0xEE}),
+         "GREY: stride 0 means packed rows");
+  expect(biopass::greyToRgb(grey, 5, 2, 2, 3, out), "GREY: last row may omit its padding");
+  expect(!biopass::greyToRgb(grey, 4, 2, 2, 3, out), "GREY: rejects a truncated buffer");
+  expect(!biopass::greyToRgb(nullptr, 6, 2, 2, 3, out), "GREY: rejects a null buffer");
+  expect(!biopass::greyToRgb(grey, sizeof(grey), 2, 0, 3, out), "GREY: rejects zero height");
+}
+
 }  // namespace
 
 int main() {
@@ -102,6 +176,8 @@ int main() {
   checkLayout(PackedRgbLayout::kBgrx32, "XRGB8888/ARGB8888 (B,G,R,X)");
   checkLayout(PackedRgbLayout::kRgbx32, "XBGR8888/ABGR8888 (R,G,B,X)");
   checkLibcameraRgb888Bytes();
+  checkYuyv();
+  checkGrey();
 
   std::printf("%s\n", g_failures == 0 ? "All checks passed" : "Some checks FAILED");
   return g_failures == 0 ? 0 : 1;

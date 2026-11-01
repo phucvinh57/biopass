@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "lint": "biome check .",
+    "test": "bun test",
     "ui": "shadcn",
     "check": "biome check --write ."
   },
