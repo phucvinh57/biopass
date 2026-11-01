@@ -595,6 +595,64 @@ mod tests {
     use super::*;
 
     #[test]
+    fn task_and_architecture_are_checked_together() {
+        for (task, arch) in [
+            ("detection", None),
+            ("recognition", None),
+            ("anti_spoofing", Some("mobilenetv3")),
+            ("anti_spoofing", Some("minifasv2")),
+        ] {
+            assert!(validate_task(task, arch).is_ok(), "{task} {arch:?}");
+        }
+
+        let tasks = r#"["detection", "recognition", "anti_spoofing"]"#;
+        let archs = r#"["mobilenetv3", "minifasv2"]"#;
+        for (task, arch, err) in [
+            (
+                "bogus",
+                None,
+                format!("Invalid model task 'bogus'; expected one of {tasks}"),
+            ),
+            (
+                "Detection",
+                None,
+                format!("Invalid model task 'Detection'; expected one of {tasks}"),
+            ),
+            (
+                "",
+                None,
+                format!("Invalid model task ''; expected one of {tasks}"),
+            ),
+            (
+                "anti_spoofing",
+                None,
+                format!("Anti-spoofing models need an architecture; expected one of {archs}"),
+            ),
+            (
+                "anti_spoofing",
+                Some("resnet"),
+                format!("Anti-spoofing models need an architecture; expected one of {archs}"),
+            ),
+            (
+                "detection",
+                Some("minifasv2"),
+                "detection models do not take an architecture".to_string(),
+            ),
+            (
+                "recognition",
+                Some("minifasv2"),
+                "recognition models do not take an architecture".to_string(),
+            ),
+        ] {
+            assert_eq!(
+                validate_task(task, arch).err(),
+                Some(err),
+                "{task} {arch:?}"
+            );
+        }
+    }
+
+    #[test]
     fn delete_protection_counts_disabled_methods() {
         let mut config = crate::config::BiopassConfig::default();
         config.methods.face.enable = false;

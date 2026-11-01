@@ -423,6 +423,73 @@ mod tests {
         assert_eq!(list_models(&conn, None).unwrap().len(), ADDERS);
     }
 
+    fn db_with_each_task() -> Connection {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrations().to_latest(&mut conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO models (id, name, task, architecture, path, source, installed_at) VALUES \
+                 ('det', 'D', 'detection', NULL, '/m/det.onnx', 'builtin', 0), \
+                 ('rec', 'R', 'recognition', NULL, '/m/rec.onnx', 'builtin', 1), \
+                 ('as', 'A', 'anti_spoofing', 'minifasv2', '/m/as.onnx', 'user', 2);",
+        )
+        .unwrap();
+        conn
+    }
+
+    /// The frontend's Model type (app/src/types/config.ts) reads these strings.
+    #[test]
+    fn model_json_keeps_the_stored_strings() {
+        let conn = db_with_each_task();
+        let json = serde_json::to_value(list_models(&conn, None).unwrap()).unwrap();
+        let fields = |i: usize| {
+            (
+                json[i]["task"].as_str().unwrap().to_string(),
+                json[i]["source"].as_str().unwrap().to_string(),
+            )
+        };
+        assert_eq!(fields(0), ("detection".into(), "builtin".into()));
+        assert_eq!(fields(1), ("recognition".into(), "builtin".into()));
+        assert_eq!(fields(2), ("anti_spoofing".into(), "user".into()));
+        assert_eq!(json[2]["architecture"], "minifasv2");
+    }
+
+    #[test]
+    fn list_models_filters_by_task() {
+        let conn = db_with_each_task();
+        let ids = |task| -> Vec<String> {
+            list_models(&conn, task)
+                .unwrap()
+                .into_iter()
+                .map(|m| m.id)
+                .collect()
+        };
+        assert_eq!(ids(None), ["det", "rec", "as"]);
+        assert_eq!(ids(Some("detection")), ["det"]);
+        assert_eq!(ids(Some("recognition")), ["rec"]);
+        assert_eq!(ids(Some("anti_spoofing")), ["as"]);
+    }
+
+    /// Rows keep the strings the auth side and older app versions read.
+    #[test]
+    fn inserted_rows_store_task_and_source_strings() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrations().to_latest(&mut conn).unwrap();
+        let model = NewModel {
+            task: "anti_spoofing",
+            architecture: Some("minifasv2"),
+            ..user_model("A")
+        };
+        let id = insert_with_unique_id(&conn, "a", &model, path_for).unwrap();
+        let stored: (String, String) = conn
+            .query_row(
+                "SELECT task, source FROM models WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(stored, ("anti_spoofing".into(), "user".into()));
+    }
+
     #[test]
     fn is_user_model_only_for_user_rows() {
         let mut conn = Connection::open_in_memory().unwrap();
