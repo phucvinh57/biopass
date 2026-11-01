@@ -516,6 +516,44 @@ mod tests {
         assert_eq!(parse_config("").unwrap(), get_default_config());
     }
 
+    /// The execution_mode save_config writes back after loading `value`.
+    fn reloaded_execution_mode(value: &str) -> Result<String, String> {
+        let yaml = format!(
+            "schema_version: {CURRENT_SCHEMA_VERSION}\nstrategy:\n  execution_mode: {value}\n"
+        );
+        let config = parse_config(&yaml)?;
+        let saved: serde_yaml::Value =
+            serde_yaml::from_str(&serde_yaml::to_string(&config).unwrap()).unwrap();
+        Ok(saved["strategy"]["execution_mode"]
+            .as_str()
+            .unwrap()
+            .to_string())
+    }
+
+    #[test]
+    fn execution_mode_is_saved_as_loaded() {
+        for mode in ["sequential", "parallel"] {
+            assert_eq!(reloaded_execution_mode(mode).unwrap(), mode);
+        }
+        let missing = format!("schema_version: {CURRENT_SCHEMA_VERSION}\nstrategy: {{}}\n");
+        let json = serde_json::to_value(parse_config(&missing).unwrap()).unwrap();
+        assert_eq!(json["strategy"]["execution_mode"], "parallel");
+    }
+
+    #[test]
+    fn unknown_execution_mode_does_not_reject_the_config() {
+        for mode in ["bogus", "Sequential", "''"] {
+            assert!(reloaded_execution_mode(mode).is_ok(), "{mode}");
+        }
+    }
+
+    #[test]
+    fn non_string_execution_mode_is_an_error() {
+        for mode in ["[sequential]", "~", "1"] {
+            assert!(reloaded_execution_mode(mode).is_err(), "{mode}");
+        }
+    }
+
     #[test]
     fn load_error_names_the_file() {
         let dir = tempfile::tempdir().unwrap();
