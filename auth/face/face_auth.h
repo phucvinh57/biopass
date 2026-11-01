@@ -1,6 +1,8 @@
 #pragma once
 
+#include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -17,9 +19,21 @@ namespace biopass {
 
 class FaceAuth : public IAuthMethod {
  public:
+  // Opens the colour camera at a device path (nullopt = first camera).
+  using CameraOpener = std::function<std::unique_ptr<ICameraCaptureSession>(
+      const std::optional<std::string>& device_path)>;
+
   // One sqlite connection per auth session, reused for every model_id lookup.
-  FaceAuth(const FaceMethodConfig& config, const std::string& username)
-      : face_config_(config), username_(username), model_registry_(username) {}
+  // open_camera: openCameraSession() unless a test passes a fake.
+  FaceAuth(const FaceMethodConfig& config, const std::string& username,
+           CameraOpener open_camera = nullptr)
+      : face_config_(config),
+        username_(username),
+        model_registry_(username),
+        open_camera_(open_camera ? std::move(open_camera)
+                                 : [](const std::optional<std::string>& device_path) {
+                                     return openCameraSession(device_path);
+                                   }) {}
   ~FaceAuth() override = default;
 
   std::string name() const override { return "Face"; }
@@ -46,7 +60,9 @@ class FaceAuth : public IAuthMethod {
   // Owner of the registry and model files, which are read as this user.
   std::string username_;
   ModelRegistry model_registry_;
-  std::unique_ptr<ICameraCaptureSession> camera_session_;
+  CameraOpener open_camera_;
+  // Opened by isAvailable() (hence mutable) and kept for the auth session.
+  mutable std::unique_ptr<ICameraCaptureSession> camera_session_;
   std::unique_ptr<ICameraCaptureSession> ir_camera_session_;
   std::unique_ptr<FaceDetection> detector_;
   std::unique_ptr<FaceRecognition> recognizer_;

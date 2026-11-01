@@ -32,7 +32,6 @@ class ICameraCaptureSession {
   virtual ImageRGB capture() = 0;
 };
 
-bool checkCameraAvailability(const std::optional<std::string>& device_path);
 std::unique_ptr<ICameraCaptureSession> openCameraSession(
     const std::optional<std::string>& device_path,
     CameraCaptureFormat format = CameraCaptureFormat::Default, int warmup_frames = 5,

@@ -63,6 +63,7 @@ if(BUILD_TESTS)
     add_subdirectory(test/capture_policy)
     add_subdirectory(test/face_match)
     add_subdirectory(test/session_engine)
+    add_subdirectory(test/face_camera_reuse)
 endif()
 
 install(

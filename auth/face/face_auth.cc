@@ -45,7 +45,18 @@ std::unique_ptr<Engine> loadModel(const char* what, const std::string& username,
 
 }  // namespace
 
-bool FaceAuth::isAvailable() const { return checkCameraAvailability(face_config_.camera); }
+// The session opened to check is kept: beginAuthenticationSession() and the
+// attempts capture from it rather than closing the camera and opening it again.
+bool FaceAuth::isAvailable() const {
+  if (!camera_session_ || !camera_session_->isOpen()) {
+    camera_session_ = open_camera_(face_config_.camera);
+  }
+  if (!camera_session_ || !camera_session_->isOpen()) {
+    camera_session_.reset();
+    return false;
+  }
+  return true;
+}
 
 // A failed open leaves ir_camera_session_ null; checkAntiSpoof() then falls
 // back to a one-shot capture per attempt.
@@ -98,7 +109,7 @@ bool FaceAuth::ensureModelsLoaded() {
 
 void FaceAuth::beginAuthenticationSession() {
   if (!camera_session_) {
-    camera_session_ = openCameraSession(face_config_.camera);
+    camera_session_ = open_camera_(face_config_.camera);
   }
   // The IR session is opened lazily in authenticate(), right before the
   // anti-spoofing check: opening it here would stream IR alongside every
@@ -148,11 +159,15 @@ AuthResult FaceAuth::authenticate(const std::string& username, const AuthConfig&
 AuthResult FaceAuth::attempt(const std::string& username, const AuthConfig& config,
                              std::atomic<bool>* cancel_signal) {
   if (!camera_session_) {
-    camera_session_ = openCameraSession(face_config_.camera);
+    camera_session_ = open_camera_(face_config_.camera);
   }
   if (!camera_session_ || !camera_session_->isOpen()) {
     spdlog::error("FaceAuth: Could not open camera");
-    if (!checkCameraAvailability(face_config_.camera)) {
+    // One more open tells a missing camera (Unavailable) from a passing
+    // failure (Retry). A session it gets is kept for the next attempt.
+    camera_session_ = open_camera_(face_config_.camera);
+    if (!camera_session_ || !camera_session_->isOpen()) {
+      camera_session_.reset();
       return AuthResult::Unavailable;
     }
     return AuthResult::Retry;

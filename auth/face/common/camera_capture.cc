@@ -711,11 +711,6 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
 
 }  // namespace
 
-bool checkCameraAvailability(const std::optional<std::string>& linux_video_device_path) {
-  auto session = openCameraSession(linux_video_device_path);
-  return session && session->isOpen();
-}
-
 std::unique_ptr<ICameraCaptureSession> openCameraSession(
     const std::optional<std::string>& linux_video_device_path, CameraCaptureFormat format,
     int warmup_frames, int capture_timeout_ms) {
