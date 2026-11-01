@@ -1,7 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Cpu, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { cmd } from "@/commands";
 import { Button } from "@/components/ui/button";
@@ -11,12 +10,11 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { useModelFileStatus } from "@/hooks/useModelFileStatus";
-import { referencedModelIds } from "@/lib/models";
 import type { Model } from "@/types/config";
 import { AddModelDialog } from "./-components/AddModelDialog";
 import { ModelStatus, type ModelStatusType } from "./-components/ModelStatus";
 import { RenameModelDialog } from "./-components/RenameModelDialog";
+import { useModelStatuses } from "./-components/useModelStatuses";
 
 interface ModelCardProps {
   model: Model;
@@ -123,52 +121,7 @@ function ModelCard({ model, status, onRenamed, onDelete }: ModelCardProps) {
 }
 
 function ModelsRouteComponent() {
-  const [models, setModels] = useState<Model[]>([]);
-  const [loading, setLoading] = useState(true);
-  // null until the saved config is read; keeps every model "checking" (and
-  // undeletable) if that fails.
-  const [inUseIds, setInUseIds] = useState<Set<string> | null>(null);
-  const fileStatus = useModelFileStatus(models);
-
-  const loadInUseIds = useCallback(async () => {
-    try {
-      const config = await cmd.config.load();
-      setInUseIds(
-        new Set(referencedModelIds(config, { includeDisabled: true })),
-      );
-    } catch (err) {
-      console.error("Failed to check model usage:", err);
-    }
-  }, []);
-
-  function statusOf(model: Model): ModelStatusType {
-    const exists = fileStatus[model.id];
-    if (exists === undefined || inUseIds === null) return "checking";
-    if (!exists) return "missing";
-    return inUseIds.has(model.id) ? "inuse" : "available";
-  }
-
-  const loadModels = useCallback(async () => {
-    try {
-      setLoading(true);
-      const loadedModels = await cmd.models.list();
-      setModels(loadedModels);
-      await loadInUseIds();
-    } catch (err) {
-      console.error("Failed to load models:", err);
-      toast.error("Failed to load models");
-    } finally {
-      setLoading(false);
-    }
-  }, [loadInUseIds]);
-
-  useEffect(() => {
-    loadModels();
-    const unlisten = cmd.models.onDefaultsUpdated(loadModels);
-    return () => {
-      unlisten.then((fn) => fn());
-    };
-  }, [loadModels]);
+  const { models, setModels, loading, statusOf } = useModelStatuses();
 
   function handleModelUpdated(updated: Model) {
     setModels((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
