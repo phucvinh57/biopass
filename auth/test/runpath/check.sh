@@ -10,6 +10,7 @@ for f in "$@"; do
   [ -f "$f" ] || { echo "FAIL $f: missing"; rc=1; continue; }
   rp=$(LC_ALL=C readelf -d "$f" | sed -n 's/.*(R\(UN\)\{0,1\}PATH).*\[\(.*\)\]$/\2/p')
   [ -n "$rp" ] || { echo "ok   $f: no RUNPATH"; continue; }
+  # shellcheck disable=SC2016 # '$ORIGIN' is literal: the loader expands it, not the shell
   bad=$(printf '%s\n' "$rp" | tr ':' '\n' | while IFS= read -r e; do
     case $e in
       '$ORIGIN' | '$ORIGIN/'* | /usr/lib/biopass) ;;
