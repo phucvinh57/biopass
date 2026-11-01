@@ -63,9 +63,9 @@ std::vector<std::string> dedupeServices(const std::vector<std::string>& services
 // through to the next module. The anti-spoofing threshold only counts when
 // anti-spoofing is on.
 bool faceThresholdsValid(const FaceMethodConfig& face) {
+  const auto ai = aiAntiSpoofingModel(face.anti_spoofing);
   return thresholdInRange(face.detection.threshold) &&
-         thresholdInRange(face.recognition.threshold) &&
-         (!face.anti_spoofing.enable || thresholdInRange(face.anti_spoofing.model.threshold));
+         thresholdInRange(face.recognition.threshold) && (!ai || thresholdInRange(ai->threshold));
 }
 
 }  // namespace

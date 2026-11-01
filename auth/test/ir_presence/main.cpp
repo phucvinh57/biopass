@@ -33,8 +33,8 @@ class DarkSession : public biopass::ICameraCaptureSession {
 long long runMs(int warmup_ms, int presence_ms, const std::atomic<bool>* cancel, bool* passed) {
   DarkSession session;
   const auto start = std::chrono::steady_clock::now();
-  *passed = biopass::checkAntispoofByIRCamera("/dev/fake-ir", nullptr, "nobody", false, &session,
-                                              warmup_ms, presence_ms, cancel);
+  const biopass::IrCameraConfig ir{"/dev/fake-ir", warmup_ms, presence_ms};
+  *passed = biopass::checkAntispoofByIRCamera(ir, nullptr, "nobody", false, &session, cancel);
   return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
                                                                start)
       .count();

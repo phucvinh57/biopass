@@ -3,6 +3,8 @@
 #include <atomic>
 #include <string>
 
+#include "auth_config.h"
+
 namespace biopass {
 
 class ICameraCaptureSession;
@@ -13,16 +15,17 @@ class FaceDetection;
 // NOT a liveness detector: a printed photo in front of an IR camera can pass.
 // Treat it as a blank-frame guard.
 //
-// warmup_delay_ms: one sleep before the first capture so IR LEDs and
+// ir: from irCameraConfig(); an empty device fails the check.
+// ir.warmup_delay_ms: one sleep before the first capture so IR LEDs and
 // auto-exposure settle.
-// presence_timeout_ms: retry budget for capture + inference, since a blinking
-// emitter can yield all-white/all-dark frames. 0 = single attempt.
+// ir.presence_timeout_ms: retry budget for capture + inference, since a
+// blinking emitter can yield all-white/all-dark frames. 0 = single attempt.
+// session: the caller's open IR session; null opens one per attempt.
 // cancel: the run's cancel signal (may be null); once set, the warmup sleep
 // and the retries stop and the check fails.
-bool checkAntispoofByIRCamera(const std::string& ir_camera_path, FaceDetection* detector,
+bool checkAntispoofByIRCamera(const IrCameraConfig& ir, FaceDetection* detector,
                               const std::string& username, bool debug,
-                              ICameraCaptureSession* session = nullptr, int warmup_delay_ms = 300,
-                              int presence_timeout_ms = 1500,
+                              ICameraCaptureSession* session = nullptr,
                               const std::atomic<bool>* cancel = nullptr);
 
 }  // namespace biopass

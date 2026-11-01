@@ -11,10 +11,12 @@
 
 namespace biopass {
 
-bool checkAntispoofByIRCamera(const std::string& device_path, FaceDetection* detector,
+bool checkAntispoofByIRCamera(const IrCameraConfig& ir, FaceDetection* detector,
                               const std::string& username, bool debug,
-                              ICameraCaptureSession* session, int warmup_delay_ms,
-                              int presence_timeout_ms, const std::atomic<bool>* cancel) {
+                              ICameraCaptureSession* session, const std::atomic<bool>* cancel) {
+  const std::string& device_path = ir.device;
+  const int warmup_delay_ms = ir.warmup_delay_ms;
+  const int presence_timeout_ms = ir.presence_timeout_ms;
   spdlog::debug(
       "FaceAuth: IR presence check | device='{}' warmup_delay_ms={} presence_timeout_ms={}",
       device_path, warmup_delay_ms, presence_timeout_ms);

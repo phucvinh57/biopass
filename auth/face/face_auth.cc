@@ -63,15 +63,12 @@ bool FaceAuth::isAvailable() const {
 // A failed open leaves ir_camera_session_ null; checkAntiSpoof() then falls
 // back to a one-shot capture per attempt.
 void FaceAuth::ensureIrSession() {
-  if (face_config_.anti_spoofing.ir_camera.has_value() &&
-      !face_config_.anti_spoofing.ir_camera->empty() &&
-      (!ir_camera_session_ || !ir_camera_session_->isOpen())) {
-    ir_camera_session_ =
-        openCameraSession(*face_config_.anti_spoofing.ir_camera, CameraCaptureFormat::V4L2Grey,
-                          kIrCaptureWarmupFrames, kIrCaptureTimeoutMs);
+  const auto ir = irCameraConfig(face_config_.anti_spoofing);
+  if (ir && (!ir_camera_session_ || !ir_camera_session_->isOpen())) {
+    ir_camera_session_ = openCameraSession(ir->device, CameraCaptureFormat::V4L2Grey,
+                                           kIrCaptureWarmupFrames, kIrCaptureTimeoutMs);
     if (!ir_camera_session_) {
-      spdlog::warn("FaceAuth: Could not open IR camera session on '{}'",
-                   *face_config_.anti_spoofing.ir_camera);
+      spdlog::warn("FaceAuth: Could not open IR camera session on '{}'", ir->device);
     }
   }
 }
