@@ -1,0 +1,12 @@
+#!/bin/sh
+
+set -e
+
+# Take the Biopass profile out of /etc/pam.d/common-* before the module goes
+# away. Only on remove (dpkg also calls prerm with remove before a purge), not
+# on upgrade: the profile stays enabled across upgrades.
+if [ "$1" = remove ] && command -v pam-auth-update >/dev/null 2>&1; then
+    pam-auth-update --package --remove biopass
+fi
+
+exit 0

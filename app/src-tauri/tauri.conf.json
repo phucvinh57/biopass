@@ -45,6 +45,7 @@
           "libgles2"
         ],
         "postInstallScript": "scripts/deb/postinst",
+        "preRemoveScript": "scripts/deb/prerm",
         "desktopTemplate": "scripts/biopass.desktop",
         "files": {
           "/lib/security/libbiopass_pam.so": "../../auth/build/pam/libbiopass_pam.so",
