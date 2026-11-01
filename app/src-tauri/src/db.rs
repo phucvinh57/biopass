@@ -1,3 +1,4 @@
+use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 use rusqlite::{params, Connection, OptionalExtension};
 use rusqlite_migration::{Migrations, M};
 use serde::{Deserialize, Serialize};
@@ -8,16 +9,80 @@ use crate::paths::{
     ensure_private_dir, ensure_private_file, get_config_dir, get_data_dir, get_db_path,
 };
 
+/// A fieldless enum kept as fixed strings: the same text in the database
+/// (TEXT column), in JSON for the frontend, and from `as_str`/`parse`.
+macro_rules! text_enum {
+    ($(#[$meta:meta])* $name:ident { $($variant:ident => $text:literal),+ $(,)? }) => {
+        $(#[$meta])*
+        #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+        pub enum $name {
+            $(#[serde(rename = $text)] $variant),+
+        }
+
+        impl $name {
+            pub const ALL: &'static [$name] = &[$($name::$variant),+];
+
+            pub fn as_str(self) -> &'static str {
+                match self {
+                    $($name::$variant => $text),+
+                }
+            }
+
+            pub fn parse(text: &str) -> Option<Self> {
+                match text {
+                    $($text => Some($name::$variant),)+
+                    _ => None,
+                }
+            }
+        }
+
+        impl ToSql for $name {
+            fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+                Ok(self.as_str().into())
+            }
+        }
+
+        impl FromSql for $name {
+            fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+                let text = value.as_str()?;
+                $name::parse(text).ok_or_else(|| {
+                    FromSqlError::Other(
+                        format!("unknown {} '{}'", stringify!($name), text).into(),
+                    )
+                })
+            }
+        }
+    };
+}
+
+text_enum! {
+    /// The model's job in the face pipeline (`task` column).
+    ModelTask {
+        Detection => "detection",
+        Recognition => "recognition",
+        AntiSpoofing => "anti_spoofing",
+    }
+}
+
+text_enum! {
+    /// Where a model came from (`source` column). Only these two values have
+    /// ever been written; a row with any other value fails to read.
+    ModelSource {
+        Builtin => "builtin",
+        User => "user",
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Model {
     pub id: String,
     pub name: String,
-    pub task: String,
+    pub task: ModelTask,
     pub architecture: Option<String>,
     pub path: String,
     pub version: Option<String>,
     pub checksum: Option<String>,
-    pub source: String,
+    pub source: ModelSource,
     pub installed_at: i64,
 }
 
@@ -25,7 +90,7 @@ pub struct KnownModel {
     pub slug: &'static str,
     pub filename: &'static str,
     pub display_name: &'static str,
-    pub task: &'static str,
+    pub task: ModelTask,
     pub architecture: Option<&'static str>,
     /// Hex SHA-256 and byte size of the release asset: the Git LFS `oid`
     /// and `size` of auth/face/models/<filename>. Update them together.
@@ -40,7 +105,7 @@ pub const KNOWN_MODELS: &[KnownModel] = &[
         slug: "yolov8n-face",
         filename: "yolov8n-face.onnx",
         display_name: "YOLOv8n Face",
-        task: "detection",
+        task: ModelTask::Detection,
         architecture: None,
         sha256: "3e81709ceaae911db2dd23bed39aa1fc980b6320e8a8bbf8b587b2a8feaa5a5a",
         size: 12667296,
@@ -49,7 +114,7 @@ pub const KNOWN_MODELS: &[KnownModel] = &[
         slug: "edgeface-s-gamma-05",
         filename: "edgeface_s_gamma_05.onnx",
         display_name: "EdgeFace S (gamma 0.5)",
-        task: "recognition",
+        task: ModelTask::Recognition,
         architecture: None,
         sha256: "cdc2ced431b4bf071c92f2fe8bb6ed4b5017be4175b4375eaa6e14b255f831ce",
         size: 14847458,
@@ -58,7 +123,7 @@ pub const KNOWN_MODELS: &[KnownModel] = &[
         slug: "edgeface-xs-gamma-06",
         filename: "edgeface_xs_gamma_06.onnx",
         display_name: "EdgeFace XS (gamma 0.6)",
-        task: "recognition",
+        task: ModelTask::Recognition,
         architecture: None,
         sha256: "619ffe6f9df592e250e900ed135c2de3d620f6bc0a913f7d0432fa0735073a53",
         size: 7319208,
@@ -67,7 +132,7 @@ pub const KNOWN_MODELS: &[KnownModel] = &[
         slug: "mobilenetv3-antispoof",
         filename: "mobilenetv3_antispoof.onnx",
         display_name: "MobileNetV3 Anti-Spoof",
-        task: "anti_spoofing",
+        task: ModelTask::AntiSpoofing,
         architecture: Some("mobilenetv3"),
         sha256: "a90d32b1f217658d1eb1ea05d9248d07fbd05c8ee41b4baa4c36b5cde30d40f4",
         size: 12152984,
@@ -76,7 +141,7 @@ pub const KNOWN_MODELS: &[KnownModel] = &[
         slug: "minifas-v2",
         filename: "minifas_v2.onnx",
         display_name: "MiniFASNet V2",
-        task: "anti_spoofing",
+        task: ModelTask::AntiSpoofing,
         architecture: Some("minifasv2"),
         sha256: "af2381b88f38769222ed93379e12444e2a50814575de1c46170de570c55a42b6",
         size: 1912594,
@@ -132,13 +197,14 @@ fn seed_default_models(conn: &Connection, app: &AppHandle) -> Result<(), String>
         }
         conn.execute(
             "INSERT OR IGNORE INTO models (id, name, task, architecture, path, version, checksum, source, installed_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL, 'builtin', ?6)",
+             VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL, ?6, ?7)",
             params![
                 known.slug,
                 known.display_name,
                 known.task,
                 known.architecture,
                 path.to_string_lossy(),
+                ModelSource::Builtin,
                 now
             ],
         )
@@ -165,7 +231,7 @@ fn row_to_model(row: &rusqlite::Row) -> rusqlite::Result<Model> {
 const MODEL_COLUMNS: &str =
     "id, name, task, architecture, path, version, checksum, source, installed_at";
 
-pub fn list_models(conn: &Connection, task: Option<&str>) -> Result<Vec<Model>, String> {
+pub fn list_models(conn: &Connection, task: Option<ModelTask>) -> Result<Vec<Model>, String> {
     let query = format!(
         "SELECT {} FROM models WHERE (?1 IS NULL OR task = ?1) ORDER BY installed_at",
         MODEL_COLUMNS
@@ -191,7 +257,7 @@ pub fn get_model(conn: &Connection, id: &str) -> Result<Option<Model>, String> {
 /// built-in's slug to a user model, whose file then sits at the built-in's
 /// path; the built-in download must not overwrite it.
 pub fn is_user_model(conn: &Connection, id: &str) -> Result<bool, String> {
-    Ok(get_model(conn, id)?.is_some_and(|m| m.source == "user"))
+    Ok(get_model(conn, id)?.is_some_and(|m| m.source == ModelSource::User))
 }
 
 pub fn resolve_model_path(conn: &Connection, id: &str) -> Result<Option<String>, String> {
@@ -225,10 +291,10 @@ pub fn update_model_name(conn: &Connection, id: &str, name: &str) -> Result<(), 
 
 pub struct NewModel<'a> {
     pub name: &'a str,
-    pub task: &'a str,
+    pub task: ModelTask,
     pub architecture: Option<&'a str>,
     pub checksum: Option<&'a str>,
-    pub source: &'a str,
+    pub source: ModelSource,
 }
 
 /// Inserts `model` under the first free id of `base`, `base-2`, ... and
@@ -308,7 +374,7 @@ mod tests {
         let mut conn = Connection::open_in_memory().unwrap();
         migrations().to_latest(&mut conn).unwrap();
 
-        let insert = |task: &str, arch: Option<&str>| {
+        let insert = |task: ModelTask, arch: Option<&str>| {
             let model = NewModel {
                 task,
                 architecture: arch,
@@ -316,20 +382,20 @@ mod tests {
             };
             insert_with_unique_id(&conn, "m", &model, path_for)
         };
-        assert!(insert("anti_spoofing", None).is_err());
-        assert!(insert("anti_spoofing", Some("resnet")).is_err());
-        assert!(insert("detection", Some("minifasv2")).is_err());
-        assert!(insert("anti_spoofing", Some("minifasv2")).is_ok());
-        assert!(insert("detection", None).is_ok());
+        assert!(insert(ModelTask::AntiSpoofing, None).is_err());
+        assert!(insert(ModelTask::AntiSpoofing, Some("resnet")).is_err());
+        assert!(insert(ModelTask::Detection, Some("minifasv2")).is_err());
+        assert!(insert(ModelTask::AntiSpoofing, Some("minifasv2")).is_ok());
+        assert!(insert(ModelTask::Detection, None).is_ok());
     }
 
     fn user_model<'a>(name: &'a str) -> NewModel<'a> {
         NewModel {
             name,
-            task: "detection",
+            task: ModelTask::Detection,
             architecture: None,
             checksum: None,
-            source: "user",
+            source: ModelSource::User,
         }
     }
 
@@ -373,7 +439,7 @@ mod tests {
         migrations().to_latest(&mut conn).unwrap();
 
         let bad = NewModel {
-            task: "anti_spoofing",
+            task: ModelTask::AntiSpoofing,
             ..user_model("No arch")
         };
         assert!(insert_with_unique_id(&conn, "x", &bad, path_for).is_err());
@@ -464,9 +530,9 @@ mod tests {
                 .collect()
         };
         assert_eq!(ids(None), ["det", "rec", "as"]);
-        assert_eq!(ids(Some("detection")), ["det"]);
-        assert_eq!(ids(Some("recognition")), ["rec"]);
-        assert_eq!(ids(Some("anti_spoofing")), ["as"]);
+        assert_eq!(ids(Some(ModelTask::Detection)), ["det"]);
+        assert_eq!(ids(Some(ModelTask::Recognition)), ["rec"]);
+        assert_eq!(ids(Some(ModelTask::AntiSpoofing)), ["as"]);
     }
 
     /// Rows keep the strings the auth side and older app versions read.
@@ -475,7 +541,7 @@ mod tests {
         let mut conn = Connection::open_in_memory().unwrap();
         migrations().to_latest(&mut conn).unwrap();
         let model = NewModel {
-            task: "anti_spoofing",
+            task: ModelTask::AntiSpoofing,
             architecture: Some("minifasv2"),
             ..user_model("A")
         };
@@ -488,6 +554,39 @@ mod tests {
             )
             .unwrap();
         assert_eq!(stored, ("anti_spoofing".into(), "user".into()));
+    }
+
+    #[test]
+    fn text_enums_parse_their_own_strings_only() {
+        for &task in ModelTask::ALL {
+            assert_eq!(ModelTask::parse(task.as_str()), Some(task));
+            assert_eq!(serde_json::to_value(task).unwrap(), task.as_str());
+        }
+        for &source in ModelSource::ALL {
+            assert_eq!(ModelSource::parse(source.as_str()), Some(source));
+            assert_eq!(serde_json::to_value(source).unwrap(), source.as_str());
+        }
+        for bad in ["", "Detection", "anti-spoofing", "bogus"] {
+            assert_eq!(ModelTask::parse(bad), None, "{bad}");
+        }
+        for bad in ["", "Builtin", "custom"] {
+            assert_eq!(ModelSource::parse(bad), None, "{bad}");
+        }
+    }
+
+    /// No version wrote another source; a hand-edited one is reported, not
+    /// guessed at.
+    #[test]
+    fn unknown_source_fails_to_read() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrations().to_latest(&mut conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO models (id, name, task, path, source, installed_at) VALUES \
+                 ('m', 'M', 'detection', '/m/m.onnx', 'custom', 0);",
+        )
+        .unwrap();
+        let err = list_models(&conn, None).unwrap_err();
+        assert!(err.contains("unknown ModelSource 'custom'"), "{err}");
     }
 
     #[test]

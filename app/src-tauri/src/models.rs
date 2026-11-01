@@ -10,10 +10,9 @@ use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter};
 
 use crate::config::{load_config, BiopassConfig};
-use crate::db::{self, Model};
+use crate::db::{self, Model, ModelSource, ModelTask};
 use crate::paths::{ensure_private_dir, get_data_dir};
 
-const VALID_TASKS: [&str; 3] = ["detection", "recognition", "anti_spoofing"];
 const ANTI_SPOOFING_ARCHITECTURES: [&str; 2] = ["mobilenetv3", "minifasv2"];
 const PROGRESS_EVENT: &str = "model-download-progress";
 const DEFAULT_MODELS_EVENT: &str = "default-models-updated";
@@ -27,8 +26,14 @@ const MAX_NAME_LEN: usize = 200;
 
 #[tauri::command]
 pub fn list_models(app: AppHandle, task: Option<String>) -> Result<Vec<Model>, String> {
+    let task = match task.as_deref().map(ModelTask::parse) {
+        None => None,
+        Some(Some(task)) => Some(task),
+        // No row has an unknown task.
+        Some(None) => return Ok(Vec::new()),
+    };
     let conn = db::open(&app)?;
-    db::list_models(&conn, task.as_deref())
+    db::list_models(&conn, task)
 }
 
 #[derive(Clone, Serialize)]
@@ -46,20 +51,20 @@ fn models_dir(app: &AppHandle) -> Result<PathBuf, String> {
 
 /// Only anti-spoofing models take an architecture; auth picks preprocessing
 /// and output decoding from it.
-fn validate_task(task: &str, architecture: Option<&str>) -> Result<(), String> {
-    if !VALID_TASKS.contains(&task) {
-        return Err(format!(
-            "Invalid model task '{}'; expected one of {:?}",
-            task, VALID_TASKS
-        ));
-    }
-    match (task, architecture) {
-        ("anti_spoofing", Some(arch)) if ANTI_SPOOFING_ARCHITECTURES.contains(&arch) => Ok(()),
-        ("anti_spoofing", _) => Err(format!(
+fn validate_task(task: &str, architecture: Option<&str>) -> Result<ModelTask, String> {
+    let parsed = ModelTask::parse(task).ok_or_else(|| {
+        let names: Vec<&str> = ModelTask::ALL.iter().map(|t| t.as_str()).collect();
+        format!("Invalid model task '{}'; expected one of {:?}", task, names)
+    })?;
+    match (parsed, architecture) {
+        (ModelTask::AntiSpoofing, Some(arch)) if ANTI_SPOOFING_ARCHITECTURES.contains(&arch) => {
+            Ok(parsed)
+        }
+        (ModelTask::AntiSpoofing, _) => Err(format!(
             "Anti-spoofing models need an architecture; expected one of {:?}",
             ANTI_SPOOFING_ARCHITECTURES
         )),
-        (_, None) => Ok(()),
+        (_, None) => Ok(parsed),
         (_, Some(_)) => Err(format!("{} models do not take an architecture", task)),
     }
 }
@@ -105,7 +110,7 @@ fn register_user_model(
     dir: &Path,
     tmp: tempfile::NamedTempFile,
     name: &str,
-    task: &str,
+    task: ModelTask,
     architecture: Option<&str>,
     checksum: &str,
 ) -> Result<Model, String> {
@@ -118,7 +123,7 @@ fn register_user_model(
         task,
         architecture,
         checksum: Some(checksum),
-        source: "user",
+        source: ModelSource::User,
     };
     let id = db::insert_with_unique_id(&tx, &slugify(name), &new, |id| {
         model_path(dir, id).to_string_lossy().into_owned()
@@ -378,7 +383,7 @@ pub async fn add_model_from_url(
     architecture: Option<String>,
     url: String,
 ) -> Result<Model, String> {
-    validate_task(&task, architecture.as_deref())?;
+    let task = validate_task(&task, architecture.as_deref())?;
     let name = validate_name(&name)?;
     require_https(&url)?;
 
@@ -410,7 +415,7 @@ pub async fn add_model_from_url(
         &dir,
         tmp,
         &name,
-        &task,
+        task,
         architecture.as_deref(),
         &format!("sha256:{sha256}"),
     )
@@ -512,7 +517,7 @@ pub fn add_model_from_file(
     architecture: Option<String>,
     src_path: String,
 ) -> Result<Model, String> {
-    validate_task(&task, architecture.as_deref())?;
+    let task = validate_task(&task, architecture.as_deref())?;
     let name = validate_name(&name)?;
 
     let src = PathBuf::from(&src_path);
@@ -533,7 +538,7 @@ pub fn add_model_from_file(
         &dir,
         tmp,
         &name,
-        &task,
+        task,
         architecture.as_deref(),
         &checksum,
     )
@@ -560,7 +565,7 @@ pub fn delete_model(app: AppHandle, id: String) -> Result<(), String> {
     let conn = db::open(&app)?;
     let model = db::get_model(&conn, &id)?.ok_or_else(|| format!("Model '{}' not found", id))?;
 
-    if model.source == "builtin" {
+    if model.source == ModelSource::Builtin {
         return Err("Default models cannot be deleted".to_string());
     }
 

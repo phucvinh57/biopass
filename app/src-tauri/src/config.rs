@@ -375,7 +375,7 @@ fn write_config_file(app: &AppHandle, yaml_content: &str) -> Result<(), String> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{KnownModel, KNOWN_MODELS};
+    use crate::db::{KnownModel, ModelTask, KNOWN_MODELS};
 
     fn known_model(slug: &str) -> &'static KnownModel {
         KNOWN_MODELS
@@ -439,11 +439,17 @@ mod tests {
     #[test]
     fn default_models_are_builtin_with_matching_task() {
         let face = get_default_config().methods.face;
-        assert_eq!(known_model(&face.detection.model_id).task, "detection");
-        assert_eq!(known_model(&face.recognition.model_id).task, "recognition");
+        assert_eq!(
+            known_model(&face.detection.model_id).task,
+            ModelTask::Detection
+        );
+        assert_eq!(
+            known_model(&face.recognition.model_id).task,
+            ModelTask::Recognition
+        );
         assert_eq!(
             known_model(&face.anti_spoofing.model.model_id).task,
-            "anti_spoofing"
+            ModelTask::AntiSpoofing
         );
     }
 
