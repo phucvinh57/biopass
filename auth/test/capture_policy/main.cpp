@@ -4,6 +4,7 @@
 
 #include <libcamera/formats.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <optional>
 #include <vector>
@@ -14,10 +15,13 @@ namespace {
 
 using biopass::CameraCaptureFormat;
 using biopass::irFrameScore;
+using biopass::meanLuma;
 using biopass::pickCaptureSize;
+using biopass::pickCaptureSizeInRange;
 using biopass::pixelFormatPreference;
 using libcamera::PixelFormat;
 using libcamera::Size;
+using libcamera::SizeRange;
 namespace formats = libcamera::formats;
 
 int g_failures = 0;
@@ -67,6 +71,33 @@ void testCaptureSize() {
          "nothing within cap: smallest above it");
 }
 
+bool picksInRange(const SizeRange& range, const PixelFormat& format, const Size& want) {
+  const std::optional<Size> got = pickCaptureSizeInRange(range, format);
+  return got && *got == want;
+}
+
+void testCaptureSizeInRange() {
+  const SizeRange loopback({1, 1}, {8192, 8192}, 1, 1);
+  expect(picksInRange(loopback, formats::YUYV, {640, 480}), "huge range: uncompressed cap");
+  expect(picksInRange(loopback, formats::MJPEG, {1280, 720}), "huge range: MJPEG cap");
+
+  expect(picksInRange({{160, 120}, {640, 480}, 16, 8}, formats::YUYV, {640, 480}),
+         "range ending at the cap: the cap");
+  expect(picksInRange({{320, 240}, {352, 288}, 16, 16}, formats::YUYV, {352, 288}),
+         "range below the cap: its max");
+  expect(picksInRange({{1920, 1080}, {3840, 2160}, 8, 8}, formats::YUYV, {1920, 1080}),
+         "range above the cap: its min");
+  expect(picksInRange({{100, 100}, {2000, 2000}, 300, 300}, formats::YUYV, {700, 400}),
+         "coarse grid: width stepped up to >= 640, height rounded down");
+  expect(picksInRange({{100, 100}, {500, 2000}, 300, 300}, formats::YUYV, {400, 400}),
+         "coarse grid, no step to 640: stays narrow");
+  expect(!pickCaptureSizeInRange({{0, 0}, {8192, 8192}, 1, 1}, formats::YUYV), "zero min: nullopt");
+  expect(!pickCaptureSizeInRange({{640, 480}, {320, 240}, 1, 1}, formats::YUYV),
+         "min above max: nullopt");
+  expect(picksInRange({{16, 16}, {8192, 8192}, 0, 0}, formats::YUYV, {640, 480}),
+         "zero step treated as 1");
+}
+
 void testIrScore() {
   expect(irFrameScore(100.0) > irFrameScore(50.0), "brighter well-exposed frame wins");
   expect(irFrameScore(220.0) > irFrameScore(221.0), "220 is still well-exposed");
@@ -75,11 +106,23 @@ void testIrScore() {
   expect(irFrameScore(0.0) == 0.0, "black frame scores 0");
 }
 
+void testMeanLuma() {
+  expect(meanLuma(ImageRGB{}) == 0.0, "empty image: 0");
+  ImageRGB grey(8, 2);
+  std::fill(grey.data.begin(), grey.data.end(), 90);
+  expect(meanLuma(grey) == 90.0, "uniform grey: its level");
+  ImageRGB bad(8, 2);
+  bad.data.resize(3);
+  expect(meanLuma(bad) == 0.0, "short buffer: 0");
+}
+
 }  // namespace
 
 int main() {
   testPreference();
   testCaptureSize();
+  testCaptureSizeInRange();
   testIrScore();
+  testMeanLuma();
   return g_failures == 0 ? 0 : 1;
 }

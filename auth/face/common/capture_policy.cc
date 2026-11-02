@@ -2,6 +2,8 @@
 
 #include <libcamera/formats.h>
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 
 namespace biopass {
@@ -22,6 +24,17 @@ constexpr unsigned int kMinCaptureWidth = 640;
 // more face detail than dark ones. Above this mean, a frame counts as
 // over-exposed and only wins when every sample is.
 constexpr double kIrOverexposedMeanLuma = 220.0;
+
+const libcamera::Size& maxCaptureSize(const libcamera::PixelFormat& pixel_format) {
+  return pixel_format == libcamera::formats::MJPEG ? kMaxCompressedCaptureSize
+                                                   : kMaxUncompressedCaptureSize;
+}
+
+// Largest grid value (min + k * step) <= `want`, clamped into [min, max].
+unsigned int snapToGrid(unsigned int want, unsigned int min, unsigned int max, unsigned int step) {
+  const unsigned int clamped = std::clamp(want, min, max);
+  return min + (clamped - min) / step * step;
+}
 
 uint64_t area(const libcamera::Size& size) {
   return static_cast<uint64_t>(size.width) * static_cast<uint64_t>(size.height);
@@ -56,9 +69,7 @@ std::vector<libcamera::PixelFormat> pixelFormatPreference(CameraCaptureFormat fo
 
 std::optional<libcamera::Size> pickCaptureSize(const std::vector<libcamera::Size>& sizes,
                                                const libcamera::PixelFormat& pixel_format) {
-  const libcamera::Size& max_size = pixel_format == libcamera::formats::MJPEG
-                                        ? kMaxCompressedCaptureSize
-                                        : kMaxUncompressedCaptureSize;
+  const libcamera::Size& max_size = maxCaptureSize(pixel_format);
 
   std::optional<libcamera::Size> best_within;
   std::optional<libcamera::Size> smallest_above;
@@ -78,6 +89,39 @@ std::optional<libcamera::Size> pickCaptureSize(const std::vector<libcamera::Size
   return smallest_above;
 }
 
+std::optional<libcamera::Size> pickCaptureSizeInRange(const libcamera::SizeRange& range,
+                                                      const libcamera::PixelFormat& pixel_format) {
+  if (range.min.width == 0 || range.min.height == 0 || range.min.width > range.max.width ||
+      range.min.height > range.max.height) {
+    return std::nullopt;
+  }
+  const unsigned int h_step = std::max(1u, range.hStep);
+  const unsigned int v_step = std::max(1u, range.vStep);
+  const libcamera::Size& cap = maxCaptureSize(pixel_format);
+
+  unsigned int width = snapToGrid(cap.width, range.min.width, range.max.width, h_step);
+  // Rounding down may land below the minimum width; one step up fixes it.
+  if (width < kMinCaptureWidth && h_step <= range.max.width - width) {
+    width += h_step;
+  }
+  const unsigned int height = snapToGrid(cap.height, range.min.height, range.max.height, v_step);
+  return libcamera::Size(width, height);
+}
+
 double irFrameScore(double mean) { return mean <= kIrOverexposedMeanLuma ? mean : -mean; }
+
+double meanLuma(const ImageRGB& image) {
+  const size_t pixels = static_cast<size_t>(image.width) * static_cast<size_t>(image.height);
+  if (pixels == 0 || image.data.size() < pixels * 3) {
+    return 0.0;
+  }
+  const uint8_t* data = image.data.data();
+  uint64_t sum = 0;
+  size_t count = 0;
+  for (size_t i = 0; i < pixels; i += 4, ++count) {
+    sum += data[i * 3] + data[i * 3 + 1] + data[i * 3 + 2];
+  }
+  return static_cast<double>(sum) / (3.0 * static_cast<double>(count));
+}
 
 }  // namespace biopass

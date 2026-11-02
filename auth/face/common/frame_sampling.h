@@ -2,6 +2,11 @@
 
 namespace biopass {
 
+// Dropped (failed or unconvertible) frames one capture tolerates before
+// giving up: about a second at 30 fps. Bounds the loop when there is no
+// capture deadline.
+constexpr int kMaxDroppedFrames = 30;
+
 // Frames libcamera flags as failed (or that fail to convert) don't count as
 // samples, so a capture keeps pulling frames after one is dropped. The drop
 // cap bounds the loop when there is no capture deadline.

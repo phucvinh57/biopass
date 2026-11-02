@@ -28,6 +28,8 @@ Look for the device node that belongs to your IR sensor, for example `/dev/video
 
 Biopass captures through libcamera, so `cam -l` (from `libcamera-tools`) or the bundled `camera_capture_test --list-devices` / `--list-formats /dev/videoN` debug tool also work.
 
+A device that libcamera does not list (for example a custom DKMS driver or `v4l2loopback`) is opened directly through V4L2 when you select it by its `/dev/videoN` path. `camera_capture_test --list-formats /dev/videoN` also works for it, but `--list-devices` does not show it.
+
 ## 2. Enable It In Biopass
 
 In the app's face settings, anti-spoofing section:
