@@ -49,6 +49,8 @@ clean-auth:
 # Cargo.toml carries the app version (CARGO_PKG_VERSION, bundle names), so
 # VERSION is stamped in for the build and Cargo.toml/Cargo.lock are put back
 # after, even on failure, so a build never leaves tracked files modified.
+# RPM versions may not contain "-", so a prerelease (1.5.0-rc1) gets its RPM
+# repackaged as Version 1.5.0, Release 0.rc1: sorts before the final 1.5.0-1.
 build-app: build-auth
 	@echo "==> [app] Installing JS dependencies…"
 	cd $(APP_DIR) && bun install --frozen-lockfile
@@ -59,7 +61,16 @@ build-app: build-auth
 	  trap 'cp "$$bak/Cargo.toml" "$$bak/Cargo.lock" "$$src/"' EXIT; \
 	  trap 'exit 130' INT TERM; \
 	  sed -i -E 's/^version = "[^"]*"/version = "$(VERSION)"/' "$$src/Cargo.toml"; \
-	  cd $(APP_DIR) && bun run tauri build
+	  cd $(APP_DIR); \
+	  case "$(VERSION)" in \
+	    *-*) \
+	      rpm_ver="$$(echo '$(VERSION)' | cut -d- -f1)"; \
+	      rpm_rel="0.$$(echo '$(VERSION)' | cut -d- -f2- | tr -- - .)"; \
+	      bun run tauri build --bundles deb; \
+	      bun run tauri bundle --bundles rpm --config \
+	        "{\"version\":\"$$rpm_ver\",\"bundle\":{\"linux\":{\"rpm\":{\"release\":\"$$rpm_rel\"}}}}" ;; \
+	    *) bun run tauri build ;; \
+	  esac
 
 package-app: build-app
 	@echo "==> [app] Tauri packages are in app/src-tauri/target/release/bundle/"
