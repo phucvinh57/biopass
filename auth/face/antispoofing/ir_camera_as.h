@@ -19,10 +19,13 @@ class FaceDetection;
 // emitter can yield all-white/all-dark frames. 0 = single attempt.
 // cancel: the run's cancel signal (may be null); once set, the warmup sleep
 // and the retries stop and the check fails.
+// require_monochrome: the IR camera is also the main camera; a colour frame
+// means it is not an IR sensor, and the check fails at once.
 bool checkAntispoofByIRCamera(const std::string& ir_camera_path, FaceDetection* detector,
                               const std::string& username, bool debug,
                               ICameraCaptureSession* session = nullptr, int warmup_delay_ms = 300,
                               int presence_timeout_ms = 1500,
-                              const std::atomic<bool>* cancel = nullptr);
+                              const std::atomic<bool>* cancel = nullptr,
+                              bool require_monochrome = false);
 
 }  // namespace biopass

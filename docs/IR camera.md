@@ -40,6 +40,8 @@ In the app's face settings, anti-spoofing section:
 
 If you only want IR-based anti-spoofing, selecting the `IR Camera` device is enough.
 
+To use the IR sensor as the main camera too (enrol and sign in on IR), set both `Camera Device` and `IR Camera` to the same IR node explicitly: an unset camera that defaults to the IR node is not treated as the IR camera, and a main camera that delivers colour frames fails the IR check. That colour check only catches picking an RGB webcam by mistake: an RGB camera filming a greyscale scene can pass it, so only use this setup with a real IR node. If a real IR node is rejected, the debug log shows its `chroma` value; please report it.
+
 ## 3. If The IR Emitter Stays Off On Linux
 
 If the IR camera is detected but its emitter does not light up, use [`linux-enable-ir-emitter`](https://github.com/EmixamPP/linux-enable-ir-emitter):

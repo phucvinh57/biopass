@@ -10,6 +10,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <cstring>
 #include <deque>
 #include <map>
@@ -186,9 +187,15 @@ std::optional<PackedRgbLayout> packedRgbLayout(const libcamera::PixelFormat& for
   return std::nullopt;
 }
 
+bool isPlanarYuv(const libcamera::PixelFormat& format) {
+  return format == libcamera::formats::NV12 || format == libcamera::formats::NV21 ||
+         format == libcamera::formats::YUV420;
+}
+
 bool isSupportedPixelFormat(const libcamera::PixelFormat& format) {
   return format == libcamera::formats::YUYV || format == libcamera::formats::MJPEG ||
-         format == libcamera::formats::R8 || packedRgbLayout(format).has_value();
+         format == libcamera::formats::R8 || isPlanarYuv(format) ||
+         packedRgbLayout(format).has_value();
 }
 
 std::string listAvailableFormats(const libcamera::StreamFormats& formats) {
@@ -273,8 +280,60 @@ bool negotiate(libcamera::CameraConfiguration& config, CameraCaptureFormat reque
   return true;
 }
 
-bool convertFrame(const libcamera::PixelFormat& pixel_format, const uint8_t* data,
-                  size_t bytes_used, int width, int height, int stride, ImageRGB& out) {
+// One plane of a mapped frame: its data and the bytes it holds.
+struct PlaneView {
+  const uint8_t* data = nullptr;
+  size_t size = 0;
+};
+
+// Planes a 4:2:0 frame should have: NV12/NV21 two (Y, UV), YUV420 three (Y,
+// U, V). A frame delivered as one plane is split at the plane sizes the
+// stride implies; empty if it is too short.
+std::vector<PlaneView> splitPlanarYuv(const libcamera::PixelFormat& pixel_format,
+                                      const std::vector<PlaneView>& planes, int height,
+                                      int stride) {
+  const size_t want = pixel_format == libcamera::formats::YUV420 ? 3 : 2;
+  if (planes.size() == want) {
+    return planes;
+  }
+  if (planes.size() != 1 || height <= 0 || stride <= 0) {
+    return {};
+  }
+  const size_t chroma_h = (static_cast<size_t>(height) + 1) / 2;
+  const size_t y_size = static_cast<size_t>(stride) * static_cast<size_t>(height);
+  // NV12's UV rows are as wide as Y's; YUV420's U and V rows are half.
+  const size_t chroma_size = want == 2 ? static_cast<size_t>(stride) * chroma_h
+                                       : static_cast<size_t>(stride / 2) * chroma_h;
+  const PlaneView& whole = planes[0];
+  if (whole.size < y_size + chroma_size * (want - 1)) {
+    return {};
+  }
+  std::vector<PlaneView> split = {{whole.data, y_size}};
+  for (size_t i = 1; i < want; ++i) {
+    split.push_back({whole.data + y_size + chroma_size * (i - 1), chroma_size});
+  }
+  return split;
+}
+
+bool convertFrame(const libcamera::PixelFormat& pixel_format, const std::vector<PlaneView>& planes,
+                  int width, int height, int stride, ImageRGB& out) {
+  if (planes.empty()) {
+    return false;
+  }
+  if (isPlanarYuv(pixel_format)) {
+    const auto yuv = splitPlanarYuv(pixel_format, planes, height, stride);
+    if (yuv.size() == 2) {
+      return nv12ToRgb(yuv[0].data, yuv[0].size, stride, yuv[1].data, yuv[1].size, stride, width,
+                       height, pixel_format == libcamera::formats::NV21, out);
+    }
+    if (yuv.size() == 3) {
+      return yuv420ToRgb(yuv[0].data, yuv[0].size, stride, yuv[1].data, yuv[1].size, yuv[2].data,
+                         yuv[2].size, stride / 2, width, height, out);
+    }
+    return false;
+  }
+  const uint8_t* data = planes[0].data;
+  const size_t bytes_used = planes[0].size;
   if (pixel_format == libcamera::formats::YUYV) {
     return yuyvToRgb(data, bytes_used, width, height, stride, out);
   }
@@ -486,18 +545,37 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
     return true;
   }
 
+  // Maps every plane: one mmap per distinct fd (planes often share one),
+  // covering the furthest plane end on it.
   bool mapBuffer(libcamera::FrameBuffer* buffer) {
-    const auto planes = buffer->planes();
+    const auto& planes = buffer->planes();
     if (planes.empty()) {
       return false;
     }
-    const auto& plane = planes[0];
-    const size_t mapping_size = plane.offset + plane.length;
-    void* mapping = mmap(nullptr, mapping_size, PROT_READ, MAP_SHARED, plane.fd.get(), 0);
-    if (mapping == MAP_FAILED) {
-      return false;
+    std::map<int, size_t> fd_sizes;
+    for (const auto& plane : planes) {
+      if (plane.length > SIZE_MAX - plane.offset) {
+        return false;
+      }
+      size_t& size = fd_sizes[plane.fd.get()];
+      size = std::max(size, static_cast<size_t>(plane.offset) + plane.length);
     }
-    mappings_[buffer] = Mapping{mapping, mapping_size, plane.offset};
+
+    Mapping mapping;
+    std::map<int, const uint8_t*> fd_bases;
+    for (const auto& [fd, size] : fd_sizes) {
+      void* base = mmap(nullptr, size, PROT_READ, MAP_SHARED, fd, 0);
+      if (base == MAP_FAILED) {
+        unmap(mapping);
+        return false;
+      }
+      mapping.regions.emplace_back(base, size);
+      fd_bases[fd] = static_cast<const uint8_t*>(base);
+    }
+    for (const auto& plane : planes) {
+      mapping.planes.push_back({fd_bases[plane.fd.get()] + plane.offset, plane.length});
+    }
+    mappings_[buffer] = std::move(mapping);
     return true;
   }
 
@@ -573,13 +651,17 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
     libcamera::FrameBuffer* buffer = request->findBuffer(stream_);
     const auto it = mappings_.find(buffer);
     const auto metadata = buffer->metadata().planes();
-    if (it == mappings_.end() || metadata.empty()) {
+    if (it == mappings_.end() || metadata.empty() || metadata.size() != it->second.planes.size()) {
       spdlog::error("FaceAuth: Frame from '{}' has no mapped data", camera_label_);
       return false;
     }
-    const size_t bytes_used = metadata[0].bytesused;
-    const uint8_t* data = static_cast<const uint8_t*>(it->second.base) + it->second.plane_offset;
-    if (!convertFrame(pixel_format_, data, bytes_used, width_, height_, stride_, out)) {
+    // Never read past a plane's mapping, whatever the driver reports as used.
+    std::vector<PlaneView> planes;
+    for (size_t i = 0; i < metadata.size(); ++i) {
+      const PlaneView& mapped = it->second.planes[i];
+      planes.push_back({mapped.data, std::min<size_t>(metadata[i].bytesused, mapped.size)});
+    }
+    if (!convertFrame(pixel_format_, planes, width_, height_, stride_, out)) {
       spdlog::error("FaceAuth: Failed to convert frame from '{}'", camera_label_);
       return false;
     }
@@ -622,7 +704,7 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
       events_->completed.clear();
     }
     for (auto& [buffer, mapping] : mappings_) {
-      munmap(mapping.base, mapping.size);
+      unmap(mapping);
     }
     mappings_.clear();
     if (lifecycle_.canFreeBuffers()) {
@@ -646,11 +728,19 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
     }
   }
 
+  // A buffer's mmapped regions (address, size) and its planes within them.
   struct Mapping {
-    void* base = nullptr;
-    size_t size = 0;
-    size_t plane_offset = 0;
+    std::vector<std::pair<void*, size_t>> regions;
+    std::vector<PlaneView> planes;
   };
+
+  static void unmap(Mapping& mapping) {
+    for (const auto& [base, size] : mapping.regions) {
+      munmap(base, size);
+    }
+    mapping.regions.clear();
+    mapping.planes.clear();
+  }
 
   std::shared_ptr<libcamera::CameraManager> manager_;
   std::shared_ptr<libcamera::Camera> camera_;

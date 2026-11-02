@@ -31,7 +31,12 @@ export function AntiSpoofingSection({ antiSpoofModels, videoDevices }: Props) {
   const antiSpoofing = useWatch<BiopassConfig, "methods.face.anti_spoofing">({
     name: "methods.face.anti_spoofing",
   });
+  const mainCamera = useWatch<BiopassConfig, "methods.face.camera">({
+    name: "methods.face.camera",
+  });
   const antiSpoofStatusMap = useModelFileStatus(antiSpoofModels);
+  const irIsMainCamera =
+    !!antiSpoofing.ir_camera && antiSpoofing.ir_camera === mainCamera;
 
   const aiModelValue = selectValueFor(
     antiSpoofing.enable ? antiSpoofing.model.model_id : null,
@@ -171,6 +176,11 @@ export function AntiSpoofingSection({ antiSpoofModels, videoDevices }: Props) {
             )}
           </SelectContent>
         </Select>
+        {irIsMainCamera && (
+          <p className="text-xs text-muted-foreground">
+            IR camera is also the main camera: enrol and sign in with IR only.
+          </p>
+        )}
       </div>
     </div>
   );

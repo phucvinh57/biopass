@@ -1,6 +1,7 @@
 #include "face_auth.h"
 
 #include <spdlog/spdlog.h>
+#include <sys/stat.h>
 
 #include <exception>
 #include <memory>
@@ -43,7 +44,38 @@ std::unique_ptr<Engine> loadModel(const char* what, const std::string& username,
   }
 }
 
+// Same string, or both name the same character device (a /dev/v4l/by-id
+// symlink and its /dev/videoN).
+bool sameCameraDevice(const std::string& a, const std::string& b) {
+  if (a == b) {
+    return true;
+  }
+  struct stat sa{};
+  struct stat sb{};
+  return stat(a.c_str(), &sa) == 0 && stat(b.c_str(), &sb) == 0 && S_ISCHR(sa.st_mode) &&
+         S_ISCHR(sb.st_mode) && sa.st_rdev == sb.st_rdev;
+}
+
 }  // namespace
+
+bool FaceAuth::irIsMainCamera() const {
+  const auto& camera = face_config_.camera;
+  const auto& ir_camera = face_config_.anti_spoofing.ir_camera;
+  return camera && ir_camera && !camera->empty() && !ir_camera->empty() &&
+         sameCameraDevice(*camera, *ir_camera);
+}
+
+// An IR main camera may offer only NV12/YUYV, which a colour request would not
+// treat as grey; ask for grey so every capture warms up and keeps the
+// brightest of several frames. The colour timeout still bounds the capture.
+std::unique_ptr<ICameraCaptureSession> FaceAuth::openMainCamera() const {
+  if (irIsMainCamera()) {
+    return open_camera_(face_config_.camera, CameraCaptureFormat::V4L2Grey, kIrCaptureWarmupFrames,
+                        kColorCaptureTimeoutMs);
+  }
+  return open_camera_(face_config_.camera, CameraCaptureFormat::Default, kColorCaptureWarmupFrames,
+                      kColorCaptureTimeoutMs);
+}
 
 // The session opened to check is kept: beginAuthenticationSession() and the
 // attempts capture from it rather than closing the camera and opening it again.
@@ -51,7 +83,7 @@ bool FaceAuth::isAvailable() const {
   if (!camera_session_ || !camera_session_->isOpen()) {
     // Free a dead session before opening the camera again.
     camera_session_.reset();
-    camera_session_ = open_camera_(face_config_.camera);
+    camera_session_ = openMainCamera();
   }
   if (!camera_session_ || !camera_session_->isOpen()) {
     camera_session_.reset();
@@ -60,20 +92,28 @@ bool FaceAuth::isAvailable() const {
   return true;
 }
 
-// A failed open leaves ir_camera_session_ null; checkAntiSpoof() then falls
-// back to a one-shot capture per attempt.
-void FaceAuth::ensureIrSession() {
-  if (face_config_.anti_spoofing.ir_camera.has_value() &&
-      !face_config_.anti_spoofing.ir_camera->empty() &&
-      (!ir_camera_session_ || !ir_camera_session_->isOpen())) {
-    ir_camera_session_ =
-        openCameraSession(*face_config_.anti_spoofing.ir_camera, CameraCaptureFormat::V4L2Grey,
-                          kIrCaptureWarmupFrames, kIrCaptureTimeoutMs);
+// A failed IR open leaves ir_camera_session_ null; checkAntiSpoof() then
+// falls back to a one-shot capture per attempt. A main session that is not
+// open is still returned, so the check fails instead of opening the camera a
+// second time.
+ICameraCaptureSession* FaceAuth::irPresenceSession() {
+  const auto& ir_camera = face_config_.anti_spoofing.ir_camera;
+  if (!ir_camera || ir_camera->empty()) {
+    return nullptr;
+  }
+  if (irIsMainCamera()) {
+    spdlog::debug("FaceAuth: IR camera is the main camera; reusing its session");
+    return camera_session_.get();
+  }
+  if (!ir_camera_session_ || !ir_camera_session_->isOpen()) {
+    ir_camera_session_.reset();
+    ir_camera_session_ = open_camera_(*ir_camera, CameraCaptureFormat::V4L2Grey,
+                                      kIrCaptureWarmupFrames, kIrCaptureTimeoutMs);
     if (!ir_camera_session_) {
-      spdlog::warn("FaceAuth: Could not open IR camera session on '{}'",
-                   *face_config_.anti_spoofing.ir_camera);
+      spdlog::warn("FaceAuth: Could not open IR camera session on '{}'", *ir_camera);
     }
   }
+  return ir_camera_session_.get();
 }
 
 bool FaceAuth::ensureModelsLoaded() {
@@ -111,7 +151,7 @@ bool FaceAuth::ensureModelsLoaded() {
 
 void FaceAuth::beginAuthenticationSession() {
   if (!camera_session_) {
-    camera_session_ = open_camera_(face_config_.camera);
+    camera_session_ = openMainCamera();
   }
   // The IR session is opened lazily in authenticate(), right before the
   // anti-spoofing check: opening it here would stream IR alongside every
@@ -161,7 +201,7 @@ AuthResult FaceAuth::authenticate(const std::string& username, const AuthConfig&
 AuthResult FaceAuth::attempt(const std::string& username, const AuthConfig& config,
                              std::atomic<bool>* cancel_signal) {
   if (!camera_session_) {
-    camera_session_ = open_camera_(face_config_.camera);
+    camera_session_ = openMainCamera();
   }
   if (!camera_session_ || !camera_session_->isOpen()) {
     spdlog::error("FaceAuth: Could not open camera");
@@ -169,7 +209,7 @@ AuthResult FaceAuth::attempt(const std::string& username, const AuthConfig& conf
     // failure (Retry). A session it gets is kept for the next attempt. The
     // dead session is freed first.
     camera_session_.reset();
-    camera_session_ = open_camera_(face_config_.camera);
+    camera_session_ = openMainCamera();
     if (!camera_session_ || !camera_session_->isOpen()) {
       camera_session_.reset();
       return AuthResult::Unavailable;
@@ -229,15 +269,17 @@ AuthResult FaceAuth::attempt(const std::string& username, const AuthConfig& conf
     return AuthResult::Failure;
   }
 
-  ensureIrSession();
-
   if (!checkAntiSpoof(face_config_, username, loginFace, detectedImages[0].box, config,
-                      model_registry_, antispoof_model_, detector_.get(), ir_camera_session_.get(),
-                      cancel_signal)) {
+                      model_registry_, antispoof_model_, detector_.get(), irPresenceSession(),
+                      cancel_signal, irIsMainCamera())) {
     spdlog::warn("FaceAuth: Anti-spoofing failed — returning Failure (no retry allowed)");
     // Always tear down the IR session so a subsequent call cannot reuse a
-    // partially-warmed camera to bypass the check.
+    // partially-warmed camera to bypass the check; when the IR camera is the
+    // main camera, that is the main session.
     ir_camera_session_.reset();
+    if (irIsMainCamera()) {
+      camera_session_.reset();
+    }
     return AuthResult::Failure;
   }
 

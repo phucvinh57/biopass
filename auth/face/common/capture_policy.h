@@ -35,5 +35,12 @@ std::optional<libcamera::Size> pickCaptureSizeInRange(const libcamera::SizeRange
 // Mean brightness in [0, 255], sampling every 4th pixel; enough to tell a
 // lit IR frame from a dark one.
 double meanLuma(const ImageRGB& image);
+// Mean |R-G| + |G-B| over every 4th pixel; -1 for an empty frame.
+double meanChroma(const ImageRGB& image);
+
+// True when the frame has (almost) no colour, as an IR sensor's frames do.
+// False for an empty frame. A misconfiguration guard, not a liveness check:
+// an RGB camera filming a greyscale scene can pass it.
+bool isMonochrome(const ImageRGB& image);
 
 }  // namespace biopass

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 
 namespace biopass {
 
@@ -36,6 +37,11 @@ unsigned int snapToGrid(unsigned int want, unsigned int min, unsigned int max, u
   return min + (clamped - min) / step * step;
 }
 
+// Mean |R-G| + |G-B| a monochrome frame may have: R8 and IR NV12/YUYV decode
+// to exact grey, MJPEG chroma noise stays within a few levels, while a colour
+// scene (skin, clothes, lighting tint) sits well above.
+constexpr double kMonochromeMaxChroma = 6.0;
+
 uint64_t area(const libcamera::Size& size) {
   return static_cast<uint64_t>(size.width) * static_cast<uint64_t>(size.height);
 }
@@ -52,15 +58,18 @@ std::vector<libcamera::PixelFormat> pixelFormatPreference(CameraCaptureFormat fo
   std::vector<libcamera::PixelFormat> preference;
   if (format == CameraCaptureFormat::V4L2Grey) {
     // Prefer a true grey stream, but some laptop IR sensors (e.g. Windows
-    // Hello cameras) only expose the IR stream as YUYV/MJPEG/RGB; decode
-    // those instead of failing outright.
-    preference = {libcamera::formats::R8, libcamera::formats::YUYV, libcamera::formats::MJPEG};
+    // Hello cameras) only expose the IR stream as NV12/YUYV/MJPEG/RGB; decode
+    // those instead of failing outright. Planar 4:2:0 carries the same luma
+    // in fewer bytes than YUYV, so it comes first.
+    preference = {libcamera::formats::R8,     libcamera::formats::NV12, libcamera::formats::NV21,
+                  libcamera::formats::YUV420, libcamera::formats::YUYV, libcamera::formats::MJPEG};
     preference.insert(preference.end(), packed_rgb.begin(), packed_rgb.end());
   } else {
     // Prefer MJPEG for the colour stream: an uncompressed YUYV stream at a
     // webcam's maximum size starves a USB 2.0 bus (slow frame rates or
     // truncated frames, worse when the IR stream is open at the same time).
-    preference = {libcamera::formats::MJPEG, libcamera::formats::YUYV};
+    preference = {libcamera::formats::MJPEG, libcamera::formats::YUYV, libcamera::formats::NV12,
+                  libcamera::formats::NV21, libcamera::formats::YUV420};
     preference.insert(preference.end(), packed_rgb.begin(), packed_rgb.end());
     preference.push_back(libcamera::formats::R8);
   }
@@ -122,6 +131,29 @@ double meanLuma(const ImageRGB& image) {
     sum += data[i * 3] + data[i * 3 + 1] + data[i * 3 + 2];
   }
   return static_cast<double>(sum) / (3.0 * static_cast<double>(count));
+}
+
+double meanChroma(const ImageRGB& image) {
+  const size_t pixels = static_cast<size_t>(image.width) * static_cast<size_t>(image.height);
+  if (pixels == 0 || image.data.size() < pixels * 3) {
+    return -1.0;
+  }
+  // Every 4th pixel, like meanLuma: enough to tell colour from grey.
+  const uint8_t* data = image.data.data();
+  uint64_t sum = 0;
+  size_t count = 0;
+  for (size_t i = 0; i < pixels; i += 4, ++count) {
+    const int r = data[i * 3];
+    const int g = data[i * 3 + 1];
+    const int b = data[i * 3 + 2];
+    sum += static_cast<uint64_t>(std::abs(r - g) + std::abs(g - b));
+  }
+  return static_cast<double>(sum) / static_cast<double>(count);
+}
+
+bool isMonochrome(const ImageRGB& image) {
+  const double chroma = meanChroma(image);
+  return chroma >= 0.0 && chroma <= kMonochromeMaxChroma;
 }
 
 }  // namespace biopass

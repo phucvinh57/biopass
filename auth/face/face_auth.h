@@ -19,9 +19,11 @@ namespace biopass {
 
 class FaceAuth : public IAuthMethod {
  public:
-  // Opens the colour camera at a device path (nullopt = first camera).
+  // Opens a camera session; same arguments as openCameraSession(). Used for
+  // both the main and the IR camera.
   using CameraOpener = std::function<std::unique_ptr<ICameraCaptureSession>(
-      const std::optional<std::string>& device_path)>;
+      const std::optional<std::string>& device_path, CameraCaptureFormat format, int warmup_frames,
+      int capture_timeout_ms)>;
 
   // One sqlite connection per auth session, reused for every model_id lookup.
   // open_camera: openCameraSession() unless a test passes a fake.
@@ -30,10 +32,7 @@ class FaceAuth : public IAuthMethod {
       : face_config_(config),
         username_(username),
         model_registry_(username),
-        open_camera_(open_camera ? std::move(open_camera)
-                                 : [](const std::optional<std::string>& device_path) {
-                                     return openCameraSession(device_path);
-                                   }) {}
+        open_camera_(open_camera ? std::move(open_camera) : CameraOpener(openCameraSession)) {}
   ~FaceAuth() override = default;
 
   std::string name() const override { return "Face"; }
@@ -45,11 +44,20 @@ class FaceAuth : public IAuthMethod {
   AuthResult authenticate(const std::string& username, const AuthConfig& config,
                           std::atomic<bool>* cancel_signal = nullptr) override;
 
+  // The session the IR presence check captures from, or nullptr. When the IR
+  // camera is the main camera it is the main session: libcamera can't acquire
+  // one camera twice. Otherwise the IR session, opened on first use. Public
+  // for tests.
+  ICameraCaptureSession* irPresenceSession();
+
  private:
   // One attempt; authenticate() wraps it so nothing it throws escapes.
   AuthResult attempt(const std::string& username, const AuthConfig& config,
                      std::atomic<bool>* cancel_signal);
-  void ensureIrSession();
+  // True when ir_camera names the same device as camera.
+  bool irIsMainCamera() const;
+  // The main camera; opened as grey when it is the IR camera.
+  std::unique_ptr<ICameraCaptureSession> openMainCamera() const;
   // Loads detection + recognition once; false if either fails to load.
   bool ensureModelsLoaded();
   // True once `face` matches one of the user's enrolled images.

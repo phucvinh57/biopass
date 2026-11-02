@@ -30,6 +30,23 @@ class DarkSession : public biopass::ICameraCaptureSession {
   ImageRGB capture() override { return {}; }
 };
 
+// Open, and every capture is a colour frame (an RGB webcam).
+class ColourSession : public biopass::ICameraCaptureSession {
+ public:
+  int captures = 0;
+  bool isOpen() const override { return true; }
+  ImageRGB capture() override {
+    ++captures;
+    ImageRGB frame(8, 8);
+    for (size_t i = 0; i < frame.data.size(); i += 3) {
+      frame.data[i] = 200;
+      frame.data[i + 1] = 150;
+      frame.data[i + 2] = 120;
+    }
+    return frame;
+  }
+};
+
 long long runMs(int warmup_ms, int presence_ms, const std::atomic<bool>* cancel, bool* passed) {
   DarkSession session;
   const auto start = std::chrono::steady_clock::now();
@@ -56,6 +73,19 @@ int main() {
   expect(!passed, "no frames: presence check fails");
   expect(took >= 200 && took < 1000,
          "not cancelled: keeps retrying until its timeout (" + std::to_string(took) + " ms)");
+
+  // The IR camera is the main camera but sends colour: fail at once, before
+  // the (null) detector runs and without retrying.
+  ColourSession colour;
+  const auto start = std::chrono::steady_clock::now();
+  passed = biopass::checkAntispoofByIRCamera("/dev/fake-rgb", nullptr, "nobody", false, &colour, 0,
+                                             10000, &live, true);
+  took = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
+                                                               start)
+             .count();
+  expect(!passed, "IR camera is the main camera, colour frames: presence check fails");
+  expect(colour.captures == 1 && took < 500,
+         "colour frames: fails on the first frame, no retries (" + std::to_string(took) + " ms)");
 
   if (g_failures != 0) {
     std::printf("%d FAILED\n", g_failures);
