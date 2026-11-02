@@ -30,10 +30,15 @@ export const commands = {
 	 *  if any model fails, the others are still tried and all errors returned.
 	 */
 	ensureDefaultModels: () => __TAURI_INVOKE<string[]>("ensure_default_models"),
+	getKeyringStatus: () => __TAURI_INVOKE<KeyringStatus_Serialize>("get_keyring_status"),
+	saveKeyringPassword: (password: string, bindPcr7: boolean) => __TAURI_INVOKE<null>("save_keyring_password", { password, bindPcr7 }),
+	forgetKeyringPassword: () => __TAURI_INVOKE<null>("forget_keyring_password"),
 };
 
 /* Constants */
 export const CONFIG_LIMITS = {"face_retries":{"max":10,"min":1},"fingerprint_retries":{"max":5,"min":1},"fingerprint_timeout_ms":{"max":10000,"min":1},"ir_presence_timeout_ms":{"max":10000,"min":0},"ir_warmup_delay_ms":{"max":5000,"min":0},"retry_delay_ms":{"max":5000,"min":0},"threshold":{"max":1.0,"min":0.0}} as const;
+
+export const MAX_KEYRING_PASSWORD_BYTES = 128 as const;
 
 /* Types */
 export type AntiSpoofingConfig = AntiSpoofingConfig_Serialize | AntiSpoofingConfig_Deserialize;
@@ -195,6 +200,26 @@ export type FingerprintMethodConfig_Serialize = {
 	enable: boolean,
 	retries: number,
 	timeout: number,
+};
+
+export type KeyringStatus = KeyringStatus_Serialize | KeyringStatus_Deserialize;
+
+export type KeyringStatus_Deserialize = {
+	/**  A TPM resource manager device exists. */
+	tpm_available: boolean,
+	/**  A sealed password is stored for this user. */
+	saved: boolean,
+	/**  When it was saved, in ms since the Unix epoch. */
+	saved_at_ms?: number | null,
+};
+
+export type KeyringStatus_Serialize = {
+	/**  A TPM resource manager device exists. */
+	tpm_available: boolean,
+	/**  A sealed password is stored for this user. */
+	saved: boolean,
+	/**  When it was saved, in ms since the Unix epoch. */
+	saved_at_ms: number | null,
 };
 
 export type MethodsConfig = MethodsConfig_Serialize | MethodsConfig_Deserialize;

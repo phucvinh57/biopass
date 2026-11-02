@@ -5,7 +5,7 @@
 use tauri_specta::{collect_commands, Builder, ErrorHandlingMode};
 
 use crate::config::{self, CONFIG_LIMITS};
-use crate::{face, face_session, fingerprint, models, system};
+use crate::{face, face_session, fingerprint, keyring, models, system};
 
 pub fn builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new()
@@ -29,9 +29,13 @@ pub fn builder() -> Builder<tauri::Wry> {
             models::delete_model,
             models::rename_model,
             models::ensure_default_models,
+            keyring::get_keyring_status,
+            keyring::save_keyring_password,
+            keyring::forget_keyring_password,
         ])
         .typ::<models::DownloadProgress>()
         .constant("CONFIG_LIMITS", CONFIG_LIMITS)
+        .constant("MAX_KEYRING_PASSWORD_BYTES", keyring::MAX_PASSWORD_BYTES)
         // Commands reject with the error string, as plain `invoke` does.
         .error_handling(ErrorHandlingMode::Throw)
 }

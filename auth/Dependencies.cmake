@@ -78,3 +78,10 @@ target_compile_definitions(sqlite3 PUBLIC
     SQLITE_THREADSAFE=1
     SQLITE_DQS=0
 )
+
+# tpm2-tss and libxcrypt: system packages, used by biopass-helper and
+# biopass-keyring to seal the login password for keyring unlock
+# (docs/Keyring.md). The device TCTI is linked directly, not through
+# tss2-tctildr, so no TCTI is dlopen'ed at runtime.
+pkg_check_modules(TSS2 REQUIRED IMPORTED_TARGET tss2-esys tss2-mu tss2-tcti-device)
+pkg_check_modules(LIBCRYPT REQUIRED IMPORTED_TARGET libcrypt)

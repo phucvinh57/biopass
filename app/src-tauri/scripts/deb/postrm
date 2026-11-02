@@ -1,0 +1,11 @@
+#!/bin/sh
+
+set -e
+
+# Saved keyring passwords (TPM-sealed, docs/Keyring.md) go with a purge, like
+# other package state. A plain remove keeps them for a reinstall.
+if [ "$1" = purge ]; then
+    rm -rf /var/lib/biopass
+fi
+
+exit 0

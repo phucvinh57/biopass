@@ -47,6 +47,18 @@ Arch uses neither `pam-auth-update` nor `authselect` by default; configure PAM m
     sudo true
     ```
 
+## Module options
+
+| Option | Effect |
+| :--- | :--- |
+| `quiet` | No status messages ("looking for your face", ...). |
+| `authtok` | After a face or fingerprint match on a login screen, set `PAM_AUTHTOK` to the password saved in the app, so the keyring unlocks. See [Keyring.md](Keyring.md). The Debian/Ubuntu profile sets it. |
+
+Before adding `authtok` to a manual setup:
+
+- Biopass must be an alternative to the password rules, not run before them. If a rule such as `pam_unix.so try_first_pass` ran after a Biopass success, it would take the saved password as a typed one, so a face match alone would pass a stack meant to need both.
+- The keyring module's `auth` line (`pam_gnome_keyring.so`, `pam_kwallet5.so`, ...) must still run after a Biopass success. The Debian/Ubuntu profile does this: `success=end` skips only the rest of `common-auth`, and the login screen's own keyring lines follow it. `sufficient` in an included file such as `system-auth` ends the whole stack at once, so the keyring lines after it never run.
+
 ## Login screen and keyring
 
-If Biopass is enabled for your login screen (GDM, SDDM, LightDM, ...), the login keyring / KWallet is not unlocked because no password is typed. See [Keyring.md](Keyring.md) for the workaround.
+If Biopass is enabled for your login screen (GDM, SDDM, LightDM, ...), the login keyring / KWallet stays locked because no password is typed, unless you save your password in the app. See [Keyring.md](Keyring.md).

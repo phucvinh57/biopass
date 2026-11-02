@@ -28,6 +28,13 @@ inline constexpr std::chrono::seconds kAuthBudget{40};
 // releasing devices, process exit.
 inline constexpr std::chrono::seconds kTeardownMargin{5};
 
+// After a match, biopass-helper unseals the saved keyring password only when
+// at least this much time is left before kHelperTimeout - kTeardownMargin
+// (counted from the helper's start). A slow TPM must never turn a match into
+// a kill.
+inline constexpr std::chrono::seconds kKeyringMinBudget{2};
+static_assert(kAuthBudget + kKeyringMinBudget + kTeardownMargin < kHelperTimeout);
+
 // D-Bus timeouts for fprintd calls during authentication. GDBus defaults to
 // 25 s, so a wedged fprintd could hold the helper well past the budget.
 // Setup calls get enough time for fprintd to be D-Bus activated; the cleanup

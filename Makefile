@@ -1,6 +1,7 @@
 # Builds auth/ (C++ PAM module + face/fingerprint libs) and app/ (Tauri).
 # Prerequisites:
-#   auth: cmake, ninja/make, libpam0g-dev, libcli11-dev, libturbojpeg0-dev.
+#   auth: cmake, ninja/make, libpam0g-dev, libcli11-dev, libturbojpeg0-dev,
+#         libtss2-dev, libcrypt-dev (swtpm optional, for the TPM test).
 #         libcamera is built from source (auth/BundleLibcamera.cmake) and needs
 #         meson, ninja-build, python3-jinja2, python3-yaml, python3-ply,
 #         libudev-dev, libdrm-dev, libegl-dev, libgles-dev.

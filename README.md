@@ -54,7 +54,7 @@ Setup guides:
 - PAM (system sign-in, `pam-auth-update` on Debian/Ubuntu): [docs/PAM.md](docs/PAM.md)
 - Polkit (interactive authentication): [docs/Polkit.md](docs/Polkit.md)
 - IR camera: [docs/IR camera.md](docs/IR%20camera.md)
-- Keyring/KWallet not unlocked after face login: [docs/Keyring.md](docs/Keyring.md)
+- Keyring/KWallet unlock after face login (TPM-sealed password): [docs/Keyring.md](docs/Keyring.md)
 
 ## Features
 

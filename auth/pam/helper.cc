@@ -1,3 +1,4 @@
+#include <fcntl.h>
 #include <grp.h>
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/stdout_sinks.h>
@@ -5,19 +6,25 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/prctl.h>
+#include <sys/resource.h>
 
 #include <CLI/CLI.hpp>
 #include <algorithm>
+#include <condition_variable>
 #include <ctime>
 #include <exception>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <optional>
+#include <thread>
 #include <vector>
 
 #include "auth_config.h"
 #include "auth_deadline.h"
 #include "auth_manager.h"
+#include "authtok_channel.h"
 #include "common/camera_capture.h"
 #include "detection/face_detection.h"
 #include "face_auth.h"
@@ -25,11 +32,19 @@
 #include "fs_user.h"
 #include "helper_exit.h"
 #include "image_io.h"
+#include "keyring_services.h"
+#include "sealed_file.h"
+#include "sealed_store.h"
+#include "secret_buffer.h"
+#include "shadow_check.h"
 #include "status_reporter.h"
+#include "tpm_seal.h"
 #include "user_paths.h"
 
 using biopass::Detection;
 using biopass::FaceDetection;
+
+static_assert(biopass::kMaxAuthtokLen == biopass::kMaxSecretLen);
 
 namespace {
 
@@ -71,6 +86,142 @@ void setupBiopassLogger(const std::string& username, bool debug) {
   auto logger = std::make_shared<spdlog::logger>("biopass", sinks.begin(), sinks.end());
   spdlog::set_default_logger(logger);
   spdlog::set_level(debug ? spdlog::level::debug : spdlog::level::off);
+}
+
+// An unseal running on its own thread (see unsealWithDeadline).
+struct UnsealJob {
+  std::mutex mutex;
+  std::condition_variable done_cv;
+  bool done = false;
+  biopass::TpmStatus status = biopass::TpmStatus::Error;
+  biopass::SecretBuffer password;
+};
+
+// Unseals `blob` with the TPM, giving up at `deadline`. ESYS's synchronous
+// calls ignore Esys_SetTimeout (they wait for the TPM forever), so the TPM
+// work runs on a thread that is abandoned when it is late. Returns nullptr
+// when abandoned: the thread is still blocked on the TPM device, so the
+// caller must end the process with _exit() rather than return from main.
+std::shared_ptr<UnsealJob> unsealWithDeadline(const biopass::SealedBlob& blob,
+                                              std::chrono::steady_clock::time_point deadline) {
+  auto job = std::make_shared<UnsealJob>();
+  std::thread worker([job, blob]() {
+    biopass::TpmStatus status = biopass::TpmStatus::NoTpm;
+    // An exception escaping this thread would abort the helper and turn the
+    // match into PAM_AUTH_ERR.
+    try {
+      std::unique_ptr<biopass::TpmContext> tpm = biopass::TpmContext::openDevice();
+      if (tpm) {
+        status = tpm->unseal(blob, job->password);
+      }
+    } catch (...) {
+      job->password.clear();
+      status = biopass::TpmStatus::Error;
+    }
+    std::lock_guard<std::mutex> lock(job->mutex);
+    job->status = status;
+    job->done = true;
+    job->done_cv.notify_all();
+  });
+  std::unique_lock<std::mutex> lock(job->mutex);
+  if (!job->done_cv.wait_until(lock, deadline, [&job] { return job->done; })) {
+    lock.unlock();
+    worker.detach();
+    return nullptr;
+  }
+  lock.unlock();
+  worker.join();
+  return job;
+}
+
+// After a biometric match on a login screen: unseals the password the user
+// saved in the app and writes it to `fd`, from where pam.cc sets PAM_AUTHTOK
+// so pam_gnome_keyring / pam_kwallet unlock the keyring (docs/Keyring.md).
+// Never changes the authentication result: on any problem the keyring just
+// stays locked. `kill_deadline` is when pam.cc gives up on the helper.
+// Returns false when a stalled TPM had to be abandoned; the caller must then
+// leave with _exit() (see unsealWithDeadline).
+bool releaseKeyringPassword(const std::string& username, const std::string& service, int fd,
+                            std::chrono::steady_clock::time_point kill_deadline) {
+  // The sealed files are root-only, so a screen locker that runs PAM as the
+  // user can't read them. Lock screens that authenticate through a login
+  // service as root (GNOME's, via gdm-password) do get the password.
+  if (fd < 0 || geteuid() != 0 || !biopass::isKeyringService(service)) {
+    return true;
+  }
+  const std::optional<biopass::UserPaths> user = biopass::resolveUser(username);
+  if (!user) {
+    return true;
+  }
+  std::vector<uint8_t> data;
+  const biopass::StoreResult read = biopass::readSealed(biopass::SealedStore{}, user->uid, data);
+  if (read != biopass::StoreResult::Ok) {
+    if (read != biopass::StoreResult::NotFound) {
+      spdlog::warn("Biopass: saved keyring password unreadable ({})", static_cast<int>(read));
+    }
+    return true;
+  }
+  const std::optional<biopass::SealedBlob> blob = biopass::parseSealed(data.data(), data.size());
+  if (!blob || blob->uid != user->uid) {
+    spdlog::warn("Biopass: saved keyring password is malformed");
+    return true;
+  }
+
+  const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+      kill_deadline - std::chrono::steady_clock::now());
+  if (left < biopass::kKeyringMinBudget) {
+    spdlog::warn("Biopass: no time left to unlock the keyring");
+    return true;
+  }
+
+  // The password is about to be in memory: no core dump, no ptrace.
+  prctl(PR_SET_DUMPABLE, 0);
+  const struct rlimit no_core = {0, 0};
+  setrlimit(RLIMIT_CORE, &no_core);
+
+  // Leaves time for the shadow check and exit after the TPM work.
+  const std::shared_ptr<UnsealJob> job =
+      unsealWithDeadline(*blob, kill_deadline - biopass::kKeyringMinBudget / 2);
+  if (!job) {
+    spdlog::warn("Biopass: TPM too slow, keyring not unlocked");
+    return false;
+  }
+  const biopass::SecretBuffer& password = job->password;
+  switch (job->status) {
+    case biopass::TpmStatus::Ok:
+      break;
+    case biopass::TpmStatus::NoTpm:
+      spdlog::warn("Biopass: no TPM to unlock the keyring");
+      return true;
+    case biopass::TpmStatus::PolicyFailed:
+      biopass::reportInfo(
+          "Secure Boot settings changed, so your keyring stays locked. Save your password again "
+          "in Biopass.");
+      return true;
+    case biopass::TpmStatus::LoadFailed:
+      biopass::reportInfo(
+          "The TPM was reset, so your keyring stays locked. Save your password again in Biopass.");
+      return true;
+    default:
+      spdlog::warn("Biopass: TPM unseal failed");
+      return true;
+  }
+
+  // Catches a changed password, and a uid that now belongs to someone else.
+  const biopass::PasswordCheck check = biopass::verifyLocalPassword(username, password.c_str());
+  if (check == biopass::PasswordCheck::Mismatch) {
+    biopass::reportInfo(
+        "Your password changed, so your keyring stays locked. Save it again in Biopass.");
+    return true;
+  }
+  if (check != biopass::PasswordCheck::Match) {
+    spdlog::warn("Biopass: cannot check the saved keyring password ({})", static_cast<int>(check));
+    return true;
+  }
+  if (!biopass::writeAuthtok(fd, password.c_str(), password.size())) {
+    spdlog::warn("Biopass: could not hand the keyring password to PAM");
+  }
+  return true;
 }
 
 }  // namespace
@@ -220,6 +371,10 @@ biopass::HelperExit authenticate(const std::string& username, const std::string&
 }
 
 int main(int argc, char** argv) {
+  // pam.cc kills the helper kHelperTimeout after forking it.
+  const auto kill_deadline =
+      std::chrono::steady_clock::now() + biopass::kHelperTimeout - biopass::kTeardownMargin;
+
   CLI::App app{"Biopass Helper Tool"};
   app.set_version_flag("--version,-v", BIOPASS_VERSION);
   app.require_subcommand(1, 1);
@@ -239,11 +394,14 @@ int main(int argc, char** argv) {
   std::string username;
   std::string pamService;
   int statusFd = -1;
+  int authtokFd = -1;
   auto auth_cmd = app.add_subcommand("auth", "Authenticate a user with Biopass");
   auth_cmd->add_option("--username,-u", username, "Username for authentication")->required();
   auth_cmd->add_option("--service,-s", pamService, "PAM service name");
   auth_cmd->add_option("--status-fd", statusFd,
                        "Inherited fd for status lines relayed to the PAM conversation");
+  auth_cmd->add_option("--authtok-fd", authtokFd,
+                       "Inherited fd that receives the saved keyring password after a match");
 
   try {
     app.parse(argc, argv);
@@ -269,6 +427,22 @@ int main(int argc, char** argv) {
     // setupBiopassLogger replaces it once the config is known.
     spdlog::set_default_logger(std::make_shared<spdlog::logger>("biopass"));
     spdlog::set_level(spdlog::level::off);
+    // Same for libraries: tpm2-tss logs warnings to stderr by default, and
+    // anything else that prints lands in /dev/null, not the PAM caller.
+    setenv("TSS2_LOG", "all+NONE", 1);
+    const int devnull = open("/dev/null", O_RDWR | O_CLOEXEC);
+    if (devnull >= 0) {
+      dup2(devnull, STDOUT_FILENO);
+      dup2(devnull, STDERR_FILENO);
+      if (devnull > STDERR_FILENO) {
+        close(devnull);
+      }
+    }
+    // Close-on-exec, so no child (e.g. libcamera's IPA proxy) inherits it.
+    if (authtokFd >= 0 && (authtokFd <= STDERR_FILENO || fcntl(authtokFd, F_GETFD) < 0 ||
+                           fcntl(authtokFd, F_SETFD, FD_CLOEXEC) < 0)) {
+      authtokFd = -1;
+    }
     if (username.empty()) {
       spdlog::info("{}", app.help());
       return biopass::exitCode(biopass::HelperExit::Ignore);
@@ -284,7 +458,25 @@ int main(int argc, char** argv) {
     // An unexpected exception (config, model loading, thread start) would
     // otherwise abort with a core dump. Fail closed with AuthErr instead.
     try {
-      return biopass::exitCode(authenticate(username, pamService));
+      const biopass::HelperExit result = authenticate(username, pamService);
+      if (result == biopass::HelperExit::Ok) {
+        // Its own try: a keyring problem must not turn a match into AuthErr.
+        bool finished = true;
+        try {
+          finished = releaseKeyringPassword(username, pamService, authtokFd, kill_deadline);
+        } catch (...) {
+          spdlog::warn("Biopass: keyring unlock threw");
+        }
+        if (!finished) {
+          // A thread is still blocked on the TPM: skip static destructors.
+          spdlog::default_logger()->flush();
+          _exit(biopass::exitCode(result));
+        }
+      }
+      if (authtokFd >= 0) {
+        close(authtokFd);
+      }
+      return biopass::exitCode(result);
     } catch (const std::exception& e) {
       spdlog::error("Biopass: authentication threw: {}", e.what());
     } catch (...) {

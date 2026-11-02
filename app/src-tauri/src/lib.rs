@@ -8,6 +8,7 @@ pub mod fingerprint;
 pub mod fingerprint_ffi;
 #[cfg(test)]
 mod golden;
+pub mod keyring;
 pub mod models;
 pub mod paths;
 pub mod system;
