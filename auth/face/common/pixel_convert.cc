@@ -23,7 +23,70 @@ inline void yuvToRgbPixel(int y, int u, int v, uint8_t* dst) {
   dst[2] = clamp_u8((298 * c + 516 * d + 128) >> 8);
 }
 
+// Row stride to read a plane with (a stride below the packed row means
+// packed rows), or 0 if `size` can't hold `rows` rows of `row_bytes`.
+size_t planeStride(size_t size, int stride, size_t row_bytes, size_t rows) {
+  const size_t row_stride = std::max(static_cast<size_t>(std::max(stride, 0)), row_bytes);
+  return size >= row_stride * (rows - 1) + row_bytes ? row_stride : 0;
+}
+
 }  // namespace
+
+bool nv12ToRgb(const uint8_t* y, size_t y_size, int y_stride, const uint8_t* uv, size_t uv_size,
+               int uv_stride, int width, int height, bool swap_uv, ImageRGB& out) {
+  if (!y || !uv || ImageRGB::byteSize(width, height) == 0) {
+    return false;
+  }
+  const size_t chroma_w = (static_cast<size_t>(width) + 1) / 2;
+  const size_t chroma_h = (static_cast<size_t>(height) + 1) / 2;
+  const size_t y_row = planeStride(y_size, y_stride, static_cast<size_t>(width), height);
+  const size_t uv_row = planeStride(uv_size, uv_stride, chroma_w * 2, chroma_h);
+  if (y_row == 0 || uv_row == 0) {
+    return false;
+  }
+
+  const size_t u_off = swap_uv ? 1 : 0;
+  const size_t v_off = swap_uv ? 0 : 1;
+  out = ImageRGB(width, height);
+  for (int row = 0; row < height; ++row) {
+    const uint8_t* y_src = y + static_cast<size_t>(row) * y_row;
+    const uint8_t* uv_src = uv + static_cast<size_t>(row / 2) * uv_row;
+    uint8_t* dst_row = out.ptr() + static_cast<size_t>(row) * width * 3;
+    for (int x = 0; x < width; ++x) {
+      const uint8_t* pair = uv_src + static_cast<size_t>(x / 2) * 2;
+      yuvToRgbPixel(y_src[x], pair[u_off], pair[v_off], dst_row + x * 3);
+    }
+  }
+  return true;
+}
+
+bool yuv420ToRgb(const uint8_t* y, size_t y_size, int y_stride, const uint8_t* u, size_t u_size,
+                 const uint8_t* v, size_t v_size, int uv_stride, int width, int height,
+                 ImageRGB& out) {
+  if (!y || !u || !v || ImageRGB::byteSize(width, height) == 0) {
+    return false;
+  }
+  const size_t chroma_w = (static_cast<size_t>(width) + 1) / 2;
+  const size_t chroma_h = (static_cast<size_t>(height) + 1) / 2;
+  const size_t y_row = planeStride(y_size, y_stride, static_cast<size_t>(width), height);
+  const size_t u_row = planeStride(u_size, uv_stride, chroma_w, chroma_h);
+  const size_t v_row = planeStride(v_size, uv_stride, chroma_w, chroma_h);
+  if (y_row == 0 || u_row == 0 || v_row == 0) {
+    return false;
+  }
+
+  out = ImageRGB(width, height);
+  for (int row = 0; row < height; ++row) {
+    const uint8_t* y_src = y + static_cast<size_t>(row) * y_row;
+    const uint8_t* u_src = u + static_cast<size_t>(row / 2) * u_row;
+    const uint8_t* v_src = v + static_cast<size_t>(row / 2) * v_row;
+    uint8_t* dst_row = out.ptr() + static_cast<size_t>(row) * width * 3;
+    for (int x = 0; x < width; ++x) {
+      yuvToRgbPixel(y_src[x], u_src[x / 2], v_src[x / 2], dst_row + x * 3);
+    }
+  }
+  return true;
+}
 
 bool yuyvToRgb(const uint8_t* src, size_t size, int width, int height, int stride, ImageRGB& out) {
   if (!src || ImageRGB::byteSize(width, height) == 0) {

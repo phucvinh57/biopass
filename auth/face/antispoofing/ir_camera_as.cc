@@ -6,6 +6,7 @@
 
 #include "auth_deadline.h"
 #include "camera_capture.h"
+#include "capture_policy.h"
 #include "debug_image_io.h"
 #include "face_detection.h"
 
@@ -14,7 +15,8 @@ namespace biopass {
 bool checkAntispoofByIRCamera(const std::string& device_path, FaceDetection* detector,
                               const std::string& username, bool debug,
                               ICameraCaptureSession* session, int warmup_delay_ms,
-                              int presence_timeout_ms, const std::atomic<bool>* cancel) {
+                              int presence_timeout_ms, const std::atomic<bool>* cancel,
+                              bool require_monochrome) {
   spdlog::debug(
       "FaceAuth: IR presence check | device='{}' warmup_delay_ms={} presence_timeout_ms={}",
       device_path, warmup_delay_ms, presence_timeout_ms);
@@ -71,6 +73,16 @@ bool checkAntispoofByIRCamera(const std::string& device_path, FaceDetection* det
     spdlog::debug("FaceAuth: IR presence check — attempt {} frame captured ({}x{})", attempt,
                   frame.width, frame.height);
     last_frame = frame;
+
+    // The same device as the main camera: without this, picking an RGB webcam
+    // for both would let a photo pass the IR check.
+    if (require_monochrome && !isMonochrome(frame)) {
+      spdlog::warn(
+          "FaceAuth: IR presence check FAILED — the IR camera is the main camera but '{}' "
+          "delivers colour frames (chroma={:.1f}); select the camera's IR node as the IR camera",
+          device_path, meanChroma(frame));
+      return false;
+    }
 
     try {
       std::vector<Detection> detections = detector->inference(frame);

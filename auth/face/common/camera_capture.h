@@ -11,9 +11,12 @@
 namespace biopass {
 
 enum class CameraCaptureFormat {
-  Default,   // MJPEG -> YUYV -> R8
-  V4L2Grey,  // IR: R8 -> YUYV -> MJPEG (some IR sensors lack R8)
+  Default,   // MJPEG -> YUYV -> NV12/NV21/YUV420 -> packed RGB -> R8
+  V4L2Grey,  // IR: R8 -> NV12/NV21/YUV420 -> YUYV -> MJPEG -> packed RGB (some lack R8)
 };
+
+// Colour sessions discard this many frames once, so auto-exposure settles.
+constexpr int kColorCaptureWarmupFrames = 5;
 
 // IR sessions use a short warmup and timeout: IR sensors settle faster and
 // the anti-spoofing check should fail fast rather than block login. Each
@@ -34,8 +37,8 @@ class ICameraCaptureSession {
 
 std::unique_ptr<ICameraCaptureSession> openCameraSession(
     const std::optional<std::string>& device_path,
-    CameraCaptureFormat format = CameraCaptureFormat::Default, int warmup_frames = 5,
-    int capture_timeout_ms = kColorCaptureTimeoutMs);
+    CameraCaptureFormat format = CameraCaptureFormat::Default,
+    int warmup_frames = kColorCaptureWarmupFrames, int capture_timeout_ms = kColorCaptureTimeoutMs);
 ImageRGB captureImageByIRCamera(const std::string& device_path,
                                 int warmup_frames = kIrCaptureWarmupFrames,
                                 int capture_timeout_ms = kIrCaptureTimeoutMs);

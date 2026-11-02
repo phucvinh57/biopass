@@ -1,6 +1,6 @@
-// Which pixel format and frame size a camera session asks for, and how IR
-// samples are ranked (face/common/capture_policy.h). Exits non-zero on any
-// failure.
+// Which pixel format and frame size a camera session asks for, how IR
+// samples are ranked, and what counts as a monochrome (IR) frame
+// (face/common/capture_policy.h). Exits non-zero on any failure.
 
 #include <libcamera/formats.h>
 
@@ -15,6 +15,8 @@ namespace {
 
 using biopass::CameraCaptureFormat;
 using biopass::irFrameScore;
+using biopass::isMonochrome;
+using biopass::meanChroma;
 using biopass::meanLuma;
 using biopass::pickCaptureSize;
 using biopass::pickCaptureSizeInRange;
@@ -39,17 +41,19 @@ bool picks(const std::vector<Size>& sizes, const PixelFormat& format, const Size
 }
 
 void testPreference() {
-  const std::vector<PixelFormat> colour = {formats::MJPEG,    formats::YUYV,     formats::BGR888,
+  const std::vector<PixelFormat> colour = {formats::MJPEG,    formats::YUYV,     formats::NV12,
+                                           formats::NV21,     formats::YUV420,   formats::BGR888,
                                            formats::RGB888,   formats::XBGR8888, formats::XRGB8888,
                                            formats::ABGR8888, formats::ARGB8888, formats::R8};
   expect(pixelFormatPreference(CameraCaptureFormat::Default) == colour,
-         "colour: MJPEG, YUYV, packed RGB (BGR888 first), then R8");
+         "colour: MJPEG, YUYV, NV12, NV21, YUV420, packed RGB (BGR888 first), then R8");
 
-  const std::vector<PixelFormat> ir = {formats::R8,       formats::YUYV,     formats::MJPEG,
+  const std::vector<PixelFormat> ir = {formats::R8,       formats::NV12,     formats::NV21,
+                                       formats::YUV420,   formats::YUYV,     formats::MJPEG,
                                        formats::BGR888,   formats::RGB888,   formats::XBGR8888,
                                        formats::XRGB8888, formats::ABGR8888, formats::ARGB8888};
   expect(pixelFormatPreference(CameraCaptureFormat::V4L2Grey) == ir,
-         "ir: R8, YUYV, MJPEG, then packed RGB (BGR888 first)");
+         "ir: R8, NV12, NV21, YUV420, YUYV, MJPEG, then packed RGB (BGR888 first)");
 }
 
 void testCaptureSize() {
@@ -59,6 +63,7 @@ void testCaptureSize() {
   expect(picks(common, formats::MJPEG, {1280, 720}), "MJPEG capped at 1280x720");
   expect(picks(common, formats::YUYV, {640, 480}), "uncompressed capped at 640x480");
   expect(picks(common, formats::R8, {640, 480}), "R8 uses the uncompressed cap");
+  expect(picks(common, formats::NV12, {640, 480}), "NV12 uses the uncompressed cap");
 
   expect(picks({{640, 360}, {640, 480}}, formats::YUYV, {640, 480}), "largest area within cap");
   expect(picks({{1280, 720}, {1280, 800}}, formats::MJPEG, {1280, 720}),
@@ -116,6 +121,41 @@ void testMeanLuma() {
   expect(meanLuma(bad) == 0.0, "short buffer: 0");
 }
 
+// 8x8 frame of one colour.
+ImageRGB filled(uint8_t r, uint8_t g, uint8_t b) {
+  ImageRGB image(8, 8);
+  for (size_t i = 0; i < image.data.size(); i += 3) {
+    image.data[i] = r;
+    image.data[i + 1] = g;
+    image.data[i + 2] = b;
+  }
+  return image;
+}
+
+void testMonochrome() {
+  expect(isMonochrome(filled(0, 0, 0)), "black is monochrome");
+  expect(isMonochrome(filled(128, 128, 128)), "grey (R8/IR decode) is monochrome");
+  expect(isMonochrome(filled(130, 128, 127)), "near-grey (chroma noise 3) is monochrome");
+  expect(isMonochrome(filled(131, 128, 125)), "chroma 6 is still monochrome");
+  expect(meanChroma(filled(131, 128, 125)) == 6.0, "meanChroma reports |R-G| + |G-B|");
+  expect(meanChroma(ImageRGB{}) < 0.0, "meanChroma of an empty frame is negative");
+  expect(!isMonochrome(filled(132, 128, 125)), "chroma 7 is colour");
+  expect(!isMonochrome(filled(200, 150, 120)), "skin tone is colour");
+  expect(!isMonochrome(filled(255, 0, 0)), "red is colour");
+
+  // A colour patch in a grey frame: 16 of 64 pixels at chroma 255+255.
+  ImageRGB patch = filled(128, 128, 128);
+  for (int y = 0; y < 4; ++y) {
+    for (int x = 0; x < 4; ++x) {
+      patch.at(y, x, 0) = 255;
+      patch.at(y, x, 1) = 0;
+      patch.at(y, x, 2) = 255;
+    }
+  }
+  expect(!isMonochrome(patch), "grey frame with a colour patch is colour");
+  expect(!isMonochrome(ImageRGB()), "empty frame is not monochrome");
+}
+
 }  // namespace
 
 int main() {
@@ -124,5 +164,6 @@ int main() {
   testCaptureSizeInRange();
   testIrScore();
   testMeanLuma();
+  testMonochrome();
   return g_failures == 0 ? 0 : 1;
 }

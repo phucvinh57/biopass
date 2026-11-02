@@ -24,11 +24,13 @@ struct Box;
 // frame/face_box: the full frame and the detected face; the model builds its
 // own crop (MiniFASv2 needs context around the face).
 // cancel: the run's cancel signal (may be null); stops the IR wait early.
+// ir_is_main_camera: ir_camera_session is the main session; the IR check then
+// also requires monochrome frames.
 bool checkAntiSpoof(const FaceMethodConfig& face_config, const std::string& username,
                     const ImageRGB& frame, const Box& face_box, const AuthConfig& config,
                     const ModelRegistry& model_registry, SessionEngine<FaceAntiSpoofing>& ai_model,
                     FaceDetection* shared_detector,
                     ICameraCaptureSession* ir_camera_session = nullptr,
-                    const std::atomic<bool>* cancel = nullptr);
+                    const std::atomic<bool>* cancel = nullptr, bool ir_is_main_camera = false);
 
 }  // namespace biopass

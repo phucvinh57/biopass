@@ -2,15 +2,21 @@
 // the session opened to check availability is the one the attempts capture
 // from. When an attempt can't open the camera, one more open still decides
 // Unavailable vs Retry, and a session it gets is kept for the next attempt.
+// When the IR camera is the main camera, the IR presence check reuses the
+// main session instead of opening the device a second time.
 // Uses a fake camera and an unknown user, so no camera or model is needed.
 // Exits non-zero on any failure.
 
+#include <unistd.h>
+
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <deque>
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "camera_capture.h"
 #include "face_auth.h"
@@ -39,6 +45,11 @@ struct CameraLog {
   // Result of each open, in order: an open session, nullptr, or a session
   // that is not open. Opens past the end succeed.
   std::deque<Open> results;
+  // Each open's path, format and timeout, and the last session handed out.
+  std::vector<std::string> paths;
+  std::vector<biopass::CameraCaptureFormat> formats;
+  std::vector<int> timeouts;
+  biopass::ICameraCaptureSession* last = nullptr;
 };
 
 class FakeSession : public biopass::ICameraCaptureSession {
@@ -57,20 +68,26 @@ class FakeSession : public biopass::ICameraCaptureSession {
 };
 
 biopass::FaceAuth::CameraOpener fakeOpener(CameraLog& log) {
-  return
-      [&log](const std::optional<std::string>&) -> std::unique_ptr<biopass::ICameraCaptureSession> {
-        log.opens++;
-        log.max_live_at_open = std::max(log.max_live_at_open, log.live);
-        Open result = Open::Ok;
-        if (!log.results.empty()) {
-          result = log.results.front();
-          log.results.pop_front();
-        }
-        if (result == Open::Fail) {
-          return nullptr;
-        }
-        return std::make_unique<FakeSession>(log, result == Open::Ok);
-      };
+  return [&log](const std::optional<std::string>& path, biopass::CameraCaptureFormat format, int,
+                int timeout_ms) -> std::unique_ptr<biopass::ICameraCaptureSession> {
+    log.opens++;
+    log.max_live_at_open = std::max(log.max_live_at_open, log.live);
+    log.paths.push_back(path.value_or("<default>"));
+    log.formats.push_back(format);
+    log.timeouts.push_back(timeout_ms);
+    Open result = Open::Ok;
+    if (!log.results.empty()) {
+      result = log.results.front();
+      log.results.pop_front();
+    }
+    if (result == Open::Fail) {
+      log.last = nullptr;
+      return nullptr;
+    }
+    auto session = std::make_unique<FakeSession>(log, result == Open::Ok);
+    log.last = session.get();
+    return session;
+  };
 }
 
 // AuthManager's order: isAvailable(), then begin, attempts, end.
@@ -146,6 +163,91 @@ void checkDeadSessionFreedBeforeReopen() {
                                         std::to_string(log.max_live_at_open) + ")");
 }
 
+biopass::FaceMethodConfig withCameras(const std::string& camera, const std::string& ir_camera) {
+  biopass::FaceMethodConfig config;
+  config.camera = camera;
+  config.anti_spoofing.ir_camera = ir_camera;
+  return config;
+}
+
+// No IR camera configured: no presence session, no extra open; the main
+// camera opens as colour.
+void checkNoIrCamera() {
+  CameraLog log;
+  biopass::FaceMethodConfig config;
+  config.camera = "/dev/fake-rgb";
+  biopass::FaceAuth face(config, kUser, fakeOpener(log));
+  expect(face.isAvailable(), "no IR camera: available");
+  expect(face.irPresenceSession() == nullptr, "no IR camera: no presence session");
+  expect(log.opens == 1 && log.formats[0] == biopass::CameraCaptureFormat::Default,
+         "no IR camera: main camera opened once, as colour");
+}
+
+// The IR camera is the main camera: libcamera can't acquire it twice, so the
+// presence check captures from the main session.
+void checkIrIsMainCameraReused(const std::string& camera, const std::string& ir_camera,
+                               const std::string& label) {
+  CameraLog log;
+  biopass::FaceAuth face(withCameras(camera, ir_camera), kUser, fakeOpener(log));
+  expect(face.isAvailable(), label + ": available");
+  biopass::ICameraCaptureSession* main_session = log.last;
+  expect(log.opens == 1 && log.formats[0] == biopass::CameraCaptureFormat::V4L2Grey,
+         label + ": main camera opened once, as grey");
+  expect(log.timeouts[0] == biopass::kColorCaptureTimeoutMs,
+         label + ": main camera keeps the colour timeout");
+
+  expect(face.irPresenceSession() == main_session,
+         label + ": presence check reuses the main session");
+  expect(face.irPresenceSession() == main_session, label + ": and again on the next attempt");
+  expect(log.opens == 1,
+         label + ": the device is never opened twice (opens=" + std::to_string(log.opens) + ")");
+
+  face.endAuthenticationSession();
+  expect(log.closes == 1 && log.live == 0, label + ": session end closes the one session");
+}
+
+// Different cameras: the IR session is a second, grey session, opened once
+// and reused while it stays open.
+void checkSeparateIrCamera() {
+  CameraLog log;
+  biopass::FaceAuth face(withCameras("/dev/fake-rgb", "/dev/fake-ir"), kUser, fakeOpener(log));
+  expect(face.isAvailable(), "separate IR camera: available");
+  biopass::ICameraCaptureSession* main_session = log.last;
+  expect(log.formats[0] == biopass::CameraCaptureFormat::Default,
+         "separate IR camera: main camera opened as colour");
+
+  biopass::ICameraCaptureSession* ir = face.irPresenceSession();
+  expect(ir != nullptr && ir != main_session, "separate IR camera: its own session");
+  expect(log.opens == 2 && log.paths[1] == "/dev/fake-ir" &&
+             log.formats[1] == biopass::CameraCaptureFormat::V4L2Grey &&
+             log.timeouts[1] == biopass::kIrCaptureTimeoutMs,
+         "separate IR camera: opened as grey with the IR timeout");
+  expect(face.irPresenceSession() == ir && log.opens == 2,
+         "separate IR camera: reused on the next attempt");
+
+  face.endAuthenticationSession();
+  expect(log.live == 0, "separate IR camera: session end closes both");
+}
+
+// A /dev/v4l/by-id style symlink names the same device as its target.
+void checkIrIsMainCameraBySymlink() {
+  char dir_template[] = "/tmp/biopass-camera-reuse-XXXXXX";
+  const char* dir = mkdtemp(dir_template);
+  if (!dir) {
+    expect(false, "symlinked IR camera: could not create a temp dir");
+    return;
+  }
+  const std::string link = std::string(dir) + "/by-id-camera";
+  if (symlink("/dev/null", link.c_str()) != 0) {
+    expect(false, "symlinked IR camera: could not create the symlink");
+    rmdir(dir);
+    return;
+  }
+  checkIrIsMainCameraReused("/dev/null", link, "symlinked IR camera");
+  unlink(link.c_str());
+  rmdir(dir);
+}
+
 }  // namespace
 
 int main() {
@@ -154,6 +256,10 @@ int main() {
   checkAttemptOpenFailsTwice();
   checkAttemptOpenRecovers();
   checkDeadSessionFreedBeforeReopen();
+  checkNoIrCamera();
+  checkIrIsMainCameraReused("/dev/fake-cam", "/dev/fake-cam", "IR camera is the main camera");
+  checkSeparateIrCamera();
+  checkIrIsMainCameraBySymlink();
 
   std::printf("%s\n", g_failures == 0 ? "All checks passed" : "Some checks FAILED");
   return g_failures == 0 ? 0 : 1;
