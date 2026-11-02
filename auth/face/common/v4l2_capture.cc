@@ -8,12 +8,15 @@
 #include <spdlog/spdlog.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
+#include <sys/sysmacros.h>
 #include <unistd.h>
 
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
 #include <sstream>
+#include <string>
 #include <utility>
 
 #include "capture_policy.h"
@@ -25,6 +28,9 @@ namespace biopass {
 namespace {
 
 constexpr uint32_t kBufferCount = 4;
+// VIDEO_MAJOR in the kernel: /dev/video*, also v4l-subdev/vbi/radio (which
+// QUERYCAP then rejects).
+constexpr unsigned int kVideoMajor = 81;
 // Bounds the ENUM_FMT / ENUM_FRAMESIZES loops against a misbehaving driver.
 constexpr uint32_t kMaxEnumEntries = 256;
 
@@ -71,10 +77,39 @@ int xioctl(int fd, unsigned long request, void* arg) {
   return ret;
 }
 
+// The helper runs as root and the path comes from user config, so only a
+// V4L2 char device may be opened: opening some devices has side effects
+// (e.g. /dev/watchdog arms the watchdog). The path is pinned with O_PATH
+// (which never calls the driver), checked, then reopened through
+// /proc/self/fd, so swapping a symlink in between cannot redirect the open.
 int openDevice(const std::string& device_path) {
-  const int fd = ::open(device_path.c_str(), O_RDWR | O_NONBLOCK | O_CLOEXEC);
-  if (fd < 0) {
+  const int path_fd = ::open(device_path.c_str(), O_PATH | O_CLOEXEC);
+  if (path_fd < 0) {
     spdlog::error("FaceAuth: Failed to open camera '{}': {}", device_path, std::strerror(errno));
+    return -1;
+  }
+  struct stat path_info{};
+  if (fstat(path_fd, &path_info) != 0 || !isVideoCharDevice(path_info.st_mode, path_info.st_rdev)) {
+    spdlog::error("FaceAuth: Camera path '{}' is not a V4L2 video device", device_path);
+    ::close(path_fd);
+    return -1;
+  }
+
+  const std::string pinned_path = "/proc/self/fd/" + std::to_string(path_fd);
+  const int fd = ::open(pinned_path.c_str(), O_RDWR | O_NONBLOCK | O_CLOEXEC | O_NOCTTY);
+  const int open_errno = errno;
+  ::close(path_fd);
+  if (fd < 0) {
+    spdlog::error("FaceAuth: Failed to open camera '{}': {}", device_path,
+                  std::strerror(open_errno));
+    return -1;
+  }
+  struct stat fd_info{};
+  if (fstat(fd, &fd_info) != 0 || !isVideoCharDevice(fd_info.st_mode, fd_info.st_rdev) ||
+      fd_info.st_rdev != path_info.st_rdev) {
+    spdlog::error("FaceAuth: Camera path '{}' changed while opening it; refusing", device_path);
+    ::close(fd);
+    return -1;
   }
   return fd;
 }
@@ -100,9 +135,10 @@ bool isStreamingCapture(int fd, const std::string& device_path) {
 struct V4l2Format {
   uint32_t fourcc = 0;
   std::vector<libcamera::Size> sizes;
+  // Set for a stepwise/continuous format (then `sizes` is empty).
+  std::optional<libcamera::SizeRange> range;
 };
 
-// Discrete sizes as listed; stepwise/continuous ranges as their maximum.
 std::vector<V4l2Format> enumerateFormats(int fd) {
   std::vector<V4l2Format> formats;
   for (uint32_t index = 0; index < kMaxEnumEntries; ++index) {
@@ -124,7 +160,10 @@ std::vector<V4l2Format> enumerateFormats(int fd) {
       if (size.type == V4L2_FRMSIZE_TYPE_DISCRETE) {
         format.sizes.emplace_back(size.discrete.width, size.discrete.height);
       } else {
-        format.sizes.emplace_back(size.stepwise.max_width, size.stepwise.max_height);
+        format.range =
+            libcamera::SizeRange(libcamera::Size(size.stepwise.min_width, size.stepwise.min_height),
+                                 libcamera::Size(size.stepwise.max_width, size.stepwise.max_height),
+                                 size.stepwise.step_width, size.stepwise.step_height);
         break;
       }
     }
@@ -172,6 +211,10 @@ std::optional<uint32_t> pickV4l2Format(const std::vector<uint32_t>& available,
     }
   }
   return std::nullopt;
+}
+
+bool isVideoCharDevice(mode_t mode, dev_t rdev) {
+  return S_ISCHR(mode) && major(rdev) == kVideoMajor;
 }
 
 uint32_t v4l2BytesPerLine(uint32_t fourcc, uint32_t width, uint32_t reported) {
@@ -235,7 +278,12 @@ bool V4l2CaptureSession::setup(CameraCaptureFormat requested_format) {
 
   v4l2_format fmt{};
   fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-  if (const auto size = pickCaptureSize(picked_format.sizes, *pixelFormatFromV4l2(*picked))) {
+  const libcamera::PixelFormat pixel_format = *pixelFormatFromV4l2(*picked);
+  // v4l2loopback without a producer offers up to 8192x8192, so a range is
+  // capped like a discrete list rather than taken at its maximum.
+  const auto size = picked_format.range ? pickCaptureSizeInRange(*picked_format.range, pixel_format)
+                                        : pickCaptureSize(picked_format.sizes, pixel_format);
+  if (size) {
     fmt.fmt.pix.width = size->width;
     fmt.fmt.pix.height = size->height;
   } else {
@@ -244,7 +292,7 @@ bool V4l2CaptureSession::setup(CameraCaptureFormat requested_format) {
                     std::strerror(errno));
       return false;
     }
-    spdlog::warn("FaceAuth: Camera '{}' reports no discrete sizes for {}; using default {}x{}",
+    spdlog::warn("FaceAuth: Camera '{}' reports no usable sizes for {}; using default {}x{}",
                  device_path_, fourccToString(*picked), fmt.fmt.pix.width, fmt.fmt.pix.height);
   }
   fmt.fmt.pix.pixelformat = *picked;
@@ -294,9 +342,13 @@ bool V4l2CaptureSession::startStreaming() {
   request.count = kBufferCount;
   request.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
   request.memory = V4L2_MEMORY_MMAP;
-  if (xioctl(fd_, VIDIOC_REQBUFS, &request) < 0 || request.count == 0) {
+  if (xioctl(fd_, VIDIOC_REQBUFS, &request) < 0) {
     spdlog::error("FaceAuth: Failed to allocate buffers for '{}': {}", device_path_,
                   std::strerror(errno));
+    return false;
+  }
+  if (request.count == 0) {
+    spdlog::error("FaceAuth: Camera '{}' granted no buffers", device_path_);
     return false;
   }
   buffers_requested_ = true;
@@ -567,6 +619,12 @@ std::vector<CameraFormatDesc> listV4l2Formats(const std::string& device_path) {
       desc.supported = pixel_format.has_value();
       for (const auto& size : format.sizes) {
         desc.sizes.emplace_back(static_cast<int>(size.width), static_cast<int>(size.height));
+      }
+      if (format.range) {
+        // A range shows as its min and max.
+        for (const auto& size : {format.range->min, format.range->max}) {
+          desc.sizes.emplace_back(static_cast<int>(size.width), static_cast<int>(size.height));
+        }
       }
       result.push_back(std::move(desc));
     }

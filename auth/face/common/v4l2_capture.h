@@ -4,6 +4,7 @@
 // drivers, v4l2loopback). Used only for an explicit /dev/video* path.
 
 #include <libcamera/pixel_format.h>
+#include <sys/types.h>
 
 #include <chrono>
 #include <cstddef>
@@ -23,6 +24,10 @@ std::optional<libcamera::PixelFormat> pixelFormatFromV4l2(uint32_t fourcc);
 // The most preferred fourcc (pixelFormatPreference order) in `available`.
 std::optional<uint32_t> pickV4l2Format(const std::vector<uint32_t>& available,
                                        CameraCaptureFormat format);
+
+// True for a character device with the V4L2 major (81). The fallback opens
+// only these: other device nodes can have side effects on open.
+bool isVideoCharDevice(mode_t mode, dev_t rdev);
 
 // The driver's bytesperline, or the packed row size when it reports 0.
 uint32_t v4l2BytesPerLine(uint32_t fourcc, uint32_t width, uint32_t reported);

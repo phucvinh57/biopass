@@ -26,6 +26,12 @@ std::optional<libcamera::Size> pickCaptureSize(const std::vector<libcamera::Size
 // first, then over-exposed frames from the least washed-out.
 double irFrameScore(double mean);
 
+// For a stepwise/continuous size range (V4L2): the format's cap clamped into
+// the range on its step grid, keeping width >= kMinCaptureWidth when the
+// range allows. nullopt for an invalid range.
+std::optional<libcamera::Size> pickCaptureSizeInRange(const libcamera::SizeRange& range,
+                                                      const libcamera::PixelFormat& pixel_format);
+
 // Mean brightness in [0, 255], sampling every 4th pixel; enough to tell a
 // lit IR frame from a dark one.
 double meanLuma(const ImageRGB& image);

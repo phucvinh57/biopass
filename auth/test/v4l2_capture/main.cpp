@@ -3,6 +3,8 @@
 
 #include <libcamera/formats.h>
 #include <linux/videodev2.h>
+#include <sys/stat.h>
+#include <sys/sysmacros.h>
 
 #include <cstdint>
 #include <cstdio>
@@ -14,6 +16,7 @@
 namespace {
 
 using biopass::CameraCaptureFormat;
+using biopass::isVideoCharDevice;
 using biopass::pickV4l2Format;
 using biopass::pixelFormatFromV4l2;
 using biopass::v4l2BytesPerLine;
@@ -79,11 +82,24 @@ void testBytesPerLine() {
   expect(v4l2BytesPerLine(V4L2_PIX_FMT_MJPEG, 640, 0) == 0, "MJPG: no stride");
 }
 
+void testVideoCharDevice() {
+  expect(isVideoCharDevice(S_IFCHR | 0660, makedev(81, 0)), "char device, major 81: accepted");
+  expect(!isVideoCharDevice(S_IFBLK | 0660, makedev(81, 0)), "block device, major 81: rejected");
+  expect(!isVideoCharDevice(S_IFCHR | 0600, makedev(10, 130)), "watchdog (10:130): rejected");
+  expect(!isVideoCharDevice(S_IFREG | 0644, makedev(81, 0)), "regular file: rejected");
+
+  struct stat dev_null{};
+  expect(
+      stat("/dev/null", &dev_null) == 0 && !isVideoCharDevice(dev_null.st_mode, dev_null.st_rdev),
+      "/dev/null: rejected");
+}
+
 }  // namespace
 
 int main() {
   testMapping();
   testSelection();
   testBytesPerLine();
+  testVideoCharDevice();
   return g_failures == 0 ? 0 : 1;
 }
