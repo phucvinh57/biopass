@@ -1,5 +1,6 @@
 #include "onnx_session.h"
 
+#include <cstdlib>
 #include <optional>
 
 #include "user_file.h"
@@ -14,8 +15,16 @@ ModelBytes loadModelFile(const std::string& path) {
   return ModelBytes{std::move(*data)};
 }
 
-OnnxSession::OnnxSession(const ModelBytes& model, const char* log_name)
-    : env_(ORT_LOGGING_LEVEL_WARNING, log_name) {
+// ONNX Runtime's 1DS telemetry starts with the first Ort::Env and is read from
+// the environment, so opt out before env_ is constructed.
+static Ort::Env makeEnv(const char* log_name) {
+  setenv("ORT_DISABLE_TELEMETRY", "1", 1);
+  Ort::Env env(ORT_LOGGING_LEVEL_WARNING, log_name);
+  env.DisableTelemetryEvents();
+  return env;
+}
+
+OnnxSession::OnnxSession(const ModelBytes& model, const char* log_name) : env_(makeEnv(log_name)) {
   Ort::SessionOptions opts;
   opts.SetIntraOpNumThreads(1);
   opts.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
