@@ -4,6 +4,7 @@
 
 #include <libcamera/formats.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <optional>
 #include <vector>
@@ -14,6 +15,7 @@ namespace {
 
 using biopass::CameraCaptureFormat;
 using biopass::irFrameScore;
+using biopass::meanLuma;
 using biopass::pickCaptureSize;
 using biopass::pixelFormatPreference;
 using libcamera::PixelFormat;
@@ -75,11 +77,22 @@ void testIrScore() {
   expect(irFrameScore(0.0) == 0.0, "black frame scores 0");
 }
 
+void testMeanLuma() {
+  expect(meanLuma(ImageRGB{}) == 0.0, "empty image: 0");
+  ImageRGB grey(8, 2);
+  std::fill(grey.data.begin(), grey.data.end(), 90);
+  expect(meanLuma(grey) == 90.0, "uniform grey: its level");
+  ImageRGB bad(8, 2);
+  bad.data.resize(3);
+  expect(meanLuma(bad) == 0.0, "short buffer: 0");
+}
+
 }  // namespace
 
 int main() {
   testPreference();
   testCaptureSize();
   testIrScore();
+  testMeanLuma();
   return g_failures == 0 ? 0 : 1;
 }

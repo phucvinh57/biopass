@@ -2,6 +2,7 @@
 
 #include <libcamera/formats.h>
 
+#include <cstddef>
 #include <cstdint>
 
 namespace biopass {
@@ -79,5 +80,19 @@ std::optional<libcamera::Size> pickCaptureSize(const std::vector<libcamera::Size
 }
 
 double irFrameScore(double mean) { return mean <= kIrOverexposedMeanLuma ? mean : -mean; }
+
+double meanLuma(const ImageRGB& image) {
+  const size_t pixels = static_cast<size_t>(image.width) * static_cast<size_t>(image.height);
+  if (pixels == 0 || image.data.size() < pixels * 3) {
+    return 0.0;
+  }
+  const uint8_t* data = image.data.data();
+  uint64_t sum = 0;
+  size_t count = 0;
+  for (size_t i = 0; i < pixels; i += 4, ++count) {
+    sum += data[i * 3] + data[i * 3 + 1] + data[i * 3 + 2];
+  }
+  return static_cast<double>(sum) / (3.0 * static_cast<double>(count));
+}
 
 }  // namespace biopass

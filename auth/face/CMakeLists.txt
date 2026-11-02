@@ -50,6 +50,7 @@ add_library(biopass_face_common STATIC
     common/pixel_convert.cc
     common/debug_image_io.cc
     common/frame_darkness.cc
+    common/v4l2_capture.cc
 )
 set_target_properties(biopass_face_common PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(biopass_face_common PUBLIC

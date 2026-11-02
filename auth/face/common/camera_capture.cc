@@ -26,6 +26,7 @@
 #include "capture_policy.h"
 #include "frame_sampling.h"
 #include "pixel_convert.h"
+#include "v4l2_capture.h"
 
 namespace biopass {
 
@@ -119,12 +120,8 @@ std::shared_ptr<libcamera::Camera> findCameraByPath(libcamera::CameraManager& ma
 std::shared_ptr<libcamera::Camera> findCamera(
     libcamera::CameraManager& manager, const std::optional<std::string>& linux_video_device_path) {
   if (linux_video_device_path.has_value()) {
-    auto camera = findCameraByPath(manager, *linux_video_device_path);
-    if (!camera) {
-      spdlog::error("FaceAuth: Camera path '{}' was not found among libcamera devices",
-                    *linux_video_device_path);
-    }
-    return camera;
+    // Not logged: openCameraSession falls back to direct V4L2.
+    return findCameraByPath(manager, *linux_video_device_path);
   }
 
   const auto cameras = manager.cameras();
@@ -206,27 +203,6 @@ std::string listAvailableFormats(const libcamera::StreamFormats& formats) {
   }
   return oss.str();
 }
-
-// Mean brightness in [0, 255], sampling every 4th pixel; enough to tell a
-// lit IR frame from a dark one.
-double meanLuma(const ImageRGB& image) {
-  const size_t pixels = static_cast<size_t>(image.width) * static_cast<size_t>(image.height);
-  if (pixels == 0 || image.data.size() < pixels * 3) {
-    return 0.0;
-  }
-  const uint8_t* data = image.data.data();
-  uint64_t sum = 0;
-  size_t count = 0;
-  for (size_t i = 0; i < pixels; i += 4, ++count) {
-    sum += data[i * 3] + data[i * 3 + 1] + data[i * 3 + 2];
-  }
-  return static_cast<double>(sum) / (3.0 * static_cast<double>(count));
-}
-
-// Dropped (failed or unconvertible) frames one capture tolerates before
-// giving up: about a second at 30 fps. Bounds the loop when there is no
-// capture deadline.
-constexpr int kMaxDroppedFrames = 30;
 
 // Picks the most preferred format the camera offers, sets a capped size and
 // validates the configuration.
@@ -720,6 +696,13 @@ std::unique_ptr<ICameraCaptureSession> openCameraSession(
   }
 
   auto camera = findCamera(*manager, linux_video_device_path);
+  if (!camera && linux_video_device_path.has_value()) {
+    // Custom (DKMS) drivers and v4l2loopback are invisible to libcamera.
+    spdlog::info("FaceAuth: Camera path '{}' is not a libcamera device; trying direct V4L2",
+                 *linux_video_device_path);
+    return V4l2CaptureSession::open(*linux_video_device_path, format, warmup_frames,
+                                    capture_timeout_ms);
+  }
   if (!camera) {
     return nullptr;
   }
@@ -772,7 +755,7 @@ std::vector<CameraFormatDesc> listCameraFormats(const std::string& device_path) 
 
   auto camera = findCameraByPath(*manager, device_path);
   if (!camera) {
-    return result;
+    return listV4l2Formats(device_path);
   }
 
   auto config = camera->generateConfiguration({libcamera::StreamRole::StillCapture});

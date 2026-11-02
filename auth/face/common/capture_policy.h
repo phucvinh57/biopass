@@ -26,4 +26,8 @@ std::optional<libcamera::Size> pickCaptureSize(const std::vector<libcamera::Size
 // first, then over-exposed frames from the least washed-out.
 double irFrameScore(double mean);
 
+// Mean brightness in [0, 255], sampling every 4th pixel; enough to tell a
+// lit IR frame from a dark one.
+double meanLuma(const ImageRGB& image);
+
 }  // namespace biopass
