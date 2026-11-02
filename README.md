@@ -16,7 +16,7 @@
     </a>
 </p>
 
-<p align="center"><b>Modern multi-modal biometric login for Linux — face and fingerprint, with GUI management.</b></p>
+<p align="center"><b>Modern multi-modal biometric login for Linux - face and fingerprint, with GUI management.</b></p>
 
 ---
 
