@@ -52,12 +52,12 @@
           "/usr/lib/biopass/libbiopass_det.so": "../../auth/build/face/detection/libbiopass_det.so",
           "/usr/lib/biopass/libbiopass_reg.so": "../../auth/build/face/recognition/libbiopass_reg.so",
           "/usr/lib/biopass/libbiopass_as.so": "../../auth/build/face/antispoofing/libbiopass_as.so",
-          "/usr/lib/biopass/libonnxruntime.so.1": "../../auth/build/_deps/onnxruntime-src/lib/libonnxruntime.so.1.19.2",
-          "/usr/lib/biopass/libcamera.so.0.7": "../../auth/build/libcamera-bundle/libcamera.so.0.7",
-          "/usr/lib/biopass/libcamera-base.so.0.7": "../../auth/build/libcamera-bundle/libcamera-base.so.0.7",
-          "/usr/lib/biopass/libcamera/ipa/ipa_soft_simple.so": "../../auth/build/libcamera-bundle/libcamera/ipa/ipa_soft_simple.so",
-          "/usr/lib/biopass/libcamera/soft_ipa_proxy": "../../auth/build/libcamera-bundle/libcamera/soft_ipa_proxy",
-          "/usr/share/biopass/libcamera/ipa/simple/uncalibrated.yaml": "../../auth/build/libcamera-bundle/ipa/simple/uncalibrated.yaml",
+          "/usr/lib/biopass/libonnxruntime.so.1": "../../auth/build/_deps/onnxruntime-src/lib/libonnxruntime.so.1.31.1",
+          "/usr/lib/biopass/libcamera.so.0.8": "../../auth/build/libcamera-bundle/libcamera.so.0.8",
+          "/usr/lib/biopass/libcamera-base.so.0.8": "../../auth/build/libcamera-bundle/libcamera-base.so.0.8",
+          "/usr/lib/biopass/libcamera/ipa/ipa_softisp.so": "../../auth/build/libcamera-bundle/libcamera/ipa/ipa_softisp.so",
+          "/usr/lib/biopass/libcamera/softisp_ipa_proxy": "../../auth/build/libcamera-bundle/libcamera/softisp_ipa_proxy",
+          "/usr/share/biopass/libcamera/ipa/softisp/uncalibrated.yaml": "../../auth/build/libcamera-bundle/ipa/softisp/uncalibrated.yaml",
           "/usr/share/pam-configs/biopass": "scripts/pam.conf"
         }
       },
@@ -70,12 +70,12 @@
           "/usr/lib/biopass/libbiopass_det.so": "../../auth/build/face/detection/libbiopass_det.so",
           "/usr/lib/biopass/libbiopass_reg.so": "../../auth/build/face/recognition/libbiopass_reg.so",
           "/usr/lib/biopass/libbiopass_as.so": "../../auth/build/face/antispoofing/libbiopass_as.so",
-          "/usr/lib/biopass/libonnxruntime.so.1": "../../auth/build/_deps/onnxruntime-src/lib/libonnxruntime.so.1.19.2",
-          "/usr/lib/biopass/libcamera.so.0.7": "../../auth/build/libcamera-bundle/libcamera.so.0.7",
-          "/usr/lib/biopass/libcamera-base.so.0.7": "../../auth/build/libcamera-bundle/libcamera-base.so.0.7",
-          "/usr/lib/biopass/libcamera/ipa/ipa_soft_simple.so": "../../auth/build/libcamera-bundle/libcamera/ipa/ipa_soft_simple.so",
-          "/usr/lib/biopass/libcamera/soft_ipa_proxy": "../../auth/build/libcamera-bundle/libcamera/soft_ipa_proxy",
-          "/usr/share/biopass/libcamera/ipa/simple/uncalibrated.yaml": "../../auth/build/libcamera-bundle/ipa/simple/uncalibrated.yaml"
+          "/usr/lib/biopass/libonnxruntime.so.1": "../../auth/build/_deps/onnxruntime-src/lib/libonnxruntime.so.1.31.1",
+          "/usr/lib/biopass/libcamera.so.0.8": "../../auth/build/libcamera-bundle/libcamera.so.0.8",
+          "/usr/lib/biopass/libcamera-base.so.0.8": "../../auth/build/libcamera-bundle/libcamera-base.so.0.8",
+          "/usr/lib/biopass/libcamera/ipa/ipa_softisp.so": "../../auth/build/libcamera-bundle/libcamera/ipa/ipa_softisp.so",
+          "/usr/lib/biopass/libcamera/softisp_ipa_proxy": "../../auth/build/libcamera-bundle/libcamera/softisp_ipa_proxy",
+          "/usr/share/biopass/libcamera/ipa/softisp/uncalibrated.yaml": "../../auth/build/libcamera-bundle/ipa/softisp/uncalibrated.yaml"
         }
       }
     }

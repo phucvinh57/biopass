@@ -45,8 +45,10 @@ std::string bytesField(int field, const std::string& v) {
 }
 
 // Model: Y = X + W, where W is a float[16] initializer whose 64 bytes live
-// in `location`. Adding an input and using more than one element keep the
-// graph optimizers from touching W, so the session really loads it.
+// in `location`. For a model loaded from bytes, ORT resolves `location`
+// against the working directory and rejects paths that leave it. Adding
+// an input and using more than one element keep the graph optimizers from
+// touching W, so the session really loads it.
 std::string externalDataModel(const std::string& location) {
   const std::string entry_location = bytesField(1, "location") + bytesField(2, location);
   const std::string entry_length = bytesField(1, "length") + bytesField(2, "64");
@@ -96,12 +98,13 @@ int main() {
   }
   const std::string dir = tmp;
   chmod(dir.c_str(), 0755);
+  expect(chdir(dir.c_str()) == 0, "enter temp dir");
 
   const std::string data = dir + "/weights.bin";
   writeFile(data, std::string(64, '\0'));
   chmod(data.c_str(), 0644);
   const std::string model = dir + "/model.onnx";
-  writeFile(model, externalDataModel(data));
+  writeFile(model, externalDataModel("weights.bin"));
   chmod(model.c_str(), 0644);
 
   if (geteuid() != 0) {
@@ -117,7 +120,7 @@ int main() {
     writeFile(secret, std::string(64, '\0'));
     chmod(secret.c_str(), 0600);
     const std::string secret_model = dir + "/secret.onnx";
-    writeFile(secret_model, externalDataModel(secret));
+    writeFile(secret_model, externalDataModel("secret.bin"));
     chmod(secret_model.c_str(), 0644);
     expect(builds("root", secret_model), "root itself does open the external data file");
     expect(!builds("nobody", secret_model), "the user's model can't make root read it");
@@ -126,7 +129,7 @@ int main() {
     const std::string fifo = dir + "/fifo";
     expect(mkfifo(fifo.c_str(), 0600) == 0, "create root-only FIFO");
     const std::string fifo_model = dir + "/fifo.onnx";
-    writeFile(fifo_model, externalDataModel(fifo));
+    writeFile(fifo_model, externalDataModel("fifo"));
     chmod(fifo_model.c_str(), 0644);
     alarm(10);  // a hang becomes a failed run
     expect(!builds("nobody", fifo_model), "external data FIFO is refused without blocking");

@@ -5,7 +5,7 @@
 
 include(ExternalProject)
 
-set(LIBCAMERA_VERSION "v0.7.0")
+set(LIBCAMERA_VERSION "v0.8.0")
 
 # libcamera compiles in absolute IPA paths, so build for the final package
 # layout (must match app/src-tauri/tauri.conf.json), staged via DESTDIR:
@@ -28,12 +28,12 @@ set(LIBCAMERA_INCDIR  "${LIBCAMERA_ROOT}/include/libcamera")
 file(MAKE_DIRECTORY "${LIBCAMERA_INCDIR}")
 # RUNPATH of everything libcamera installs (meson keeps link-arg rpaths on
 # install): $ORIGIN lets libcamera.so find libcamera-base.so next to it; the
-# absolute dir lets soft_ipa_proxy (in libcamera/) find both, also when exec'd
+# absolute dir lets softisp_ipa_proxy (in libcamera/) find both, also when exec'd
 # AT_SECURE, where ld.so expands an executable's $ORIGIN only into trusted dirs.
 set(LIBCAMERA_RPATH "$ORIGIN:${LIBCAMERA_PREFIX}/${LIBCAMERA_LIBDIR}")
 
 ExternalProject_Add(libcamera_ext
-    GIT_REPOSITORY https://git.libcamera.org/libcamera/libcamera.git
+    GIT_REPOSITORY https://gitlab.freedesktop.org/camera/libcamera.git
     GIT_TAG        ${LIBCAMERA_VERSION}
     GIT_SHALLOW    TRUE
     # Never link gnutls/libcrypto (#176); IPAs are then unsigned and run isolated.
@@ -44,7 +44,7 @@ ExternalProject_Add(libcamera_ext
         --libexecdir=${LIBCAMERA_LIBDIR} --datadir=${LIBCAMERA_DATADIR}
         --sysconfdir=${LIBCAMERA_SYSCONFDIR}
         -Dcpp_link_args=-Wl,-rpath,${LIBCAMERA_RPATH}
-        -Dpipelines=uvcvideo,simple -Dipas=simple -Dgstreamer=disabled -Dv4l2=disabled
+        -Dpipelines=uvcvideo,simple -Dipas=softisp -Dgstreamer=disabled -Dv4l2=disabled
         -Dcam=disabled -Dqcam=disabled -Dlc-compliance=disabled
         -Dtracing=disabled -Ddocumentation=disabled -Dpycamera=disabled -Dtest=false -Dudev=enabled
         <BINARY_DIR> <SOURCE_DIR>
@@ -53,21 +53,21 @@ ExternalProject_Add(libcamera_ext
     BUILD_BYPRODUCTS ${LIBCAMERA_SODIR}/libcamera.so ${LIBCAMERA_SODIR}/libcamera-base.so
 )
 
-# Consumers link this; DT_NEEDED records the pinned soname (libcamera.so.0.7).
+# Consumers link this; DT_NEEDED records the pinned soname (libcamera.so.0.8).
 add_library(libcamera_bundled INTERFACE)
 add_dependencies(libcamera_bundled libcamera_ext)
 target_include_directories(libcamera_bundled INTERFACE ${LIBCAMERA_INCDIR})
 target_link_libraries(libcamera_bundled INTERFACE
     ${LIBCAMERA_SODIR}/libcamera.so ${LIBCAMERA_SODIR}/libcamera-base.so)
 
-# v0.7.0 -> 0.7
+# v0.8.0 -> 0.8
 string(REGEX REPLACE "^v?([0-9]+)\\.([0-9]+).*" "\\1.\\2" LIBCAMERA_SOVER "${LIBCAMERA_VERSION}")
 
 # Files Tauri bundles (see tauri.conf.json):
 #   libcamera.so.X.Y, libcamera-base.so.X.Y      -> /usr/lib/biopass/
-#   libcamera/ipa/ipa_soft_simple.so             -> /usr/lib/biopass/libcamera/ipa/
-#   libcamera/soft_ipa_proxy                     -> /usr/lib/biopass/libcamera/
-#   ipa/simple/uncalibrated.yaml                 -> /usr/share/biopass/libcamera/ipa/simple/
+#   libcamera/ipa/ipa_softisp.so                 -> /usr/lib/biopass/libcamera/ipa/
+#   libcamera/softisp_ipa_proxy                  -> /usr/lib/biopass/libcamera/
+#   ipa/softisp/uncalibrated.yaml                -> /usr/share/biopass/libcamera/ipa/softisp/
 set(LIBCAMERA_BUNDLE_DIR "${CMAKE_BINARY_DIR}/libcamera-bundle")
 set(LIBCAMERA_PRIVDIR    "${LIBCAMERA_SODIR}/libcamera")
 set(LIBCAMERA_IPA_DATA   "${LIBCAMERA_ROOT}/${LIBCAMERA_DATADIR}/libcamera/ipa")
@@ -76,20 +76,20 @@ ExternalProject_Add_Step(libcamera_ext stage_bundle
     BYPRODUCTS
         ${LIBCAMERA_BUNDLE_DIR}/libcamera.so.${LIBCAMERA_SOVER}
         ${LIBCAMERA_BUNDLE_DIR}/libcamera-base.so.${LIBCAMERA_SOVER}
-        ${LIBCAMERA_BUNDLE_DIR}/libcamera/ipa/ipa_soft_simple.so
-        ${LIBCAMERA_BUNDLE_DIR}/libcamera/soft_ipa_proxy
-        ${LIBCAMERA_BUNDLE_DIR}/ipa/simple/uncalibrated.yaml
+        ${LIBCAMERA_BUNDLE_DIR}/libcamera/ipa/ipa_softisp.so
+        ${LIBCAMERA_BUNDLE_DIR}/libcamera/softisp_ipa_proxy
+        ${LIBCAMERA_BUNDLE_DIR}/ipa/softisp/uncalibrated.yaml
     COMMAND ${CMAKE_COMMAND} -E make_directory
-            "${LIBCAMERA_BUNDLE_DIR}/libcamera/ipa" "${LIBCAMERA_BUNDLE_DIR}/ipa/simple"
+            "${LIBCAMERA_BUNDLE_DIR}/libcamera/ipa" "${LIBCAMERA_BUNDLE_DIR}/ipa/softisp"
     # `cmake -E copy` follows symlinks: real files named by soname.
     COMMAND ${CMAKE_COMMAND} -E copy "${LIBCAMERA_SODIR}/libcamera.so.${LIBCAMERA_SOVER}"
             "${LIBCAMERA_BUNDLE_DIR}/libcamera.so.${LIBCAMERA_SOVER}"
     COMMAND ${CMAKE_COMMAND} -E copy "${LIBCAMERA_SODIR}/libcamera-base.so.${LIBCAMERA_SOVER}"
             "${LIBCAMERA_BUNDLE_DIR}/libcamera-base.so.${LIBCAMERA_SOVER}"
-    COMMAND ${CMAKE_COMMAND} -E copy "${LIBCAMERA_PRIVDIR}/ipa/ipa_soft_simple.so"
-            "${LIBCAMERA_BUNDLE_DIR}/libcamera/ipa/ipa_soft_simple.so"
-    COMMAND ${CMAKE_COMMAND} -E copy "${LIBCAMERA_PRIVDIR}/soft_ipa_proxy"
-            "${LIBCAMERA_BUNDLE_DIR}/libcamera/soft_ipa_proxy"
-    COMMAND ${CMAKE_COMMAND} -E copy "${LIBCAMERA_IPA_DATA}/simple/uncalibrated.yaml"
-            "${LIBCAMERA_BUNDLE_DIR}/ipa/simple/uncalibrated.yaml"
+    COMMAND ${CMAKE_COMMAND} -E copy "${LIBCAMERA_PRIVDIR}/ipa/ipa_softisp.so"
+            "${LIBCAMERA_BUNDLE_DIR}/libcamera/ipa/ipa_softisp.so"
+    COMMAND ${CMAKE_COMMAND} -E copy "${LIBCAMERA_PRIVDIR}/softisp_ipa_proxy"
+            "${LIBCAMERA_BUNDLE_DIR}/libcamera/softisp_ipa_proxy"
+    COMMAND ${CMAKE_COMMAND} -E copy "${LIBCAMERA_IPA_DATA}/softisp/uncalibrated.yaml"
+            "${LIBCAMERA_BUNDLE_DIR}/ipa/softisp/uncalibrated.yaml"
 )
