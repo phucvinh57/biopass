@@ -12,9 +12,9 @@ import { useModelFileStatus } from "@/hooks/useModelFileStatus";
 import type { BiopassConfig, Model, VideoDeviceInfo } from "@/types/config";
 import { Threshold } from "../methods/shared/Threshold";
 import { DISABLED_OPTION, selectValueFor } from "./selectValue";
+import { VideoDeviceSelect } from "./VideoDeviceSelect";
 
 const UNAVAILABLE_AI_MODEL_OPTION = "__unavailable_ai_model__";
-const UNAVAILABLE_IR_DEVICE_OPTION = "__unavailable_ir_device__";
 
 interface Props {
   /** Memoized: useModelFileStatus rechecks files when its identity changes. */
@@ -34,19 +34,20 @@ export function AntiSpoofingSection({ antiSpoofModels, videoDevices }: Props) {
   const mainCamera = useWatch<BiopassConfig, "methods.face.camera">({
     name: "methods.face.camera",
   });
+  const profiles = useWatch<BiopassConfig, "methods.face.camera_profiles">({
+    name: "methods.face.camera_profiles",
+  });
+  const hasProfiles = (profiles?.length ?? 0) > 0;
   const antiSpoofStatusMap = useModelFileStatus(antiSpoofModels);
   const irIsMainCamera =
-    !!antiSpoofing.ir_camera && antiSpoofing.ir_camera === mainCamera;
+    !hasProfiles &&
+    !!antiSpoofing.ir_camera &&
+    antiSpoofing.ir_camera === mainCamera;
 
   const aiModelValue = selectValueFor(
     antiSpoofing.enable ? antiSpoofing.model.model_id : null,
     antiSpoofModels.map((model) => model.id),
     UNAVAILABLE_AI_MODEL_OPTION,
-  );
-  const irCameraValue = selectValueFor(
-    antiSpoofing.ir_camera || null,
-    videoDevices.map((device) => device.path),
-    UNAVAILABLE_IR_DEVICE_OPTION,
   );
 
   return (
@@ -138,44 +139,28 @@ export function AntiSpoofingSection({ antiSpoofModels, videoDevices }: Props) {
 
       <div className="grid gap-2">
         <Label htmlFor="ir-device" className="text-xs text-muted-foreground">
-          IR Camera
+          {hasProfiles ? "Fallback IR Camera" : "IR Camera"}
         </Label>
-        <Select
-          value={irCameraValue}
-          onValueChange={(value) => {
-            setValue(
-              "methods.face.anti_spoofing.ir_camera",
-              value === DISABLED_OPTION ? null : value,
-              {
-                shouldDirty: true,
-                shouldValidate: true,
-              },
-            );
-          }}
-        >
-          <SelectTrigger id="ir-device" className="h-10 w-full">
-            <SelectValue placeholder="Select IR Camera Device" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={DISABLED_OPTION}>Disable</SelectItem>
-            {irCameraValue === UNAVAILABLE_IR_DEVICE_OPTION && (
-              <SelectItem value={UNAVAILABLE_IR_DEVICE_OPTION} disabled>
-                Selected IR camera unavailable
-              </SelectItem>
-            )}
-            {videoDevices.length > 0 ? (
-              videoDevices.map((device) => (
-                <SelectItem key={device.path} value={device.path}>
-                  {device.display_name}
-                </SelectItem>
-              ))
-            ) : (
-              <SelectItem value="__no_ir_devices__" disabled>
-                No video devices found
-              </SelectItem>
-            )}
-          </SelectContent>
-        </Select>
+        <VideoDeviceSelect
+          id="ir-device"
+          value={antiSpoofing.ir_camera}
+          onChange={(value) =>
+            setValue("methods.face.anti_spoofing.ir_camera", value, {
+              shouldDirty: true,
+              shouldValidate: true,
+            })
+          }
+          videoDevices={videoDevices}
+          offLabel="Disable"
+          unavailableLabel="Selected IR camera unavailable"
+          placeholder="Select IR Camera Device"
+        />
+        {hasProfiles && (
+          <p className="text-xs text-muted-foreground">
+            Used by camera profiles without their own IR camera, and when no
+            profile's camera is connected.
+          </p>
+        )}
         {irIsMainCamera && (
           <p className="text-xs text-muted-foreground">
             IR camera is also the main camera: enrol and sign in with IR only.

@@ -1,6 +1,6 @@
 # IR Camera Guide
 
-Biopass can use an infrared (IR) camera for face anti-spoofing, in addition to the RGB anti-spoofing model. It is configured in the app as a video device path such as `/dev/video2`.
+Biopass can use an infrared (IR) camera for face anti-spoofing, in addition to the RGB anti-spoofing model. It is configured in the app as a video device. Once you save your settings, the app stores a stable `/dev/v4l/by-id/…` or `/dev/v4l/by-path/…` link to it, since `/dev/videoN` numbers can change across boots and docking. A `/dev/videoN` path from an older config still works. The face settings list such paths with the device that now holds each number; check them, click `Use stable paths`, and save. They are never switched silently, since a number may belong to another device after docking.
 
 ## Requirements
 
@@ -41,6 +41,23 @@ In the app's face settings, anti-spoofing section:
 If you only want IR-based anti-spoofing, selecting the `IR Camera` device is enough.
 
 To use the IR sensor as the main camera too (enrol and sign in on IR), set both `Camera Device` and `IR Camera` to the same IR node explicitly: an unset camera that defaults to the IR node is not treated as the IR camera, and a main camera that delivers colour frames fails the IR check. That colour check only catches picking an RGB webcam by mistake: an RGB camera filming a greyscale scene can pass it, so only use this setup with a real IR node. If a real IR node is rejected, the debug log shows its `chroma` value; please report it.
+
+### Camera profiles (docked / undocked)
+
+If your cameras change (a dock camera, a closed lid), add `Camera Profiles` under the face settings: ordered camera + IR camera pairs. The first profile you add starts from your current camera and IR camera, when a camera is set. While profiles exist, they override `Camera Device`, and the anti-spoofing IR picker becomes the `Fallback IR Camera`.
+
+At each authentication Biopass uses the first profile whose camera is connected. A profile with `Auto-select` as its camera always matches.
+
+- The profile's own IR camera is used if it has one.
+- Otherwise the **fallback IR camera** is used: `Fallback IR Camera` if set, else the first IR camera set in any profile.
+- If no profile's camera is connected, Biopass auto-selects the first camera, with the fallback IR camera.
+- If the IR camera is missing, the IR check fails and face authentication fails (PAM falls through to the next method). Connecting a device never turns the IR check off by itself.
+
+Profiles below an `Auto-select` profile are never used.
+
+`Allow without IR` (only for a profile without its own IR camera) runs that profile with no IR check. On an `Auto-select` profile that means no IR check whenever that profile is reached. Use it with care: a profile matches whenever a device appears at its camera path, so anyone with physical access who plugs a USB camera or gadget into that port (or a device with the same ID) skips the IR check.
+
+With no profiles, the `Camera Device` and `IR Camera` settings are used, as before.
 
 ## 3. If The IR Emitter Stays Off On Linux
 

@@ -83,6 +83,10 @@ methods:
     retries: 3
     retry_delay: 100
     camera: /dev/video0
+    camera_profiles:
+      - {camera: /dev/v4l/by-id/usb-Dock-video-index0, ir_camera: null, allow_without_ir: true}
+      - {camera: /dev/v4l/by-path/pci-0-usb-0:8:1.0-video-index0, ir_camera: /dev/video2}
+      - {}
     detection: {model_id: det, threshold: 0.6}
     recognition: {model_id: rec, threshold: 0.7}
     anti_spoofing:
@@ -117,6 +121,12 @@ void checkParse() {
                f.anti_spoofing.ir_warmup_delay_ms == 100 &&
                f.anti_spoofing.ir_presence_timeout_ms == 200,
            "parse: anti_spoofing read");
+    const auto& p = f.camera_profiles;
+    expect(p.size() == 3 && p[0].camera == "/dev/v4l/by-id/usb-Dock-video-index0" &&
+               !p[0].ir_camera && p[0].allow_without_ir && !p[1].allow_without_ir &&
+               p[1].camera == "/dev/v4l/by-path/pci-0-usb-0:8:1.0-video-index0" &&
+               p[1].ir_camera == "/dev/video2" && !p[2].camera && !p[2].ir_camera,
+           "parse: camera_profiles read in order");
     expect(c.methods.fingerprint.enable && c.methods.fingerprint.retries == 2 &&
                c.methods.fingerprint.timeout == 3000,
            "parse: fingerprint read");
@@ -137,6 +147,23 @@ void checkParse() {
             "schema_version: 2\nstrategy: {debug: true, order: [face, {a: 1}]}\n"},
            {"execution_mode not a scalar",
             "schema_version: 2\nstrategy: {debug: true, execution_mode: [sequential]}\n"},
+           {"camera_profiles not a list",
+            "schema_version: 2\nmethods:\n  face: {camera_profiles: 5}\n"},
+           {"camera_profiles entry not a map",
+            "schema_version: 2\nmethods:\n  face: {camera_profiles: [/dev/video0]}\n"},
+           {"camera_profiles allow_without_ir not a bool",
+            "schema_version: 2\nmethods:\n  face: {camera_profiles: [{allow_without_ir: [1]}]}\n"},
+           {"camera_profiles allow_without_ir: yes",
+            "schema_version: 2\nmethods:\n  face: {camera_profiles: [{allow_without_ir: yes}]}\n"},
+           {"camera_profiles allow_without_ir: on",
+            "schema_version: 2\nmethods:\n  face: {camera_profiles: [{allow_without_ir: on}]}\n"},
+           {"camera_profiles allow_without_ir: 'true' (a string)",
+            "schema_version: 2\nmethods:\n  face: {camera_profiles: [{allow_without_ir: "
+            "'true'}]}\n"},
+           {"camera_profiles allow_without_ir: ~",
+            "schema_version: 2\nmethods:\n  face: {camera_profiles: [{allow_without_ir: ~}]}\n"},
+           {"camera_profiles camera not a string",
+            "schema_version: 2\nmethods:\n  face: {camera_profiles: [{camera: [1]}]}\n"},
            {"YAML syntax error", "schema_version: 2\nstrategy: {debug: true\n"},
            {"not a map", "just a string\n"},
            {"other schema_version", "schema_version: 1\nstrategy: {debug: true}\n"},
@@ -162,6 +189,30 @@ void checkParse() {
         "schema_version: 2\nstrategy: {ignore_services: [polkit-1, '', polkit-1, sudo]}\n");
     expect(c.strategy.ignore_services == std::vector<std::string>{"polkit-1", "sudo"},
            "parse: ignore_services deduped");
+  }
+
+  {
+    const BiopassConfig c =
+        parseOrDie("schema_version: 2\nmethods:\n  face: {camera: /dev/video0}\n");
+    expect(c.methods.face.camera_profiles.empty() && c.methods.face.camera == "/dev/video0",
+           "parse: legacy config without camera_profiles -> no profiles");
+  }
+
+  {
+    const BiopassConfig c = parseOrDie(
+        "schema_version: 2\nmethods:\n  face:\n    camera_profiles:\n"
+        "      - {allow_without_ir: true}\n      - {allow_without_ir: false}\n      - {}\n"
+        "      - {allow_without_ir: TRUE}\n      - {allow_without_ir: False}\n");
+    const auto& p = c.methods.face.camera_profiles;
+    expect(p.size() == 5 && p[0].allow_without_ir && !p[1].allow_without_ir &&
+               !p[2].allow_without_ir && p[3].allow_without_ir && !p[4].allow_without_ir,
+           "parse: allow_without_ir true/false/missing, YAML 1.2 casing as in the app");
+  }
+
+  {
+    const BiopassConfig c =
+        parseOrDie("schema_version: 2\nmethods:\n  face: {camera_profiles: ~}\n");
+    expect(c.methods.face.camera_profiles.empty(), "parse: camera_profiles null -> no profiles");
   }
 
   {

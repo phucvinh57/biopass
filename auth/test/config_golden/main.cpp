@@ -52,6 +52,7 @@ void expectSameConfig(const BiopassConfig& a, const BiopassConfig& b, const std:
   field(fa.retries == fb.retries, "face.retries");
   field(fa.retry_delay == fb.retry_delay, "face.retry_delay");
   field(fa.camera == fb.camera, "face.camera");
+  field(fa.camera_profiles == fb.camera_profiles, "face.camera_profiles");
   field(fa.detection.model_id == fb.detection.model_id, "face.detection.model_id");
   field(fa.detection.threshold == fb.detection.threshold, "face.detection.threshold");
   field(fa.recognition.model_id == fb.recognition.model_id, "face.recognition.model_id");

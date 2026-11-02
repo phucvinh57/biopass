@@ -64,9 +64,24 @@ pub struct FaceMethodConfig {
     pub retries: u32,
     pub retry_delay: u32,
     pub camera: Option<String>,
+    /// Tried in order at each auth; empty = `camera` + `anti_spoofing.ir_camera`.
+    /// See pickCameraProfile in auth/core/camera_profile.h.
+    pub camera_profiles: Vec<CameraProfile>,
     pub detection: DetectionConfig,
     pub recognition: RecognitionConfig,
     pub anti_spoofing: AntiSpoofingConfig,
+}
+
+/// A colour + IR camera pair. `None` camera = auto-select. `None` IR = the
+/// fallback IR camera (`anti_spoofing.ir_camera`, else the first profile IR),
+/// or no IR when `allow_without_ir` is set.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Type)]
+#[serde(default)]
+pub struct CameraProfile {
+    pub camera: Option<String>,
+    pub ir_camera: Option<String>,
+    /// Anyone who plugs in a device matching `camera` skips the IR check.
+    pub allow_without_ir: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Type)]
@@ -134,6 +149,7 @@ fn get_default_config() -> BiopassConfig {
                 retries: 5,
                 retry_delay: 200,
                 camera: None,
+                camera_profiles: Vec::new(),
                 detection: DetectionConfig {
                     model_id: "yolov8n-face".to_string(),
                     threshold: 0.5,
@@ -539,6 +555,111 @@ mod tests {
         let yaml = yaml_serde::to_string(&config).unwrap();
 
         assert_eq!(parse_config(&yaml).unwrap(), config);
+    }
+
+    #[test]
+    fn camera_profiles_round_trip_in_order() {
+        let mut config = get_default_config();
+        config.methods.face.camera_profiles = vec![
+            CameraProfile {
+                camera: Some("/dev/v4l/by-id/usb-Dock-video-index0".to_string()),
+                ir_camera: None,
+                allow_without_ir: true,
+            },
+            CameraProfile {
+                camera: Some("/dev/v4l/by-path/pci-0-usb-0:8:1.0-video-index0".to_string()),
+                ir_camera: Some("/dev/video2".to_string()),
+                allow_without_ir: false,
+            },
+            CameraProfile::default(),
+        ];
+        let yaml = yaml_serde::to_string(&config).unwrap();
+
+        assert_eq!(parse_config(&yaml).unwrap(), config);
+    }
+
+    #[test]
+    fn legacy_camera_fields_load_without_profiles() {
+        let yaml = format!(
+            "schema_version: {CURRENT_SCHEMA_VERSION}\nmethods:\n  face:\n    camera: /dev/video0\n    anti_spoofing:\n      ir_camera: /dev/video2\n"
+        );
+        let face = parse_config(&yaml).unwrap().methods.face;
+        assert_eq!(face.camera.as_deref(), Some("/dev/video0"));
+        assert_eq!(face.anti_spoofing.ir_camera.as_deref(), Some("/dev/video2"));
+        assert!(face.camera_profiles.is_empty());
+    }
+
+    // The helper reads these the same way (parseCameraProfiles in
+    // auth_config.cc): null is no profiles, other non-lists are errors.
+    #[test]
+    fn camera_profiles_null_is_empty() {
+        let yaml = format!(
+            "schema_version: {CURRENT_SCHEMA_VERSION}\nmethods:\n  face:\n    camera_profiles: ~\n"
+        );
+        assert!(parse_config(&yaml)
+            .unwrap()
+            .methods
+            .face
+            .camera_profiles
+            .is_empty());
+    }
+
+    #[test]
+    fn camera_profiles_not_a_list_of_maps_is_an_error() {
+        for value in [
+            "5",
+            "[/dev/video0]",
+            "[{camera: [1]}]",
+            "[{allow_without_ir: [1]}]",
+            // Only YAML 1.2 bools, as readStrictBool in auth_config.cc.
+            "[{allow_without_ir: yes}]",
+            "[{allow_without_ir: on}]",
+            "[{allow_without_ir: 'true'}]",
+            "[{allow_without_ir: ~}]",
+        ] {
+            let yaml = format!(
+                "schema_version: {CURRENT_SCHEMA_VERSION}\nmethods:\n  face:\n    camera_profiles: {value}\n"
+            );
+            assert!(parse_config(&yaml).is_err(), "{value}");
+        }
+    }
+
+    // readStrictBool in auth_config.cc accepts the same spellings.
+    #[test]
+    fn allow_without_ir_takes_yaml_1_2_bools() {
+        for (value, expected) in [
+            ("true", true),
+            ("True", true),
+            ("TRUE", true),
+            ("false", false),
+            ("False", false),
+            ("FALSE", false),
+        ] {
+            let yaml = format!(
+                "schema_version: {CURRENT_SCHEMA_VERSION}\nmethods:\n  face:\n    camera_profiles: [{{allow_without_ir: {value}}}]\n"
+            );
+            let face = parse_config(&yaml).unwrap().methods.face;
+            assert_eq!(
+                face.camera_profiles[0].allow_without_ir, expected,
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn camera_profile_missing_field_is_none() {
+        let yaml = format!(
+            "schema_version: {CURRENT_SCHEMA_VERSION}\nmethods:\n  face:\n    camera_profiles:\n    - camera: /dev/video0\n"
+        );
+        let face = parse_config(&yaml).unwrap().methods.face;
+        assert_eq!(
+            face.camera_profiles,
+            vec![CameraProfile {
+                camera: Some("/dev/video0".to_string()),
+                ir_camera: None,
+                allow_without_ir: false,
+            }]
+        );
     }
 
     fn custom_config() -> BiopassConfig {

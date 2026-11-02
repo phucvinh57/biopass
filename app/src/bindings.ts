@@ -82,6 +82,37 @@ export type BiopassConfig_Serialize = {
 	appearance: string,
 };
 
+/**
+ *  A colour + IR camera pair. `None` camera = auto-select. `None` IR = the
+ *  fallback IR camera (`anti_spoofing.ir_camera`, else the first profile IR),
+ *  or no IR when `allow_without_ir` is set.
+ */
+export type CameraProfile = CameraProfile_Serialize | CameraProfile_Deserialize;
+
+/**
+ *  A colour + IR camera pair. `None` camera = auto-select. `None` IR = the
+ *  fallback IR camera (`anti_spoofing.ir_camera`, else the first profile IR),
+ *  or no IR when `allow_without_ir` is set.
+ */
+export type CameraProfile_Deserialize = {
+	camera?: string | null,
+	ir_camera?: string | null,
+	/**  Anyone who plugs in a device matching `camera` skips the IR check. */
+	allow_without_ir?: boolean,
+};
+
+/**
+ *  A colour + IR camera pair. `None` camera = auto-select. `None` IR = the
+ *  fallback IR camera (`anti_spoofing.ir_camera`, else the first profile IR),
+ *  or no IR when `allow_without_ir` is set.
+ */
+export type CameraProfile_Serialize = {
+	camera: string | null,
+	ir_camera: string | null,
+	/**  Anyone who plugs in a device matching `camera` skips the IR check. */
+	allow_without_ir: boolean,
+};
+
 export type DetectionConfig = DetectionConfig_Serialize | DetectionConfig_Deserialize;
 
 export type DetectionConfig_Deserialize = {
@@ -127,6 +158,11 @@ export type FaceMethodConfig_Deserialize = {
 	retries?: number,
 	retry_delay?: number,
 	camera?: string | null,
+	/**
+	 *  Tried in order at each auth; empty = `camera` + `anti_spoofing.ir_camera`.
+	 *  See pickCameraProfile in auth/core/camera_profile.h.
+	 */
+	camera_profiles?: CameraProfile_Deserialize[],
 	detection?: DetectionConfig_Deserialize,
 	recognition?: RecognitionConfig_Deserialize,
 	anti_spoofing?: AntiSpoofingConfig_Deserialize,
@@ -137,6 +173,11 @@ export type FaceMethodConfig_Serialize = {
 	retries: number,
 	retry_delay: number,
 	camera: string | null,
+	/**
+	 *  Tried in order at each auth; empty = `camera` + `anti_spoofing.ir_camera`.
+	 *  See pickCameraProfile in auth/core/camera_profile.h.
+	 */
+	camera_profiles: CameraProfile_Serialize[],
 	detection: DetectionConfig_Serialize,
 	recognition: RecognitionConfig_Serialize,
 	anti_spoofing: AntiSpoofingConfig_Serialize,
@@ -234,7 +275,18 @@ export type StrategyConfig_Serialize = {
 };
 
 export type VideoDeviceInfo = {
+	/**
+	 *  What config.yaml saves: a stable /dev/v4l link (see stable_path), or
+	 *  the node when there is none.
+	 */
 	path: string,
+	/**  The /dev/videoN node; its number can change across boots and docking. */
+	node: string,
+	/**
+	 *  `node` and every /dev/v4l link to it, so an older saved value (e.g.
+	 *  /dev/video0) still matches this device.
+	 */
+	aliases: string[],
 	name: string,
 	display_name: string,
 };

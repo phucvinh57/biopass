@@ -9,6 +9,7 @@
 #include "auth_config.h"
 #include "auth_method.h"
 #include "camera_capture.h"
+#include "camera_profile.h"
 #include "face_as.h"
 #include "face_detection.h"
 #include "face_recognition.h"
@@ -27,9 +28,10 @@ class FaceAuth : public IAuthMethod {
 
   // One sqlite connection per auth session, reused for every model_id lookup.
   // open_camera: openCameraSession() unless a test passes a fake.
+  // The camera profile is picked once here, for this helper run.
   FaceAuth(const FaceMethodConfig& config, const std::string& username,
            CameraOpener open_camera = nullptr)
-      : face_config_(config),
+      : face_config_(withCameraProfile(config)),
         username_(username),
         model_registry_(username),
         open_camera_(open_camera ? std::move(open_camera) : CameraOpener(openCameraSession)) {}

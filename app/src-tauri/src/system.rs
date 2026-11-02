@@ -3,9 +3,83 @@ use std::fs;
 
 #[derive(Debug, Serialize, Clone, specta::Type)]
 pub struct VideoDeviceInfo {
+    /// What config.yaml saves: a stable /dev/v4l link (see stable_path), or
+    /// the node when there is none.
     pub path: String,
+    /// The /dev/videoN node; its number can change across boots and docking.
+    pub node: String,
+    /// `node` and every /dev/v4l link to it, so an older saved value (e.g.
+    /// /dev/video0) still matches this device.
+    pub aliases: Vec<String>,
     pub name: String,
     pub display_name: String,
+}
+
+const BY_ID_DIR: &str = "/dev/v4l/by-id";
+const BY_PATH_DIR: &str = "/dev/v4l/by-path";
+
+/// (link, canonical target) for each symlink in `dir`; empty if it is missing.
+fn read_links(dir: &str) -> Vec<(String, String)> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let link = entry.path();
+            let target = fs::canonicalize(&link).ok()?;
+            Some((
+                link.to_string_lossy().into_owned(),
+                target.to_string_lossy().into_owned(),
+            ))
+        })
+        .collect()
+}
+
+/// The USB device and stream index a by-path link names, without the
+/// interface: `…-usb-0:8:1.2-video-index0` -> (`…-usb-0:8`, `0`). None for
+/// other links (e.g. platform cameras).
+fn usb_group(by_path_link: &str) -> Option<(&str, &str)> {
+    let name = by_path_link.rsplit('/').next()?;
+    let (head, index) = name.rsplit_once("-video-index")?;
+    let (device, interface) = head.rsplit_once(':')?;
+    let (config, number) = interface.split_once('.')?;
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    (device.contains("-usb") && digits(config) && digits(number)).then_some((device, index))
+}
+
+/// Links in `links` that point to `node`, sorted.
+fn links_to<'a>(node: &str, links: &'a [(String, String)]) -> Vec<&'a str> {
+    let mut found: Vec<&str> = links
+        .iter()
+        .filter(|(_, target)| target == node)
+        .map(|(link, _)| link.as_str())
+        .collect();
+    found.sort_unstable();
+    found
+}
+
+/// The path to save for `node`: its by-id link, else its by-path link, else
+/// `node`. udev's by-id name has no USB interface number, so two interfaces
+/// of one device (an RGB + IR module with one serial) share it and the link
+/// can flip between them across boots. by-id is skipped when another node of
+/// the same USB device has the same stream index.
+fn stable_path(node: &str, by_id: &[(String, String)], by_path: &[(String, String)]) -> String {
+    let own_paths = links_to(node, by_path);
+    let shared = own_paths.iter().filter_map(|l| usb_group(l)).any(|group| {
+        by_path
+            .iter()
+            .any(|(link, target)| target != node && usb_group(link) == Some(group))
+    });
+    let by_id = if shared {
+        None
+    } else {
+        links_to(node, by_id).first().copied()
+    };
+    by_id
+        .or_else(|| own_paths.first().copied())
+        .unwrap_or(node)
+        .to_string()
 }
 
 #[tauri::command]
@@ -39,6 +113,8 @@ fn video_device_sort_key(path: &str) -> i32 {
 pub fn list_video_devices() -> Result<Vec<VideoDeviceInfo>, String> {
     let mut devices = Vec::new();
     let entries = fs::read_dir("/dev").map_err(|e| format!("Failed to read /dev: {}", e))?;
+    let by_id = read_links(BY_ID_DIR);
+    let by_path = read_links(BY_PATH_DIR);
 
     for entry in entries.flatten() {
         let file_name = entry.file_name().to_string_lossy().to_string();
@@ -46,31 +122,36 @@ pub fn list_video_devices() -> Result<Vec<VideoDeviceInfo>, String> {
             continue;
         }
 
-        let path = format!("/dev/{}", file_name);
+        let node = format!("/dev/{}", file_name);
         let name = fs::read_to_string(format!("/sys/class/video4linux/{}/name", file_name))
             .map(|value| value.trim().to_string())
             .unwrap_or_default();
         let display_name = if name.is_empty() {
-            path.clone()
+            node.clone()
         } else {
-            format!("{} ({})", name, path)
+            format!("{} ({})", name, node)
         };
+        let mut aliases = vec![node.clone()];
+        aliases.extend(links_to(&node, &by_id).into_iter().map(String::from));
+        aliases.extend(links_to(&node, &by_path).into_iter().map(String::from));
 
         devices.push(VideoDeviceInfo {
-            path,
+            path: stable_path(&node, &by_id, &by_path),
+            node,
+            aliases,
             name,
             display_name,
         });
     }
 
-    devices.sort_by_key(|a| video_device_sort_key(&a.path));
+    devices.sort_by_key(|a| video_device_sort_key(&a.node));
 
     Ok(devices)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{username_from, video_device_sort_key};
+    use super::{stable_path, usb_group, username_from, video_device_sort_key};
 
     fn env<'a>(vars: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
         move |key| {
@@ -127,6 +208,111 @@ mod tests {
         assert_eq!(
             paths,
             ["/dev/videoX", "/dev/video0", "/dev/video2", "/dev/video10"]
+        );
+    }
+
+    fn links(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(link, target)| (link.to_string(), target.to_string()))
+            .collect()
+    }
+
+    const ID: &str = "/dev/v4l/by-id/";
+    const PATH: &str = "/dev/v4l/by-path/";
+
+    #[test]
+    fn usb_group_drops_the_interface() {
+        assert_eq!(
+            usb_group("/dev/v4l/by-path/pci-0000:00:14.0-usb-0:8:1.2-video-index0"),
+            Some(("pci-0000:00:14.0-usb-0:8", "0"))
+        );
+        assert_eq!(
+            usb_group("pci-0000:00:14.0-usbv2-0:8.3:1.0-video-index1"),
+            Some(("pci-0000:00:14.0-usbv2-0:8.3", "1"))
+        );
+        for link in [
+            "platform-fe801000.csi-video-index0",
+            "pci-0000:00:05.0-video-index0",
+            "pci-0000:00:14.0-usb-0:8:1.x-video-index0",
+            "pci-0000:00:14.0-usb-0:8:1.0",
+        ] {
+            assert_eq!(usb_group(link), None, "{link}");
+        }
+    }
+
+    #[test]
+    fn unique_by_id_link_is_preferred() {
+        let by_id = links(&[(
+            "/dev/v4l/by-id/usb-Dock_Cam_123-video-index0",
+            "/dev/video4",
+        )]);
+        let by_path = links(&[(
+            "/dev/v4l/by-path/pci-0000:3a:00.0-usb-0:2:1.0-video-index0",
+            "/dev/video4",
+        )]);
+        assert_eq!(
+            stable_path("/dev/video4", &by_id, &by_path),
+            "/dev/v4l/by-id/usb-Dock_Cam_123-video-index0"
+        );
+    }
+
+    // An RGB + IR module (one USB device, interfaces 1.0 and 1.2, one
+    // serial): udev keeps one by-id link per index, here pointing at the IR
+    // node. Every node falls back to its by-path link.
+    #[test]
+    fn by_id_shared_by_two_interfaces_falls_back_to_by_path() {
+        let by_id = links(&[
+            (
+                &format!("{ID}usb-Generic_Integrated_Camera_200901010001-video-index0"),
+                "/dev/video2",
+            ),
+            (
+                &format!("{ID}usb-Generic_Integrated_Camera_200901010001-video-index1"),
+                "/dev/video1",
+            ),
+        ]);
+        let mut by_path = Vec::new();
+        for (usb, iface, index, node) in [
+            ("usb", "1.0", 0, 0),
+            ("usb", "1.0", 1, 1),
+            ("usb", "1.2", 0, 2),
+            ("usb", "1.2", 1, 3),
+            ("usbv2", "1.0", 0, 0),
+            ("usbv2", "1.0", 1, 1),
+            ("usbv2", "1.2", 0, 2),
+            ("usbv2", "1.2", 1, 3),
+        ] {
+            by_path.push((
+                format!("{PATH}pci-0000:00:14.0-{usb}-0:8:{iface}-video-index{index}"),
+                format!("/dev/video{node}"),
+            ));
+        }
+        for (node, iface, index) in [(0, "1.0", 0), (1, "1.0", 1), (2, "1.2", 0), (3, "1.2", 1)] {
+            assert_eq!(
+                stable_path(&format!("/dev/video{node}"), &by_id, &by_path),
+                format!("{PATH}pci-0000:00:14.0-usb-0:8:{iface}-video-index{index}"),
+            );
+        }
+    }
+
+    #[test]
+    fn no_links_keeps_the_node() {
+        assert_eq!(stable_path("/dev/video7", &[], &[]), "/dev/video7");
+        // Links to other nodes don't count.
+        let by_id = links(&[("/dev/v4l/by-id/usb-X-video-index0", "/dev/video0")]);
+        assert_eq!(stable_path("/dev/video7", &by_id, &[]), "/dev/video7");
+    }
+
+    #[test]
+    fn non_usb_by_path_link_is_used() {
+        let by_path = links(&[(
+            "/dev/v4l/by-path/platform-fe801000.csi-video-index0",
+            "/dev/video0",
+        )]);
+        assert_eq!(
+            stable_path("/dev/video0", &[], &by_path),
+            "/dev/v4l/by-path/platform-fe801000.csi-video-index0"
         );
     }
 }
