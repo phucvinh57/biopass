@@ -288,6 +288,15 @@ export type VideoDeviceInfo = {
 	 */
 	aliases: string[],
 	name: string,
-	display_name: string,
+	/**
+	 *  What the UI shows: the USB interface name (e.g. "Integrated IR
+	 *  Camera"), else `name`.
+	 */
+	label: string,
+	/**
+	 *  Built-in/external, maker and model, USB port and ID, joined with
+	 *  " · "; empty for non-USB cameras.
+	 */
+	details: string,
 };
 

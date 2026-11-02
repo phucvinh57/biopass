@@ -4,6 +4,7 @@ import { CONFIG_LIMITS } from "@/bindings";
 import { cmd } from "@/commands";
 import { referencedModelIds } from "@/lib/models";
 import type { BiopassConfig } from "@/types/config";
+import { hasIrChoice } from "./face/selectValue";
 
 // Ranges come from CONFIG_LIMITS in app/src-tauri/src/config.rs, which the
 // config_golden ctest checks against auth/core/auth_config.h. The helper
@@ -44,45 +45,72 @@ export const biopassConfigSchema = z.object({
     ignore_services: z.array(z.string()),
   }),
   methods: z.object({
-    face: z.object({
-      enable: z.boolean(),
-      camera: z.string().nullable(),
-      camera_profiles: z.array(
-        z.object({
-          camera: z.string().nullable(),
-          ir_camera: z.string().nullable(),
-          allow_without_ir: z.boolean(),
-        }),
-      ),
-      retries: intSchema("Max retries", limits.face_retries),
-      retry_delay: intSchema("Retry delay", limits.retry_delay_ms, " ms"),
-      detection: z.object({
-        model_id: z.string(),
-        threshold: thresholdSchema,
-      }),
-      recognition: z.object({
-        model_id: z.string(),
-        threshold: thresholdSchema,
-      }),
-      anti_spoofing: z.object({
+    face: z
+      .object({
         enable: z.boolean(),
-        model: z.object({
+        camera: z.string().nullable(),
+        camera_profiles: z.array(
+          z.object({
+            camera: z.string().nullable(),
+            ir_camera: z.string().nullable(),
+            allow_without_ir: z.boolean(),
+          }),
+        ),
+        retries: intSchema("Max retries", limits.face_retries),
+        retry_delay: intSchema("Retry delay", limits.retry_delay_ms, " ms"),
+        detection: z.object({
           model_id: z.string(),
           threshold: thresholdSchema,
         }),
-        ir_camera: z.string().nullable(),
-        ir_warmup_delay_ms: intSchema(
-          "IR warmup delay",
-          limits.ir_warmup_delay_ms,
-          " ms",
-        ),
-        ir_presence_timeout_ms: intSchema(
-          "IR presence timeout",
-          limits.ir_presence_timeout_ms,
-          " ms",
-        ),
+        recognition: z.object({
+          model_id: z.string(),
+          threshold: thresholdSchema,
+        }),
+        anti_spoofing: z.object({
+          enable: z.boolean(),
+          model: z.object({
+            model_id: z.string(),
+            threshold: thresholdSchema,
+          }),
+          ir_camera: z.string().nullable(),
+          ir_warmup_delay_ms: intSchema(
+            "IR warmup delay",
+            limits.ir_warmup_delay_ms,
+            " ms",
+          ),
+          ir_presence_timeout_ms: intSchema(
+            "IR presence timeout",
+            limits.ir_presence_timeout_ms,
+            " ms",
+          ),
+        }),
+      })
+      // The camera UI edits profiles only (see migrateCameraProfiles).
+      .superRefine((face, ctx) => {
+        if (!face.enable) return;
+        if (face.camera_profiles.length === 0) {
+          ctx.addIssue({
+            code: "custom",
+            message: "Add at least one camera profile",
+            path: ["camera_profiles"],
+          });
+        }
+        face.camera_profiles.forEach((profile, index) => {
+          if (!profile.camera) {
+            ctx.addIssue({
+              code: "custom",
+              message: "Choose a camera",
+              path: ["camera_profiles", index, "camera"],
+            });
+          }
+          if (hasIrChoice(profile)) return;
+          ctx.addIssue({
+            code: "custom",
+            message: "Choose an IR camera, or None",
+            path: ["camera_profiles", index, "ir_camera"],
+          });
+        });
       }),
-    }),
     fingerprint: z.object({
       enable: z.boolean(),
       retries: intSchema("Max retries", limits.fingerprint_retries),

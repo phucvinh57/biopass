@@ -34,35 +34,79 @@ export function devicePathFor(
 }
 
 type FaceConfig = BiopassConfig["methods"]["face"];
+type CameraProfile = FaceConfig["camera_profiles"][number];
+
+/**
+ * `config` with the pre-profile camera settings moved into profiles, as the
+ * camera UI edits profiles only. Auth picks the same cameras before and
+ * after (pickCameraProfile, auth/core/camera_profile.h):
+ * - no profiles: one profile from `camera` + `anti_spoofing.ir_camera`;
+ * - else `camera` was unused, and each profile without an IR camera (and
+ *   not allowed without one) gets the fallback IR it used:
+ *   `anti_spoofing.ir_camera`, else the first profile IR.
+ * Both legacy fields are then cleared. A profile still without an IR camera
+ * and not allowed without one is left for the user to choose (see
+ * hasIrChoice).
+ */
+export function migrateCameraProfiles(config: BiopassConfig): BiopassConfig {
+  const face = config.methods.face;
+  const camera = face.camera || null;
+  const legacyIr = face.anti_spoofing.ir_camera || null;
+  let profiles = face.camera_profiles;
+  if (profiles.length === 0) {
+    if (camera || legacyIr) {
+      profiles = [{ camera, ir_camera: legacyIr, allow_without_ir: false }];
+    }
+  } else {
+    const fallbackIr =
+      legacyIr ?? profiles.find((p) => p.ir_camera)?.ir_camera ?? null;
+    if (fallbackIr) {
+      profiles = profiles.map((p) =>
+        hasIrChoice(p) ? p : { ...p, ir_camera: fallbackIr },
+      );
+    }
+  }
+  return {
+    ...config,
+    methods: {
+      ...config.methods,
+      face: {
+        ...face,
+        camera: null,
+        camera_profiles: profiles,
+        anti_spoofing: { ...face.anti_spoofing, ir_camera: null },
+      },
+    },
+  };
+}
 
 function isListed(path: string, devices: readonly VideoDeviceInfo[]) {
   return devices.some((d) => d.path === path || d.aliases.includes(path));
 }
 
 /**
+ * Whether the user chose the profile's IR camera: a device, or none
+ * (allow_without_ir). Without a choice auth falls back to another
+ * profile's IR camera, which the UI doesn't offer.
+ */
+export function hasIrChoice(profile: CameraProfile): boolean {
+  return Boolean(profile.ir_camera) || profile.allow_without_ir;
+}
+
+/**
  * The camera + IR camera auth would use. Mirrors pickCameraProfile
- * (auth/core/camera_profile.h), with the device list in place of stat():
- * - no profiles: `camera` + `anti_spoofing.ir_camera`;
- * - else the first profile whose camera is listed (no camera = auto-select),
+ * (auth/core/camera_profile.h) with the legacy fields cleared (see
+ * migrateCameraProfiles), and the device list in place of stat():
+ * - the first profile whose camera is listed (no camera = auto-select),
  *   with its IR camera, else the fallback IR unless allow_without_ir;
- * - none listed: auto-select with the fallback IR.
- * The fallback IR is `anti_spoofing.ir_camera`, else the first profile IR.
+ * - none listed, or no profiles: auto-select with the fallback IR.
  */
 export function activeCameraProfile(
-  face: Pick<FaceConfig, "camera" | "camera_profiles"> & {
-    anti_spoofing: Pick<FaceConfig["anti_spoofing"], "ir_camera">;
-  },
+  profiles: readonly CameraProfile[],
   devices: readonly VideoDeviceInfo[],
 ): { camera: string | null; ir_camera: string | null } {
-  const legacyIr = face.anti_spoofing.ir_camera || null;
-  if (face.camera_profiles.length === 0) {
-    return { camera: face.camera ?? null, ir_camera: legacyIr };
-  }
-  const fallbackIr =
-    legacyIr ??
-    face.camera_profiles.find((p) => p.ir_camera)?.ir_camera ??
-    null;
-  for (const profile of face.camera_profiles) {
+  const fallbackIr = profiles.find((p) => p.ir_camera)?.ir_camera ?? null;
+  for (const profile of profiles) {
     if (profile.camera && !isListed(profile.camera, devices)) continue;
     return {
       camera: profile.camera || null,
@@ -73,72 +117,34 @@ export function activeCameraProfile(
   return { camera: null, ir_camera: fallbackIr };
 }
 
-type CameraField =
-  | "methods.face.camera"
-  | "methods.face.anti_spoofing.ir_camera"
-  | `methods.face.camera_profiles.${number}.camera`
-  | `methods.face.camera_profiles.${number}.ir_camera`;
-
-export interface StablePathUpdate {
-  name: CameraField;
-  /** The setting, e.g. "Profile 2 IR camera". */
-  label: string;
-  /** The saved /dev/videoN. */
-  from: string;
-  /** The stable path of the device that holds that number now. */
-  value: string;
-  deviceName: string;
-}
-
 const RAW_NODE = /^\/dev\/video\d+$/;
 
 /**
- * Saved camera values that are a raw /dev/videoN (from before stable IDs)
- * of a listed device with a stable path. The number may now belong to
- * another device (e.g. after docking), so the UI only offers these for the
- * user to confirm; nothing is rewritten silently.
+ * `config` with each profile camera saved as a raw /dev/videoN (from before
+ * stable IDs) pinned to the stable path of the device at that number now:
+ * the device the pickers show, and the one auth opens today.
  */
-export function stablePathUpdates(
-  face: Pick<FaceConfig, "camera" | "camera_profiles"> & {
-    anti_spoofing: Pick<FaceConfig["anti_spoofing"], "ir_camera">;
-  },
+export function withStablePaths(
+  config: BiopassConfig,
   devices: readonly VideoDeviceInfo[],
-): StablePathUpdate[] {
-  const hasProfiles = face.camera_profiles.length > 0;
-  const fields: [CameraField, string, string | null | undefined][] = [
-    ["methods.face.camera", "Camera", face.camera],
-    [
-      "methods.face.anti_spoofing.ir_camera",
-      hasProfiles ? "Fallback IR camera" : "IR camera",
-      face.anti_spoofing.ir_camera,
-    ],
-    ...face.camera_profiles.flatMap(
-      (p, i): [CameraField, string, string | null | undefined][] => [
-        [
-          `methods.face.camera_profiles.${i}.camera`,
-          `Profile ${i + 1} camera`,
-          p.camera,
-        ],
-        [
-          `methods.face.camera_profiles.${i}.ir_camera`,
-          `Profile ${i + 1} IR camera`,
-          p.ir_camera,
-        ],
-      ],
-    ),
-  ];
-  return fields.flatMap(([name, label, saved]) => {
-    if (!saved || !RAW_NODE.test(saved)) return [];
-    const device = devices.find((d) => d.node === saved);
-    if (!device || device.path === saved) return [];
-    return [
-      {
-        name,
-        label,
-        from: saved,
-        value: device.path,
-        deviceName: device.name || device.node,
+): BiopassConfig {
+  const stable = (saved: string | null) => {
+    if (!saved || !RAW_NODE.test(saved)) return saved;
+    return devices.find((d) => d.node === saved)?.path ?? saved;
+  };
+  const face = config.methods.face;
+  return {
+    ...config,
+    methods: {
+      ...config.methods,
+      face: {
+        ...face,
+        camera_profiles: face.camera_profiles.map((p) => ({
+          ...p,
+          camera: stable(p.camera),
+          ir_camera: stable(p.ir_camera),
+        })),
       },
-    ];
-  });
+    },
+  };
 }

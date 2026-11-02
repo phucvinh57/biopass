@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import type { VideoDeviceInfo } from "@/types/config";
+import type { BiopassConfig, VideoDeviceInfo } from "@/types/config";
 import {
   activeCameraProfile,
   DISABLED_OPTION,
   devicePathFor,
+  hasIrChoice,
+  migrateCameraProfiles,
   selectValueFor,
-  stablePathUpdates,
+  withStablePaths,
 } from "./selectValue";
 
 const UNAVAILABLE = "__unavailable__";
@@ -43,7 +45,8 @@ function device(path: string, node: string): VideoDeviceInfo {
     node,
     aliases: [node, path],
     name: "",
-    display_name: node,
+    label: "Camera",
+    details: "",
   };
 }
 
@@ -74,134 +77,168 @@ function profile(
   return { camera, ir_camera, allow_without_ir };
 }
 
-function face(
+/** A config with only the camera fields set; the rest is not read. */
+function config(
   camera_profiles: ReturnType<typeof profile>[],
   ir_camera: string | null = null,
-  camera: string | null = "/dev/video9",
+  camera: string | null = null,
 ) {
-  return { camera, camera_profiles, anti_spoofing: { ir_camera } };
+  return {
+    methods: {
+      face: { camera, camera_profiles, anti_spoofing: { ir_camera } },
+    },
+  } as unknown as BiopassConfig;
 }
+
+function migrated(...args: Parameters<typeof config>) {
+  const { face } = migrateCameraProfiles(config(...args)).methods;
+  expect(face.camera).toBeNull();
+  expect(face.anti_spoofing.ir_camera).toBeNull();
+  return face.camera_profiles;
+}
+
+describe("migrateCameraProfiles", () => {
+  test("nothing set stays without profiles", () => {
+    expect(migrated([])).toEqual([]);
+  });
+
+  test("legacy camera and IR camera become the first profile", () => {
+    expect(migrated([], LEGACY_IR, "/dev/video0")).toEqual([
+      profile("/dev/video0", LEGACY_IR),
+    ]);
+    expect(migrated([], null, "/dev/video0")).toEqual([
+      profile("/dev/video0", null),
+    ]);
+    expect(migrated([], LEGACY_IR)).toEqual([profile(null, LEGACY_IR)]);
+  });
+
+  test("with profiles, the legacy IR fills profiles that used the fallback", () => {
+    const profiles = [
+      profile(DOCK, null),
+      profile(DOCK, null, true),
+      profile(LID, LID_IR),
+    ];
+    expect(migrated(profiles, LEGACY_IR, "/dev/video9")).toEqual([
+      profile(DOCK, LEGACY_IR),
+      profile(DOCK, null, true),
+      profile(LID, LID_IR),
+    ]);
+    // Without a legacy IR, the fallback is the first profile IR.
+    expect(migrated(profiles, null, "/dev/video9")).toEqual([
+      profile(DOCK, LID_IR),
+      profile(DOCK, null, true),
+      profile(LID, LID_IR),
+    ]);
+  });
+
+  test("with no IR camera anywhere, the IR choice is left to the user", () => {
+    const profiles = [profile(DOCK, null), profile(LID, null)];
+    const after = migrated(profiles);
+    expect(after).toEqual(profiles);
+    expect(after.some(hasIrChoice)).toBe(false);
+  });
+
+  test("auth picks the same cameras before and after", () => {
+    const before = [profile(DOCK, null), profile(LID, null)];
+    const after = migrated(before, LEGACY_IR);
+    for (const devices of [lidOnly, docked, []]) {
+      expect(activeCameraProfile(after, devices).ir_camera).toBe(LEGACY_IR);
+    }
+    const withIr = [profile(DOCK, null), profile(LID, LID_IR)];
+    for (const devices of [lidOnly, docked, []]) {
+      expect(activeCameraProfile(migrated(withIr), devices)).toEqual(
+        activeCameraProfile(withIr, devices),
+      );
+    }
+  });
+});
 
 describe("activeCameraProfile", () => {
   // Dock camera without its own IR first, then the lid camera with its IR.
   const dockThenLid = [profile(DOCK, null), profile(LID, LID_IR)];
 
-  test("no profiles: the legacy camera and IR camera", () => {
-    expect(activeCameraProfile(face([], LEGACY_IR, "/dev/video0"), [])).toEqual(
-      { camera: "/dev/video0", ir_camera: LEGACY_IR },
-    );
-    expect(activeCameraProfile(face([], null, null), [])).toEqual({
+  test("no profiles: auto-select without IR", () => {
+    expect(activeCameraProfile([], lidOnly)).toEqual({
       camera: null,
       ir_camera: null,
     });
   });
 
   test("the first profile whose camera is listed, by path or alias", () => {
-    expect(activeCameraProfile(face(dockThenLid), lidOnly)).toEqual({
+    expect(activeCameraProfile(dockThenLid, lidOnly)).toEqual({
       camera: LID,
       ir_camera: LID_IR,
     });
-    const byAlias = face([profile("/dev/video0", LID_IR)]);
+    const byAlias = [profile("/dev/video0", LID_IR)];
     expect(activeCameraProfile(byAlias, lidOnly).camera).toBe("/dev/video0");
   });
 
-  test("a profile without IR inherits the fallback IR", () => {
-    expect(activeCameraProfile(face(dockThenLid), docked).ir_camera).toBe(
-      LID_IR,
-    );
-    expect(
-      activeCameraProfile(face(dockThenLid, LEGACY_IR), docked).ir_camera,
-    ).toBe(LEGACY_IR);
+  test("a profile without IR inherits the first profile IR", () => {
+    expect(activeCameraProfile(dockThenLid, docked)).toEqual({
+      camera: DOCK,
+      ir_camera: LID_IR,
+    });
   });
 
   test("allow_without_ir drops IR for that profile only", () => {
     const profiles = [profile(DOCK, null, true), profile(LID, LID_IR)];
-    expect(activeCameraProfile(face(profiles, LEGACY_IR), docked)).toEqual({
+    expect(activeCameraProfile(profiles, docked)).toEqual({
       camera: DOCK,
       ir_camera: null,
     });
-    expect(activeCameraProfile(face(profiles, LEGACY_IR), [])).toEqual({
+    expect(activeCameraProfile(profiles, [])).toEqual({
       camera: null,
-      ir_camera: LEGACY_IR,
+      ir_camera: LID_IR,
     });
   });
 
   test("none listed, or a profile without a camera: auto-select with the fallback IR", () => {
-    expect(activeCameraProfile(face(dockThenLid), [])).toEqual({
+    expect(activeCameraProfile(dockThenLid, [])).toEqual({
       camera: null,
       ir_camera: LID_IR,
     });
     const catchAll = [profile(null, null), ...dockThenLid];
-    expect(activeCameraProfile(face(catchAll, LEGACY_IR), docked)).toEqual({
+    expect(activeCameraProfile(catchAll, docked)).toEqual({
       camera: null,
-      ir_camera: LEGACY_IR,
+      ir_camera: LID_IR,
     });
   });
 });
 
-describe("stablePathUpdates", () => {
-  test("raw /dev/videoN values map to the device now at that number", () => {
-    const saved = face(
-      [profile("/dev/video0", "/dev/video0")],
-      "/dev/video0",
-      "/dev/video0",
-    );
-    const lid = { from: "/dev/video0", value: LID, deviceName: "/dev/video0" };
-    expect(stablePathUpdates(saved, lidOnly)).toEqual([
-      { name: "methods.face.camera", label: "Camera", ...lid },
-      {
-        name: "methods.face.anti_spoofing.ir_camera",
-        label: "Fallback IR camera",
-        ...lid,
-      },
-      {
-        name: "methods.face.camera_profiles.0.camera",
-        label: "Profile 1 camera",
-        ...lid,
-      },
-      {
-        name: "methods.face.camera_profiles.0.ir_camera",
-        label: "Profile 1 IR camera",
-        ...lid,
-      },
+describe("withStablePaths", () => {
+  const pinned =
+    (...args: Parameters<typeof config>) =>
+    (devices: VideoDeviceInfo[]) =>
+      withStablePaths(config(...args), devices).methods.face.camera_profiles;
+
+  test("raw /dev/videoN values become the device now at that number", () => {
+    expect(pinned([profile("/dev/video0", "/dev/video0")])(lidOnly)).toEqual([
+      profile(LID, LID),
+    ]);
+    expect(pinned([profile("/dev/video0", "/dev/video2")])(docked)).toEqual([
+      profile(DOCK, LID),
     ]);
   });
 
-  test("the device name is shown when known; IR label without profiles", () => {
-    const named = [{ ...device(LID, "/dev/video0"), name: "Integrated C" }];
-    expect(stablePathUpdates(face([], "/dev/video0", null), named)).toEqual([
-      {
-        name: "methods.face.anti_spoofing.ir_camera",
-        label: "IR camera",
-        from: "/dev/video0",
-        value: LID,
-        deviceName: "Integrated C",
-      },
-    ]);
-  });
-
-  test("stable paths, other links, unlisted and unset values are left alone", () => {
-    expect(
-      stablePathUpdates(face([profile(LID, null)], null, null), lidOnly),
-    ).toEqual([]);
+  test("stable paths, other links, unlisted and unset values are kept", () => {
     const otherLink =
       "/dev/v4l/by-path/pci-0000:00:14.0-usbv2-0:8:1.0-video-index0";
-    expect(
-      stablePathUpdates(face([], null, otherLink), [
-        {
-          ...device(LID, "/dev/video0"),
-          aliases: ["/dev/video0", LID, otherLink],
-        },
-      ]),
-    ).toEqual([]);
-    expect(stablePathUpdates(face([], null, "/dev/video9"), lidOnly)).toEqual(
-      [],
-    );
-    expect(stablePathUpdates(face([], null, "/dev/video0"), [])).toEqual([]);
+    for (const p of [
+      profile(LID, null),
+      profile(otherLink, null),
+      profile("/dev/video9", null, true),
+    ]) {
+      expect(pinned([p])(lidOnly)).toEqual([p]);
+    }
+    expect(pinned([profile("/dev/video0", null)])([])).toEqual([
+      profile("/dev/video0", null),
+    ]);
   });
 
-  test("a node without a stable path is left alone", () => {
+  test("a node without a stable path is kept", () => {
     const bare = [device("/dev/video0", "/dev/video0")];
-    expect(stablePathUpdates(face([], null, "/dev/video0"), bare)).toEqual([]);
+    expect(pinned([profile("/dev/video0", null)])(bare)).toEqual([
+      profile("/dev/video0", null),
+    ]);
   });
 });

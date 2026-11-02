@@ -16,21 +16,14 @@ interface Props {
 
 export function FaceCapture({ videoDevices }: Props) {
   const previewRef = useRef<HTMLImageElement>(null);
-  const [legacyCamera, cameraProfiles] = useWatch<
+  const cameraProfiles = useWatch<
     BiopassConfig,
-    ["methods.face.camera", "methods.face.camera_profiles"]
+    "methods.face.camera_profiles"
   >({
-    name: ["methods.face.camera", "methods.face.camera_profiles"],
+    name: "methods.face.camera_profiles",
   });
   // Preview the camera auth would pick, so enrolment matches the sensor.
-  const { camera } = activeCameraProfile(
-    {
-      camera: legacyCamera,
-      camera_profiles: cameraProfiles ?? [],
-      anti_spoofing: { ir_camera: null },
-    },
-    videoDevices,
-  );
+  const { camera } = activeCameraProfile(cameraProfiles ?? [], videoDevices);
   const {
     active: capturing,
     start: startCamera,

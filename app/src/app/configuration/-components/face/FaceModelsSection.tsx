@@ -2,16 +2,20 @@ import { useFormContext, useWatch } from "react-hook-form";
 import type { BiopassConfig, Model } from "@/types/config";
 import { ModelSelect } from "../methods/shared/ModelSelect";
 import { Threshold } from "../methods/shared/Threshold";
+import { AntiSpoofingSection } from "./AntiSpoofingSection";
 
 interface Props {
   detectionModels: Model[];
   recognitionModels: Model[];
+  /** Memoized: useModelFileStatus rechecks files when its identity changes. */
+  antiSpoofModels: Model[];
 }
 
-/** Detection and recognition model + threshold pickers. */
+/** Detection, recognition and anti-spoofing model + threshold pickers. */
 export function FaceModelsSection({
   detectionModels,
   recognitionModels,
+  antiSpoofModels,
 }: Props) {
   const {
     formState: { errors },
@@ -85,6 +89,7 @@ export function FaceModelsSection({
           />
         </div>
       </div>
+      <AntiSpoofingSection antiSpoofModels={antiSpoofModels} />
     </div>
   );
 }

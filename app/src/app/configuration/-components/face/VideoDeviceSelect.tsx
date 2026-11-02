@@ -12,17 +12,20 @@ const UNAVAILABLE_DEVICE_OPTION = "__unavailable_device__";
 
 interface Props {
   id?: string;
-  /** Saved path; null = the "off" option (auto-select or disabled). */
+  /** Saved path; null = the "off" option, or unset without one. */
   value: string | null | undefined;
   onChange: (value: string | null) => void;
   videoDevices: VideoDeviceInfo[];
-  offLabel: string;
+  /** Label of the option that saves null; omit to offer devices only. */
+  offLabel?: string;
   unavailableLabel: string;
   placeholder?: string;
   disabled?: boolean;
+  /** With a null value: nothing chosen yet, so show the placeholder. */
+  unset?: boolean;
 }
 
-/** A /dev/video* picker that saves the device's stable path. */
+/** A camera picker that shows device info and saves its stable path. */
 export function VideoDeviceSelect({
   id,
   value,
@@ -32,12 +35,18 @@ export function VideoDeviceSelect({
   unavailableLabel,
   placeholder,
   disabled,
+  unset,
 }: Props) {
-  const selectValue = selectValueFor(
-    devicePathFor(value || null, videoDevices),
-    videoDevices.map((device) => device.path),
-    UNAVAILABLE_DEVICE_OPTION,
-  );
+  // Radix shows the placeholder for "".
+  const selectValue =
+    (unset || offLabel === undefined) && !value
+      ? ""
+      : selectValueFor(
+          devicePathFor(value || null, videoDevices),
+          videoDevices.map((device) => device.path),
+          UNAVAILABLE_DEVICE_OPTION,
+        );
+  const selected = videoDevices.find((device) => device.path === selectValue);
 
   return (
     <Select
@@ -45,11 +54,19 @@ export function VideoDeviceSelect({
       disabled={disabled}
       onValueChange={(next) => onChange(next === DISABLED_OPTION ? null : next)}
     >
-      <SelectTrigger id={id} className="h-10 w-full">
-        <SelectValue placeholder={placeholder ?? offLabel} />
+      <SelectTrigger id={id} className="h-10 w-full min-w-0">
+        {/* The name only; the list shows details to tell devices apart. */}
+        <SelectValue
+          className="min-w-0 flex-1 overflow-hidden text-left"
+          placeholder={placeholder ?? offLabel}
+        >
+          {selected && <span className="truncate">{selected.label}</span>}
+        </SelectValue>
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value={DISABLED_OPTION}>{offLabel}</SelectItem>
+        {offLabel !== undefined && (
+          <SelectItem value={DISABLED_OPTION}>{offLabel}</SelectItem>
+        )}
         {selectValue === UNAVAILABLE_DEVICE_OPTION && (
           <SelectItem value={UNAVAILABLE_DEVICE_OPTION} disabled>
             {unavailableLabel}
@@ -58,7 +75,7 @@ export function VideoDeviceSelect({
         {videoDevices.length > 0 ? (
           videoDevices.map((device) => (
             <SelectItem key={device.path} value={device.path}>
-              {device.display_name}
+              <DeviceLabel device={device} />
             </SelectItem>
           ))
         ) : (
@@ -68,5 +85,19 @@ export function VideoDeviceSelect({
         )}
       </SelectContent>
     </Select>
+  );
+}
+
+/** The device's label, with its details muted below. */
+function DeviceLabel({ device }: { device: VideoDeviceInfo }) {
+  return (
+    <span className="flex min-w-0 flex-col">
+      <span className="truncate">{device.label}</span>
+      {device.details && (
+        <span className="truncate text-xs text-muted-foreground">
+          {device.details}
+        </span>
+      )}
+    </span>
   );
 }

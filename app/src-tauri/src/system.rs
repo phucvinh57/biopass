@@ -1,5 +1,6 @@
 use serde::Serialize;
 use std::fs;
+use std::path::Path;
 
 #[derive(Debug, Serialize, Clone, specta::Type)]
 pub struct VideoDeviceInfo {
@@ -12,7 +13,12 @@ pub struct VideoDeviceInfo {
     /// /dev/video0) still matches this device.
     pub aliases: Vec<String>,
     pub name: String,
-    pub display_name: String,
+    /// What the UI shows: the USB interface name (e.g. "Integrated IR
+    /// Camera"), else `name`.
+    pub label: String,
+    /// Built-in/external, maker and model, USB port and ID, joined with
+    /// " · "; empty for non-USB cameras.
+    pub details: String,
 }
 
 const BY_ID_DIR: &str = "/dev/v4l/by-id";
@@ -82,6 +88,95 @@ fn stable_path(node: &str, by_id: &[(String, String)], by_path: &[(String, Strin
         .to_string()
 }
 
+const CLASS_DIR: &str = "/sys/class/video4linux";
+
+/// A trimmed, non-empty sysfs attribute.
+fn read_attr(dir: &Path, name: &str) -> Option<String> {
+    let value = fs::read_to_string(dir.join(name)).ok()?;
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+/// Whether the node at `class_dir` (/sys/class/video4linux/videoN) is a
+/// stream's first node. UVC adds a metadata node (index 1) per stream that
+/// can't capture frames. No `index` attribute counts as first.
+fn is_first_node(class_dir: &Path) -> bool {
+    read_attr(class_dir, "index")
+        .and_then(|index| index.parse::<u32>().ok())
+        .is_none_or(|index| index == 0)
+}
+
+const UDEV_DATA_DIR: &str = "/run/udev/data";
+
+/// A property udev's hwdb set on the USB device at `usb` (e.g.
+/// ID_VENDOR_FROM_DATABASE), read from its udev database entry. Cameras often
+/// report a placeholder maker such as "Generic"; the USB ID database has the
+/// real one.
+fn udev_property(udev_data: &Path, usb: &Path, key: &str) -> Option<String> {
+    let dev = read_attr(usb, "dev")?;
+    let data = fs::read_to_string(udev_data.join(format!("c{dev}"))).ok()?;
+    data.lines()
+        .filter_map(|line| line.strip_prefix("E:")?.split_once('='))
+        .find(|(k, v)| *k == key && !v.trim().is_empty())
+        .map(|(_, v)| v.trim().to_string())
+}
+
+/// (label, details) for the node at `class_dir`. `device` links to the USB
+/// interface, whose parent is the USB device.
+fn describe(class_dir: &Path, name: &str) -> (String, String) {
+    describe_with(class_dir, name, Path::new(UDEV_DATA_DIR))
+}
+
+fn describe_with(class_dir: &Path, name: &str, udev_data: &Path) -> (String, String) {
+    let interface = fs::canonicalize(class_dir.join("device")).ok();
+    let label = interface
+        .as_deref()
+        .and_then(|dir| read_attr(dir, "interface"))
+        .or_else(|| (!name.is_empty()).then(|| name.to_string()))
+        .unwrap_or_else(|| "Camera".to_string());
+
+    let usb = interface
+        .as_deref()
+        .and_then(Path::parent)
+        .filter(|dir| dir.join("idVendor").exists());
+    let Some(usb) = usb else {
+        return (label, String::new());
+    };
+    let attr = |name| read_attr(usb, name);
+    let kind = match attr("removable").as_deref() {
+        Some("fixed") => Some("Built-in".to_string()),
+        Some("removable") => Some("External".to_string()),
+        _ => None,
+    };
+    let from_db = |key| udev_property(udev_data, usb, key);
+    let address = attr("busnum").zip(attr("devnum")).and_then(|(bus, dev)| {
+        Some(format!(
+            "{:03}:{:03}",
+            bus.parse::<u32>().ok()?,
+            dev.parse::<u32>().ok()?
+        ))
+    });
+    let vendor = from_db("ID_VENDOR_FROM_DATABASE").or_else(|| attr("manufacturer"));
+    let product = from_db("ID_MODEL_FROM_DATABASE").or_else(|| attr("product"));
+    let model = [address, vendor, product]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let port = usb
+        .file_name()
+        .map(|port| format!("USB port {}", port.to_string_lossy()));
+    let id = attr("idVendor")
+        .zip(attr("idProduct"))
+        .map(|(v, p)| format!("{v}:{p}"));
+    let details = [kind, (!model.is_empty()).then_some(model), port, id]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" · ");
+    (label, details)
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn get_current_username() -> Result<String, String> {
@@ -122,15 +217,14 @@ pub fn list_video_devices() -> Result<Vec<VideoDeviceInfo>, String> {
             continue;
         }
 
+        let class_dir = Path::new(CLASS_DIR).join(&file_name);
+        if !is_first_node(&class_dir) {
+            continue;
+        }
+
         let node = format!("/dev/{}", file_name);
-        let name = fs::read_to_string(format!("/sys/class/video4linux/{}/name", file_name))
-            .map(|value| value.trim().to_string())
-            .unwrap_or_default();
-        let display_name = if name.is_empty() {
-            node.clone()
-        } else {
-            format!("{} ({})", name, node)
-        };
+        let name = read_attr(&class_dir, "name").unwrap_or_default();
+        let (label, details) = describe(&class_dir, &name);
         let mut aliases = vec![node.clone()];
         aliases.extend(links_to(&node, &by_id).into_iter().map(String::from));
         aliases.extend(links_to(&node, &by_path).into_iter().map(String::from));
@@ -140,7 +234,8 @@ pub fn list_video_devices() -> Result<Vec<VideoDeviceInfo>, String> {
             node,
             aliases,
             name,
-            display_name,
+            label,
+            details,
         });
     }
 
@@ -151,7 +246,13 @@ pub fn list_video_devices() -> Result<Vec<VideoDeviceInfo>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{stable_path, usb_group, username_from, video_device_sort_key};
+    use super::{
+        describe, describe_with, is_first_node, stable_path, usb_group, username_from,
+        video_device_sort_key,
+    };
+    use std::fs;
+    use std::os::unix::fs::symlink;
+    use std::path::Path;
 
     fn env<'a>(vars: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
         move |key| {
@@ -314,5 +415,103 @@ mod tests {
             stable_path("/dev/video0", &[], &by_path),
             "/dev/v4l/by-path/platform-fe801000.csi-video-index0"
         );
+    }
+
+    fn write(dir: &Path, attrs: &[(&str, &str)]) {
+        fs::create_dir_all(dir).unwrap();
+        for (name, value) in attrs {
+            fs::write(dir.join(name), format!("{value}\n")).unwrap();
+        }
+    }
+
+    /// A sysfs-like tree: class/videoN/device -> usb/1-8/1-8:1.2.
+    fn usb_node(root: &Path, removable: &str) -> std::path::PathBuf {
+        let usb = root.join("usb/1-8");
+        write(
+            &usb,
+            &[
+                ("idVendor", "5986"),
+                ("idProduct", "118c"),
+                ("manufacturer", "Generic"),
+                ("product", "Integrated Camera"),
+                ("removable", removable),
+            ],
+        );
+        let interface = usb.join("1-8:1.2");
+        write(&interface, &[("interface", "Integrated IR Camera")]);
+        let class = root.join("class/video2");
+        write(&class, &[("index", "0")]);
+        symlink(&interface, class.join("device")).unwrap();
+        class
+    }
+
+    #[test]
+    fn describes_a_built_in_usb_camera() {
+        let root = tempfile::tempdir().unwrap();
+        let class = usb_node(root.path(), "fixed");
+        assert_eq!(
+            describe(&class, "Integrated Camera: Integrated I"),
+            (
+                "Integrated IR Camera".to_string(),
+                "Built-in · Generic Integrated Camera · USB port 1-8 · 5986:118c".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn prefers_the_usb_id_database_and_shows_the_bus_address() {
+        let root = tempfile::tempdir().unwrap();
+        let class = usb_node(root.path(), "fixed");
+        let usb = root.path().join("usb/1-8");
+        write(&usb, &[("dev", "189:2"), ("busnum", "1"), ("devnum", "3")]);
+        let udev = root.path().join("udev");
+        write(
+            &udev,
+            &[(
+                "c189:2",
+                "I:123\nE:ID_VENDOR=Generic\nE:ID_VENDOR_FROM_DATABASE=Bison Electronics Inc.",
+            )],
+        );
+        assert_eq!(
+            describe_with(&class, "", &udev).1,
+            "Built-in · 001:003 Bison Electronics Inc. Integrated Camera · USB port 1-8 · 5986:118c"
+        );
+    }
+
+    #[test]
+    fn describes_an_external_usb_camera() {
+        let root = tempfile::tempdir().unwrap();
+        let class = usb_node(root.path(), "removable");
+        assert!(describe(&class, "")
+            .1
+            .starts_with("External · Generic Integrated Camera"));
+    }
+
+    #[test]
+    fn non_usb_camera_uses_its_name() {
+        let root = tempfile::tempdir().unwrap();
+        let interface = root.path().join("platform/csi");
+        fs::create_dir_all(&interface).unwrap();
+        let class = root.path().join("class/video0");
+        fs::create_dir_all(&class).unwrap();
+        symlink(&interface, class.join("device")).unwrap();
+        assert_eq!(
+            describe(&class, "unicam-image"),
+            ("unicam-image".to_string(), String::new())
+        );
+        assert_eq!(describe(&class, ""), ("Camera".to_string(), String::new()));
+    }
+
+    #[test]
+    fn metadata_nodes_are_skipped() {
+        let root = tempfile::tempdir().unwrap();
+        for (index, first) in [(None, true), (Some("0"), true), (Some("1"), false)] {
+            let class = root.path().join(format!("video-{first}-{index:?}"));
+            fs::create_dir_all(&class).unwrap();
+            if let Some(index) = index {
+                write(&class, &[("index", index)]);
+            }
+            assert_eq!(is_first_node(&class), first, "{index:?}");
+        }
     }
 }

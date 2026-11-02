@@ -9,6 +9,10 @@ import { cmd } from "@/commands";
 import { Button } from "@/components/ui/button";
 import { withCurrentAppearance } from "@/hooks/useThemeSync";
 import type { BiopassConfig } from "@/types/config";
+import {
+  migrateCameraProfiles,
+  withStablePaths,
+} from "./-components/face/selectValue";
 import { MethodConfig } from "./-components/MethodConfig";
 import { StrategyConfig } from "./-components/StrategyConfig";
 import { biopassConfigSchema, validateConfig } from "./-components/validation";
@@ -74,14 +78,25 @@ function ConfigurationForm({
   initialConfig: BiopassConfig;
 }) {
   const form = useForm<BiopassConfig>({
-    defaultValues: structuredClone(initialConfig),
+    // Legacy camera fields move into profiles; auth picks the same cameras.
+    defaultValues: migrateCameraProfiles(structuredClone(initialConfig)),
     resolver: zodResolver(biopassConfigSchema),
   });
   const { isSubmitting, isDirty } = form.formState;
   const { theme } = useTheme();
 
   async function onSave(values: BiopassConfig) {
-    const configToSave = withCurrentAppearance(values, theme);
+    let configToSave = withCurrentAppearance(values, theme);
+
+    try {
+      configToSave = withStablePaths(
+        configToSave,
+        await cmd.face.listVideoDevices(),
+      );
+    } catch (err) {
+      // Raw /dev/videoN values still work; they get pinned on a later save.
+      console.error("Failed to list video devices:", err);
+    }
 
     try {
       // Inside the try: validateConfig calls commands that can reject.
