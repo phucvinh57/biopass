@@ -115,7 +115,7 @@ bun run tauri dev
 
 ## 2. Tech Stack
 
-- **`auth/`**: C++17, CMake, Linux PAM, ONNX Runtime (YOLO detection, EdgeFace recognition, MobileNetV3/MiniFASv2 anti-spoofing), libcamera. libcamera is built from source at a pinned version and bundled (`auth/BundleLibcamera.cmake`) because its C++ ABI breaks across minor versions.
+- **`auth/`**: C++20, CMake, Linux PAM, ONNX Runtime (YOLO detection, EdgeFace recognition, MobileNetV3/MiniFASv2 anti-spoofing), libcamera. libcamera is built from source at a pinned version and bundled (`auth/BundleLibcamera.cmake`) because its C++ ABI breaks across minor versions.
 - **`app/`**: Tauri v2, Rust, Vite, React, TypeScript, TailwindCSS.
 
 ## 3. Architecture and Flow

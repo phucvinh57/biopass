@@ -13,7 +13,7 @@ project(biopass)
 set(PROJECT_VERSION ${BIOPASS_VERSION})
 message(STATUS "Project version: ${PROJECT_VERSION}")
 
-set(CMAKE_CXX_STANDARD          17)
+set(CMAKE_CXX_STANDARD          20)
 set(CMAKE_CXX_STANDARD_REQUIRED YES)
 
 # Avoid RPATH warnings about shadowed libraries in non-system directories

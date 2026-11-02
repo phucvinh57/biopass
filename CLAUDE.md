@@ -4,7 +4,7 @@ Multi-modal biometric login (face + fingerprint) for Linux. Full guide: [CONTRIB
 
 ## Layout
 
-- `auth/` — C++17 / CMake. PAM module (`auth/pam`: `libbiopass_pam.so` + `biopass-helper`), face (ONNX Runtime), fingerprint, shared `core`. libcamera is built from source and bundled (`auth/BundleLibcamera.cmake`).
+- `auth/` — C++20 / CMake. PAM module (`auth/pam`: `libbiopass_pam.so` + `biopass-helper`), face (ONNX Runtime), fingerprint, shared `core`. libcamera is built from source and bundled (`auth/BundleLibcamera.cmake`).
 - `app/` — Tauri v2 desktop app. React + Vite + TypeScript + Tailwind in `app/src`, Rust in `app/src-tauri` (links `auth/build/fingerprint/libbiopass_fingerprint.a`).
 - `app/src-tauri/scripts/` — deb/rpm post-install scripts, PAM config, ld config. Shipped to users as root.
 - `docs/` — PAM, Polkit, IR camera docs.
