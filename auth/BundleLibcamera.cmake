@@ -5,7 +5,7 @@
 
 include(ExternalProject)
 
-set(LIBCAMERA_VERSION "v0.7.0")
+set(LIBCAMERA_VERSION "v0.7.2")
 
 # libcamera compiles in absolute IPA paths, so build for the final package
 # layout (must match app/src-tauri/tauri.conf.json), staged via DESTDIR:
@@ -33,7 +33,7 @@ file(MAKE_DIRECTORY "${LIBCAMERA_INCDIR}")
 set(LIBCAMERA_RPATH "$ORIGIN:${LIBCAMERA_PREFIX}/${LIBCAMERA_LIBDIR}")
 
 ExternalProject_Add(libcamera_ext
-    GIT_REPOSITORY https://git.libcamera.org/libcamera/libcamera.git
+    GIT_REPOSITORY https://gitlab.freedesktop.org/camera/libcamera.git
     GIT_TAG        ${LIBCAMERA_VERSION}
     GIT_SHALLOW    TRUE
     # Never link gnutls/libcrypto (#176); IPAs are then unsigned and run isolated.
