@@ -47,6 +47,13 @@ export const biopassConfigSchema = z.object({
     face: z.object({
       enable: z.boolean(),
       camera: z.string().nullable(),
+      camera_profiles: z.array(
+        z.object({
+          camera: z.string().nullable(),
+          ir_camera: z.string().nullable(),
+          allow_without_ir: z.boolean(),
+        }),
+      ),
       retries: intSchema("Max retries", limits.face_retries),
       retry_delay: intSchema("Retry delay", limits.retry_delay_ms, " ms"),
       detection: z.object({

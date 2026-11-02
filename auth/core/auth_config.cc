@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <utility>
 
 #include "fs_user.h"
 #include "user_file.h"
@@ -106,6 +107,28 @@ void readIf(const YAML::Node& node, const char* key, T& out) {
   }
 }
 
+// A YAML 1.2 core bool, as the app's YAML parser reads one: plain true or
+// false (also True/TRUE, False/FALSE). yaml-cpp's as<bool>() also takes
+// yes/on/y; for a security setting those must reject the config instead.
+void readStrictBool(const YAML::Node& node, const char* key, bool& out) {
+  const YAML::Node value = node[key];
+  if (!value) {
+    return;
+  }
+  if (value.IsScalar() && value.Tag() == "?") {
+    const std::string& text = value.Scalar();
+    if (text == "true" || text == "True" || text == "TRUE") {
+      out = true;
+      return;
+    }
+    if (text == "false" || text == "False" || text == "FALSE") {
+      out = false;
+      return;
+    }
+  }
+  throw YAML::RepresentationException(value.Mark(), std::string(key) + " is not true or false");
+}
+
 void readOptionalString(const YAML::Node& node, const char* key, std::optional<std::string>& out) {
   if (node[key] && !node[key].IsNull()) {
     out = node[key].as<std::string>();
@@ -164,6 +187,30 @@ void parseAntiSpoofing(const YAML::Node& a, AntiSpoofingConfig& out) {
   readIf(a, "ir_presence_timeout_ms", out.ir_presence_timeout_ms);
 }
 
+// A list of {camera, ir_camera, allow_without_ir} maps; null is no profiles, as in the app.
+// Anything else throws, so the whole config is rejected (the app rejects it
+// too).
+void parseCameraProfiles(const YAML::Node& node, std::vector<CameraProfile>& out) {
+  if (node.IsNull()) {
+    out.clear();
+    return;
+  }
+  if (!node.IsSequence()) {
+    throw YAML::RepresentationException(node.Mark(), "camera_profiles is not a list");
+  }
+  out.clear();
+  for (const auto& item : node) {
+    if (!item.IsMap()) {
+      throw YAML::RepresentationException(item.Mark(), "camera_profiles entry is not a map");
+    }
+    CameraProfile profile;
+    readOptionalString(item, "camera", profile.camera);
+    readOptionalString(item, "ir_camera", profile.ir_camera);
+    readStrictBool(item, "allow_without_ir", profile.allow_without_ir);
+    out.push_back(std::move(profile));
+  }
+}
+
 void parseFace(const YAML::Node& f, FaceMethodConfig& out) {
   readIf(f, "enable", out.enable);
   readIf(f, "retries", out.retries);
@@ -177,6 +224,9 @@ void parseFace(const YAML::Node& f, FaceMethodConfig& out) {
     readIf(f["recognition"], "threshold", out.recognition.threshold);
   }
   readOptionalString(f, "camera", out.camera);
+  if (f["camera_profiles"]) {
+    parseCameraProfiles(f["camera_profiles"], out.camera_profiles);
+  }
   if (f["anti_spoofing"]) {
     parseAntiSpoofing(f["anti_spoofing"], out.anti_spoofing);
   }

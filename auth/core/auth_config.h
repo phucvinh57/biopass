@@ -62,12 +62,27 @@ struct AntiSpoofingConfig {
   int ir_presence_timeout_ms = 1500;
 };
 
+// One colour + IR camera pair in `camera_profiles` (see camera_profile.h).
+struct CameraProfile {
+  // nullopt or "" = auto-select.
+  std::optional<std::string> camera = std::nullopt;
+  // nullopt or "" = the fallback IR camera (see camera_profile.h).
+  std::optional<std::string> ir_camera = std::nullopt;
+  // With no ir_camera, run without IR instead of the fallback. Anyone who
+  // plugs in a device matching `camera` then skips the IR check.
+  bool allow_without_ir = false;
+
+  bool operator==(const CameraProfile&) const = default;
+};
+
 struct FaceMethodConfig {
   bool enable = true;
   uint32_t retries = 5;
   uint32_t retry_delay = 200;
-  // e.g. "/dev/video0"; nullopt = auto-select.
+  // e.g. "/dev/video0" or a /dev/v4l/by-* link; nullopt = auto-select.
   std::optional<std::string> camera = std::nullopt;
+  // Tried in order; empty = `camera` + `anti_spoofing.ir_camera`.
+  std::vector<CameraProfile> camera_profiles;
   DetectionConfig detection;
   RecognitionConfig recognition;
   AntiSpoofingConfig anti_spoofing;
@@ -121,6 +136,8 @@ inline constexpr float kMaxThreshold = 1.0f;
 void validateConfig(BiopassConfig& config);
 
 // Parses config.yaml's text and runs validateConfig() on the result.
+// camera_profiles must be null or a list of maps, else the config is
+// rejected.
 // execution_mode is "sequential" only when spelled exactly so; order drops
 // names other than "face" and "fingerprint".
 // nullopt for a config with any bad value or another schema_version: never

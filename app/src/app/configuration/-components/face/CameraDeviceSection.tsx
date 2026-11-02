@@ -1,16 +1,7 @@
 import { useFormContext, useWatch } from "react-hook-form";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import type { BiopassConfig, VideoDeviceInfo } from "@/types/config";
-import { DISABLED_OPTION, selectValueFor } from "./selectValue";
-
-const UNAVAILABLE_CAMERA_DEVICE_OPTION = "__unavailable_camera_device__";
+import { VideoDeviceSelect } from "./VideoDeviceSelect";
 
 interface Props {
   videoDevices: VideoDeviceInfo[];
@@ -21,12 +12,10 @@ export function CameraDeviceSection({ videoDevices }: Props) {
   const camera = useWatch<BiopassConfig, "methods.face.camera">({
     name: "methods.face.camera",
   });
-
-  const cameraValue = selectValueFor(
-    camera || null,
-    videoDevices.map((device) => device.path),
-    UNAVAILABLE_CAMERA_DEVICE_OPTION,
-  );
+  const profiles = useWatch<BiopassConfig, "methods.face.camera_profiles">({
+    name: "methods.face.camera_profiles",
+  });
+  const overridden = (profiles?.length ?? 0) > 0;
 
   return (
     <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
@@ -37,44 +26,25 @@ export function CameraDeviceSection({ videoDevices }: Props) {
         >
           Camera Device
         </Label>
-        <Select
-          value={cameraValue}
-          onValueChange={(value) => {
-            setValue(
-              "methods.face.camera",
-              value === DISABLED_OPTION ? null : value,
-              {
-                shouldDirty: true,
-                shouldValidate: true,
-              },
-            );
-          }}
-        >
-          <SelectTrigger id="camera-device" className="h-10 w-full">
-            <SelectValue placeholder="Auto-select (first device)" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={DISABLED_OPTION}>
-              Auto-select (first device)
-            </SelectItem>
-            {cameraValue === UNAVAILABLE_CAMERA_DEVICE_OPTION && (
-              <SelectItem value={UNAVAILABLE_CAMERA_DEVICE_OPTION} disabled>
-                Selected camera unavailable
-              </SelectItem>
-            )}
-            {videoDevices.length > 0 ? (
-              videoDevices.map((device) => (
-                <SelectItem key={device.path} value={device.path}>
-                  {device.display_name}
-                </SelectItem>
-              ))
-            ) : (
-              <SelectItem value="__no_devices__" disabled>
-                No video devices found
-              </SelectItem>
-            )}
-          </SelectContent>
-        </Select>
+        <VideoDeviceSelect
+          id="camera-device"
+          value={camera}
+          onChange={(value) =>
+            setValue("methods.face.camera", value, {
+              shouldDirty: true,
+              shouldValidate: true,
+            })
+          }
+          videoDevices={videoDevices}
+          offLabel="Auto-select (first device)"
+          unavailableLabel="Selected camera unavailable"
+          disabled={overridden}
+        />
+        {overridden && (
+          <p className="text-xs text-muted-foreground">
+            Camera profiles below override this setting.
+          </p>
+        )}
       </div>
     </div>
   );

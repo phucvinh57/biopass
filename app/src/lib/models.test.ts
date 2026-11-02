@@ -21,6 +21,7 @@ function makeConfig(
         retries: 5,
         retry_delay: 200,
         camera: null,
+        camera_profiles: [],
         detection: {
           model_id: ids.detection ?? "yolov8n-face",
           threshold: 0.5,

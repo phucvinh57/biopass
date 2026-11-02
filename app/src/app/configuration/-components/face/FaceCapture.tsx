@@ -5,15 +5,32 @@ import { useEffect, useRef } from "react";
 import { useWatch } from "react-hook-form";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import type { BiopassConfig } from "@/types/config";
+import type { BiopassConfig, VideoDeviceInfo } from "@/types/config";
+import { activeCameraProfile } from "./selectValue";
 import { useFaceImages } from "./useFaceImages";
 import { usePreviewSession } from "./usePreviewSession";
 
-export function FaceCapture() {
+interface Props {
+  videoDevices: VideoDeviceInfo[];
+}
+
+export function FaceCapture({ videoDevices }: Props) {
   const previewRef = useRef<HTMLImageElement>(null);
-  const camera = useWatch<BiopassConfig, "methods.face.camera">({
-    name: "methods.face.camera",
+  const [legacyCamera, cameraProfiles] = useWatch<
+    BiopassConfig,
+    ["methods.face.camera", "methods.face.camera_profiles"]
+  >({
+    name: ["methods.face.camera", "methods.face.camera_profiles"],
   });
+  // Preview the camera auth would pick, so enrolment matches the sensor.
+  const { camera } = activeCameraProfile(
+    {
+      camera: legacyCamera,
+      camera_profiles: cameraProfiles ?? [],
+      anti_spoofing: { ir_camera: null },
+    },
+    videoDevices,
+  );
   const {
     active: capturing,
     start: startCamera,

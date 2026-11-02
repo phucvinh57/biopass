@@ -3,8 +3,10 @@ import { CONFIG_LIMITS } from "@/bindings";
 import { NumberField } from "../NumberField";
 import { AntiSpoofingSection } from "./AntiSpoofingSection";
 import { CameraDeviceSection } from "./CameraDeviceSection";
+import { CameraProfilesSection } from "./CameraProfilesSection";
 import { FaceCapture } from "./FaceCapture";
 import { FaceModelsSection } from "./FaceModelsSection";
+import { StablePathNotice } from "./StablePathNotice";
 import { useModels } from "./useModels";
 import { useVideoDevices } from "./useVideoDevices";
 
@@ -42,9 +44,13 @@ export function FaceSetting() {
         />
       </div>
 
+      <StablePathNotice videoDevices={videoDevices} />
+
       <CameraDeviceSection videoDevices={videoDevices} />
 
-      <FaceCapture />
+      <CameraProfilesSection videoDevices={videoDevices} />
+
+      <FaceCapture videoDevices={videoDevices} />
 
       <FaceModelsSection
         detectionModels={modelsByTask.detection}

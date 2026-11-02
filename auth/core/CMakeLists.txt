@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.22)
 add_library(biopass_core STATIC
     auth_manager.cc
     auth_config.cc
+    camera_profile.cc
     fs_user.cc
     user_file.cc
     user_paths.cc
