@@ -27,6 +27,13 @@ int main() {
   expect(biopass::buildHelperArgv("alice", "sudo", 7) ==
              Args{"biopass-helper", "auth", "--username=alice", "--service=sudo", "--status-fd=7"},
          "full argv");
+  expect(biopass::buildHelperArgv("alice", "gdm-password", 7, 9) ==
+             Args{"biopass-helper", "auth", "--username=alice", "--service=gdm-password",
+                  "--status-fd=7", "--authtok-fd=9"},
+         "authtok fd");
+  expect(biopass::buildHelperArgv("alice", "sudo", -1, -1) ==
+             Args{"biopass-helper", "auth", "--username=alice", "--service=sudo"},
+         "no authtok fd");
   expect(biopass::buildHelperArgv("alice", nullptr, -1) ==
              Args{"biopass-helper", "auth", "--username=alice"},
          "no service, no status fd");

@@ -75,13 +75,15 @@ Automation handles routine bugs and style. Humans focus on:
 
 ### Install Dependencies
 
-**C++ backend** (CMake, PAM headers, CLI11, libjpeg-turbo, and libcamera's build tools):
+**C++ backend** (CMake, PAM headers, CLI11, libjpeg-turbo, tpm2-tss and libxcrypt for keyring unlock, and libcamera's build tools):
 
 ```bash
 sudo apt update
 sudo apt install cmake make g++ pkg-config libpam0g-dev libcli11-dev libturbojpeg0-dev \
-  meson ninja-build python3-jinja2 python3-yaml python3-ply  libudev-dev libdrm-dev \
-  libegl-dev libgles-dev
+  libtss2-dev libcrypt-dev meson ninja-build python3-jinja2 python3-yaml python3-ply \
+  libudev-dev libdrm-dev libegl-dev libgles-dev
+# Optional: swtpm, so `make test-auth` also runs the TPM seal/unseal test.
+sudo apt install swtpm
 ```
 
 **Tauri app** ([Bun](https://bun.sh/), Rust, and system UI libraries):

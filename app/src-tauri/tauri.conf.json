@@ -41,14 +41,21 @@
           "libwebkit2gtk-4.1-0",
           "libturbojpeg0 | libturbojpeg",
           "libegl1",
-          "libgles2"
+          "libgles2",
+          "pkexec | policykit-1",
+          "libtss2-esys-3.0.2-0t64 | libtss2-esys-3.0.2-0",
+          "libtss2-mu-4.0.1-0t64 | libtss2-mu-4.0.1-0",
+          "libtss2-tcti-device0t64 | libtss2-tcti-device0"
         ],
         "postInstallScript": "scripts/deb/postinst",
         "preRemoveScript": "scripts/deb/prerm",
+        "postRemoveScript": "scripts/deb/postrm",
         "desktopTemplate": "scripts/biopass.desktop",
         "files": {
           "/lib/security/libbiopass_pam.so": "../../auth/build/pam/libbiopass_pam.so",
           "/usr/bin/biopass-helper": "../../auth/build/pam/biopass-helper",
+          "/usr/libexec/biopass/biopass-keyring": "../../auth/build/keyring/biopass-keyring",
+          "/usr/share/polkit-1/actions/com.ticklab.biopass.policy": "scripts/com.ticklab.biopass.policy",
           "/usr/lib/biopass/libbiopass_det.so": "../../auth/build/face/detection/libbiopass_det.so",
           "/usr/lib/biopass/libbiopass_reg.so": "../../auth/build/face/recognition/libbiopass_reg.so",
           "/usr/lib/biopass/libbiopass_as.so": "../../auth/build/face/antispoofing/libbiopass_as.so",
@@ -62,11 +69,20 @@
         }
       },
       "rpm": {
-        "depends": ["fprintd", "turbojpeg", "libglvnd-egl", "libglvnd-gles"],
+        "depends": [
+          "fprintd",
+          "turbojpeg",
+          "libglvnd-egl",
+          "libglvnd-gles",
+          "tpm2-tss",
+          "polkit"
+        ],
         "desktopTemplate": "scripts/biopass.desktop",
         "files": {
           "/lib64/security/libbiopass_pam.so": "../../auth/build/pam/libbiopass_pam.so",
           "/usr/bin/biopass-helper": "../../auth/build/pam/biopass-helper",
+          "/usr/libexec/biopass/biopass-keyring": "../../auth/build/keyring/biopass-keyring",
+          "/usr/share/polkit-1/actions/com.ticklab.biopass.policy": "scripts/com.ticklab.biopass.policy",
           "/usr/lib/biopass/libbiopass_det.so": "../../auth/build/face/detection/libbiopass_det.so",
           "/usr/lib/biopass/libbiopass_reg.so": "../../auth/build/face/recognition/libbiopass_reg.so",
           "/usr/lib/biopass/libbiopass_as.so": "../../auth/build/face/antispoofing/libbiopass_as.so",

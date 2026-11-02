@@ -13,6 +13,7 @@ import {
   migrateCameraProfiles,
   withStablePaths,
 } from "./-components/face/selectValue";
+import { KeyringCard } from "./-components/KeyringCard";
 import { MethodConfig } from "./-components/MethodConfig";
 import { StrategyConfig } from "./-components/StrategyConfig";
 import { biopassConfigSchema, validateConfig } from "./-components/validation";
@@ -181,6 +182,7 @@ function ConfigurationForm({
         <div className="grid gap-6">
           <StrategyConfig />
           <MethodConfig />
+          <KeyringCard />
         </div>
       </form>
     </FormProvider>

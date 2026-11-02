@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "authtok_channel.h"
 #include "helper_argv.h"
 #include "helper_status.h"
 #include "helper_wait.h"
@@ -52,11 +53,26 @@ void relayStatusLine(pam_handle_t* pamh, const std::string& line) {
   }
 }
 
+// Sets PAM_AUTHTOK from what the helper wrote to `fd` (the saved keyring
+// password, see docs/Keyring.md), unless another module set it first. Only
+// called after a match; nothing here can change the result.
+void takeAuthtok(pam_handle_t* pamh, int fd) {
+  char buf[biopass::kMaxAuthtokLen + 2];
+  if (biopass::readAuthtok(fd, buf, sizeof(buf)) > 0) {
+    const void* existing = nullptr;
+    if (pam_get_item(pamh, PAM_AUTHTOK, &existing) == PAM_SUCCESS && existing == nullptr) {
+      pam_set_item(pamh, PAM_AUTHTOK, buf);  // libpam keeps its own copy
+    }
+  }
+  explicit_bzero(buf, sizeof(buf));
+}
+
 // Forks and execs biopass-helper for `username`, relays its status lines
 // unless `quiet`, and returns the PAM result. Any failure, or a helper still
-// running after kHelperTimeout, is PAM_AUTH_ERR.
-int runHelperWithDeadline(pam_handle_t* pamh, const char* username, const char* service,
-                          bool quiet) {
+// running after kHelperTimeout, is PAM_AUTH_ERR. With `want_authtok`, a
+// match also sets PAM_AUTHTOK when the helper hands over a saved password.
+int runHelperWithDeadline(pam_handle_t* pamh, const char* username, const char* service, bool quiet,
+                          bool want_authtok) {
   // Pipe carrying status lines from the helper. Both ends are close-on-exec;
   // the child clears the flag on its write end only. If the pipe can't be
   // created, authenticate without status messages.
@@ -65,6 +81,19 @@ int runHelperWithDeadline(pam_handle_t* pamh, const char* username, const char* 
     status_pipe[0] = -1;
     status_pipe[1] = -1;
   }
+  // Same for the authtok pipe; without it, auth goes on with no keyring.
+  int authtok_pipe[2] = {-1, -1};
+  if (want_authtok && pipe2(authtok_pipe, O_CLOEXEC) != 0) {
+    authtok_pipe[0] = -1;
+    authtok_pipe[1] = -1;
+  }
+  auto close_pipes = [&]() {
+    for (int fd : {status_pipe[0], status_pipe[1], authtok_pipe[0], authtok_pipe[1]}) {
+      if (fd >= 0) {
+        close(fd);
+      }
+    }
+  };
 
   // Built before fork(): allocation isn't async-signal-safe, and the PAM
   // caller may be multithreaded. No exception may cross into the C caller.
@@ -74,7 +103,7 @@ int runHelperWithDeadline(pam_handle_t* pamh, const char* username, const char* 
   std::vector<char*> args;
   biopass::StatusLineFn on_line;
   try {
-    arg_strings = biopass::buildHelperArgv(username, service, status_pipe[1]);
+    arg_strings = biopass::buildHelperArgv(username, service, status_pipe[1], authtok_pipe[1]);
     for (std::string& arg : arg_strings) {
       args.push_back(arg.data());
     }
@@ -86,16 +115,17 @@ int runHelperWithDeadline(pam_handle_t* pamh, const char* username, const char* 
 
   pid_t pid = args.empty() ? -1 : fork();
   if (pid < 0) {
-    if (status_pipe[0] >= 0) {
-      close(status_pipe[0]);
-      close(status_pipe[1]);
-    }
+    close_pipes();
     return PAM_AUTH_ERR;
   }
   if (pid == 0) {
     if (status_pipe[1] >= 0) {
       close(status_pipe[0]);
       fcntl(status_pipe[1], F_SETFD, 0);
+    }
+    if (authtok_pipe[1] >= 0) {
+      close(authtok_pipe[0]);
+      fcntl(authtok_pipe[1], F_SETFD, 0);
     }
 
     // The helper runs with the PAM caller's privileges (often root), so it
@@ -115,8 +145,19 @@ int runHelperWithDeadline(pam_handle_t* pamh, const char* username, const char* 
   if (status_pipe[1] >= 0) {
     close(status_pipe[1]);
   }
+  if (authtok_pipe[1] >= 0) {
+    close(authtok_pipe[1]);
+  }
   // noexcept: kills the helper and fails closed if relaying throws.
-  return biopass::waitForHelper(pid, status_pipe[0], biopass::kHelperTimeout, on_line);
+  const int result = biopass::waitForHelper(pid, status_pipe[0], biopass::kHelperTimeout, on_line);
+  if (authtok_pipe[0] >= 0) {
+    // The helper is reaped, so whatever it wrote is in the pipe already.
+    if (result == PAM_SUCCESS) {
+      takeAuthtok(pamh, authtok_pipe[0]);
+    }
+    close(authtok_pipe[0]);
+  }
+  return result;
 }
 
 }  // namespace
@@ -125,9 +166,19 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t* pamh, int flags, int argc, cons
   // Status messages ("looking for your face", "camera appears covered", ...)
   // are suppressed by PAM_SILENT or the "quiet" module option.
   bool quiet = (flags & PAM_SILENT) != 0;
+  // "authtok": after a match, hand the password saved in the app to the
+  // modules below (pam_gnome_keyring, pam_kwallet). Opt-in, because a stack
+  // that runs pam_unix with try_first_pass after this module would then take
+  // it as a typed password. Only root can read the saved passwords.
+  bool want_authtok = false;
   for (int i = 0; i < argc; ++i) {
-    if (argv[i] != nullptr && strcmp(argv[i], "quiet") == 0) {
+    if (argv[i] == nullptr) {
+      continue;
+    }
+    if (strcmp(argv[i], "quiet") == 0) {
       quiet = true;
+    } else if (strcmp(argv[i], "authtok") == 0) {
+      want_authtok = geteuid() == 0;
     }
   }
 
@@ -144,7 +195,7 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t* pamh, int flags, int argc, cons
 
   // C caller: no exception may cross this boundary.
   try {
-    return runHelperWithDeadline(pamh, username, service, quiet);
+    return runHelperWithDeadline(pamh, username, service, quiet, want_authtok);
   } catch (...) {
     return PAM_AUTH_ERR;
   }

@@ -1,6 +1,7 @@
 add_test(NAME runpath
     COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/check.sh
         $<TARGET_FILE:biopass-helper>
+        $<TARGET_FILE:biopass-keyring>
         $<TARGET_FILE:biopass_pam>
         $<TARGET_FILE:biopass_det>
         $<TARGET_FILE:biopass_reg>

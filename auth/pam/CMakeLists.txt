@@ -36,6 +36,7 @@ target_link_libraries(biopass-helper
     biopass_core
     biopass_face
     biopass_fingerprint
+    biopass_keyring
     spdlog::spdlog_header_only
     # Linked last, so it ends the RUNPATH after the build-tree entries (a dev
     # build never picks up an installed copy). Needed when the helper is

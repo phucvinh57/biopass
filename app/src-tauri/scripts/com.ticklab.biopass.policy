@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!--
+  Lets the Biopass app save or forget the user's own login password for
+  keyring unlock (docs/Keyring.md). The user authenticates as themselves;
+  biopass-keyring only acts on the uid that ran pkexec (PKEXEC_UID).
+-->
+<policyconfig>
+  <vendor>Biopass</vendor>
+  <vendor_url>https://github.com/phucvinh57/biopass</vendor_url>
+
+  <action id="com.ticklab.biopass.keyring">
+    <description>Save your password for keyring unlock</description>
+    <message>Authentication is required to save your password for unlocking the keyring after a face or fingerprint login</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_self</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/biopass/biopass-keyring</annotate>
+  </action>
+</policyconfig>
