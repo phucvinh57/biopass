@@ -33,6 +33,18 @@ Linux lacks a unified, modern equivalent of Windows Hello. Biopass, by [@phucvin
 | **Configuration** | GUI | Manual |
 | **Face Anti-spoofing** | IR camera + Embedded AI model | IR camera only |
 
+## About AI contribution
+
+I have seen some user feedback that they do not want to install an AI slop on their machine. I have no idea how they determine a project is a slop. 
+
+I started this project in 2024, before coding agents existed. I learned PAM, Tauri, face recognition and antispoofing, study CMake and Linux packaging by hand to build it. This is the most interesting project that I have built, at least until now.
+
+However, I reach my limit so fast:
+- **Hardware**: Cameras vary widely (some work with `v4l2` but not `libcamera`, and vice versa), and I do not own most of them. Bug reports are often hard to reproduce, so fixes used to mean guessing, shipping a release candidate, and asking users to retest. Claude and Codex know a lot about these devices that I do not.
+- **Time**: Life is difficult. I am just a regular person who is trying to survive. I have other things to do.
+
+That is why I adopt AI to help maintain this project. If you do not want to use it just because Claude or Codex is in the contributor list, I do not care. To keep quality up, I follow [Addy Osmani's article](https://x.com/addyosmani/article/2114604912520921136).
+
 ## Installation
 
 - Debian and RPM packages: https://github.com/phucvinh57/biopass/releases
@@ -53,7 +65,7 @@ Setup guides:
         - [x] With AI model
         - [x] With IR camera
     - [x] Fingerprint
-- [ ] Local AI model management: download, update, and delete models.
+- [x] Local AI model management: download, update, and delete models.
 
 Bugs and feature requests: open an issue. To contribute, read [CONTRIBUTING.md](CONTRIBUTING.md).
 
