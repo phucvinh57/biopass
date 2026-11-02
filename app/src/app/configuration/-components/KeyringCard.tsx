@@ -92,18 +92,16 @@ export function KeyringCard() {
 
       <div className="grid gap-4">
         <p className="text-xs text-muted-foreground max-w-140">
-          Your keyring (GNOME Keyring, KWallet) is encrypted with your login
-          password, so it stays locked after a face or fingerprint login. Save
-          your password here and Biopass seals it with this computer's TPM, then
-          uses it to unlock the keyring when you log in with Biopass. You will
-          be asked to authenticate.{" "}
+          Face and fingerprint logins can't unlock your keyring (GNOME Keyring,
+          KWallet), because it needs your password. Save it here, encrypted by
+          this computer's TPM, to unlock the keyring at login.{" "}
           <a
             href={KEYRING_GUIDE_URL}
             target="_blank"
             rel="noreferrer"
             className="text-primary hover:underline"
           >
-            How it works and its limits
+            Keyring guide
           </a>
         </p>
 
@@ -145,12 +143,11 @@ export function KeyringCard() {
                   htmlFor="keyring-bind-pcr7"
                   className="text-sm font-medium"
                 >
-                  Bind to Secure Boot state (PCR 7)
+                  Lock to Secure Boot settings
                 </Label>
                 <p className="text-xs text-muted-foreground max-w-100">
-                  The TPM releases the password only while Secure Boot settings
-                  are unchanged. Safer if the computer is stolen, but a firmware
-                  or Secure Boot key update means saving the password again.
+                  Safer if the computer is stolen. You'll need to save again
+                  after a firmware or Secure Boot update.
                 </p>
               </div>
               <Switch
