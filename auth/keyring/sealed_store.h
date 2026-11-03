@@ -10,9 +10,9 @@ namespace biopass {
 
 // Where sealed passwords live. `dir` is created 0711 (others may stat their
 // own file by name, not list it) and its parent 0755, both owned by `owner`;
-// files are <uid>.sealed, 0600. Every component the store opens must be owned
-// by `owner` and not group/other writable, and is opened without following
-// symlinks. Tests point it at a temp dir owned by the test user.
+// files are <uid>.sealed, 0600, and <uid>.mode, 0644. Every component the
+// store opens must be owned by `owner` and not group/other writable, and is
+// opened without following symlinks. Tests point it at a temp dir owned by the test user.
 struct SealedStore {
   std::string dir = "/var/lib/biopass/keyring";
   uid_t owner = 0;

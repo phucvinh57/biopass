@@ -32,19 +32,20 @@ export function KeyringCard() {
   const [bindPcr7, setBindPcr7] = useState(true);
   const [busy, setBusy] = useState(false);
 
-  const refresh = useCallback(async () => {
+  // `syncSwitch` sets the switch to how the saved password is locked. Only on
+  // load and after a successful save: a failed save keeps the user's choice.
+  const refresh = useCallback(async (syncSwitch = false) => {
     try {
       const next = await cmd.keyring.status();
       setStatus(next);
-      // Show how the saved password is locked; keep the choice when unknown.
-      if (next.pcr7 !== null) setBindPcr7(next.pcr7);
+      if (syncSwitch && next.pcr7 !== null) setBindPcr7(next.pcr7);
     } catch (err) {
       console.error("Failed to read keyring status:", err);
     }
   }, []);
 
   useEffect(() => {
-    void refresh();
+    void refresh(true);
   }, [refresh]);
 
   const tooLong = byteLength(password) > MAX_KEYRING_PASSWORD_BYTES;
@@ -53,15 +54,17 @@ export function KeyringCard() {
   async function save() {
     if (password === "" || tooLong || busy) return;
     setBusy(true);
+    let saved = false;
     try {
       await cmd.keyring.save(password, bindPcr7);
+      saved = true;
       toast.success("Password saved. Your keyring will unlock at login.");
       setPassword("");
     } catch (err) {
       toast.error(`Failed to save the password: ${err}`);
     } finally {
       setBusy(false);
-      void refresh();
+      void refresh(saved);
     }
   }
 
