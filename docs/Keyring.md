@@ -7,10 +7,10 @@ There are two fixes: save your password in Biopass, or skip Biopass at the login
 ## Fix 1: save your password in Biopass
 
 1. Open **Configuration** → **Keyring Unlock** in the Biopass app.
-2. Type your login password and click **Save password**, then authenticate when asked.
+2. Click **Set up**, type your login password, choose whether to **Lock to Secure Boot settings**, and click **Save password**. Authenticate when asked.
 3. Log out and log back in with your face or fingerprint. The keyring is unlocked.
 
-**Remove** in the same card deletes the saved password.
+The card shows whether a password is saved and whether it is locked to Secure Boot settings. **Replace** saves a new one; **Remove** deletes it.
 
 ### Requirements
 
