@@ -1,4 +1,5 @@
 #include <fcntl.h>
+#include <grp.h>
 #include <security/pam_appl.h>
 #include <security/pam_modules.h>
 #include <stdio.h>
@@ -7,6 +8,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <chrono>
 #include <string>
 #include <vector>
 
@@ -160,6 +162,60 @@ int runHelperWithDeadline(pam_handle_t* pamh, const char* username, const char* 
   return result;
 }
 
+// biopass-keyring seals with the TPM, which takes a few seconds at most. Past
+// this it is killed and the password change goes on without it.
+constexpr std::chrono::seconds kKeyringUpdateTimeout{30};
+
+// Hands `password`, just set for `username` by the rule above, to
+// `biopass-keyring update`, which replaces the password saved for keyring
+// unlock if the user has one (docs/Keyring.md). True when it did, or when
+// there was nothing to replace.
+bool updateSavedPassword(const char* username, const char* password) {
+  const size_t len = strlen(password);
+  if (!biopass::isValidAuthtok(password, len)) {
+    return false;
+  }
+
+  // The password goes into the pipe before fork(): it fits in the pipe
+  // buffer, and no write can raise SIGPIPE in the caller (passwd, ...) if the
+  // child exits early.
+  int stdin_pipe[2] = {-1, -1};
+  if (pipe2(stdin_pipe, O_CLOEXEC) != 0) {
+    return false;
+  }
+  const bool written = biopass::writeAuthtok(stdin_pipe[1], password, len);
+  close(stdin_pipe[1]);
+  const int devnull = written ? open("/dev/null", O_RDWR | O_CLOEXEC) : -1;
+  if (devnull < 0) {
+    close(stdin_pipe[0]);
+    return false;
+  }
+
+  char* const args[] = {const_cast<char*>("biopass-keyring"), const_cast<char*>("update"),
+                        const_cast<char*>(username), nullptr};
+  const pid_t pid = fork();
+  if (pid == 0) {
+    // stdout/stderr go nowhere: the caller's terminal may be parsed (GNOME
+    // Settings drives passwd through a pty). Full root, like pkexec gives it:
+    // passwd is setuid, so only the effective ids are 0 here.
+    if (dup2(stdin_pipe[0], STDIN_FILENO) < 0 || dup2(devnull, STDOUT_FILENO) < 0 ||
+        dup2(devnull, STDERR_FILENO) < 0 || setgroups(0, nullptr) != 0 || setresgid(0, 0, 0) != 0 ||
+        setresuid(0, 0, 0) != 0) {
+      _exit(1);
+    }
+    char* const env[] = {const_cast<char*>("PATH=/usr/sbin:/usr/bin:/sbin:/bin"), nullptr};
+    execve("/usr/libexec/biopass/biopass-keyring", args, env);
+    _exit(1);
+  }
+  close(stdin_pipe[0]);
+  close(devnull);
+  if (pid < 0) {
+    return false;
+  }
+  // Exit 0 maps to PAM_SUCCESS; anything else, or the timeout, does not.
+  return biopass::waitForHelper(pid, -1, kKeyringUpdateTimeout, nullptr) == PAM_SUCCESS;
+}
+
 }  // namespace
 
 PAM_EXTERN int pam_sm_authenticate(pam_handle_t* pamh, int flags, int argc, const char** argv) {
@@ -226,11 +282,41 @@ PAM_EXTERN int pam_sm_close_session(pam_handle_t* pamh, int flags, int argc, con
   return PAM_IGNORE;
 }
 
+// Keeps the password saved for keyring unlock in sync with the login
+// password. Must run after the rule that changes the password, and only when
+// it succeeded (the Debian/Ubuntu profile's "Additional" block). Never
+// affects the password change itself: always PAM_IGNORE.
 PAM_EXTERN int pam_sm_chauthtok(pam_handle_t* pamh, int flags, int argc, const char** argv) {
-  (void)pamh;
-  (void)flags;
-  (void)argc;
-  (void)argv;
+  // The first pass (PAM_PRELIM_CHECK) runs before anything changed. Only root
+  // can replace a saved password.
+  if ((flags & PAM_UPDATE_AUTHTOK) == 0 || geteuid() != 0) {
+    return PAM_IGNORE;
+  }
+  bool quiet = (flags & PAM_SILENT) != 0;
+  for (int i = 0; i < argc; ++i) {
+    if (argv[i] != nullptr && strcmp(argv[i], "quiet") == 0) {
+      quiet = true;
+    }
+  }
+
+  const void* username = nullptr;
+  const void* password = nullptr;
+  if (pam_get_item(pamh, PAM_USER, &username) != PAM_SUCCESS || username == nullptr ||
+      pam_get_item(pamh, PAM_AUTHTOK, &password) != PAM_SUCCESS || password == nullptr) {
+    return PAM_IGNORE;
+  }
+
+  // C caller: no exception may cross this boundary.
+  try {
+    if (!updateSavedPassword(static_cast<const char*>(username),
+                             static_cast<const char*>(password)) &&
+        !quiet) {
+      sendMessage(pamh, PAM_ERROR_MSG,
+                  "Biopass could not update the password saved for keyring unlock. "
+                  "Save it again in the Biopass app.");
+    }
+  } catch (...) {
+  }
   return PAM_IGNORE;
 }
 

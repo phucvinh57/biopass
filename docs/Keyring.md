@@ -20,9 +20,13 @@ There are two fixes: save your password in Biopass, or skip Biopass at the login
 - The `authtok` PAM option. The Debian/Ubuntu package sets it; for manual setups see [PAM.md](PAM.md#module-options).
 - A supported login screen: `gdm-password`, `sddm`, `lightdm`, `login`, `greetd`, `lxdm`, `ly`. The GNOME lock screen and light-locker also work. `sudo`, `su`, polkit and lock screens that run as your user (KDE, swaylock, ...) never get the password.
 
+### Changing your password
+
+With the Debian/Ubuntu profile, changing your password with `passwd` or in your desktop's settings also replaces the saved one. It keeps its **Lock to Secure Boot settings** choice. If that fails, `passwd` says so; save it again in the app.
+
 ### Save it again when
 
-- you change your password;
+- your password was changed without `passwd`, e.g. by an admin with `usermod -p` or `chpasswd -e`, or on a manual PAM setup without the `password` line ([PAM.md](PAM.md#module-options));
 - the TPM is cleared or replaced;
 - with **Lock to Secure Boot settings** on (default): Secure Boot is toggled, or a firmware/OS update changes its keys.
 
@@ -31,6 +35,7 @@ Until then, the login screen shows a short message and the keyring asks for its 
 ### How it works
 
 - **Saving:** the app runs `biopass-keyring` through `pkexec`. It checks the password against `/etc/shadow`, seals it with the TPM, and stores it in `/var/lib/biopass/keyring/<uid>.sealed` (root-only). The app doesn't keep it.
+- **Password change:** after `pam_unix` sets the new password, the PAM module's `password` rule hands it to `biopass-keyring update`, which checks it against `/etc/shadow` and seals it the same way. Only users who saved a password are affected, and a failure never stops the password change.
 - **Login:** after a biometric match, `biopass-helper` unseals the password, checks it again, and the PAM module sets `PAM_AUTHTOK`. `pam_gnome_keyring` / `pam_kwallet` then use it as if you had typed it.
 - **Lock to Secure Boot settings** binds the seal to TPM PCR 7, which records the Secure Boot configuration.
 

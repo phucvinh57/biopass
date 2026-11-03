@@ -59,6 +59,14 @@ Before adding `authtok` to a manual setup:
 - Biopass must be an alternative to the password rules, not run before them. If a rule such as `pam_unix.so try_first_pass` ran after a Biopass success, it would take the saved password as a typed one, so a face match alone would pass a stack meant to need both.
 - The keyring module's `auth` line (`pam_gnome_keyring.so`, `pam_kwallet5.so`, ...) must still run after a Biopass success. The Debian/Ubuntu profile does this: `success=end` skips only the rest of `common-auth`, and the login screen's own keyring lines follow it. `sufficient` in an included file such as `system-auth` ends the whole stack at once, so the keyring lines after it never run.
 
+To keep the saved keyring password in sync when the password changes, add a `password` rule that runs only after the one that changes it succeeded. The Debian/Ubuntu profile does this. On Arch, in `/etc/pam.d/system-passwd`, after `pam_unix.so`:
+
+```pam
+password optional libbiopass_pam.so
+```
+
+It always returns `PAM_IGNORE`, so it can't block a password change. Where `pam_unix.so` is `sufficient` (Fedora's `system-auth`), a rule after it never runs.
+
 ## Login screen and keyring
 
 If Biopass is enabled for your login screen (GDM, SDDM, LightDM, ...), the login keyring / KWallet stays locked because no password is typed, unless you save your password in the app. See [Keyring.md](Keyring.md).
