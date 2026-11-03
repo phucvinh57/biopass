@@ -83,10 +83,10 @@ export function KeyringCard() {
       </h2>
 
       <div className="grid gap-4">
-        <p className="text-xs text-muted-foreground max-w-140">
-          Face and fingerprint logins can't unlock your keyring (GNOME Keyring,
+        <p className="text-xs text-muted-foreground">
+          Face and fingerprint logins cannpt unlock your keyring (GNOME Keyring,
           KWallet), because it needs your password. Save it here, encrypted by
-          this computer's TPM, to unlock the keyring at login.{" "}
+          this computer's TPM, to unlock the keyring at login. See{" "}
           <a
             href={KEYRING_GUIDE_URL}
             target="_blank"
@@ -95,6 +95,7 @@ export function KeyringCard() {
           >
             Keyring guide
           </a>
+          .
         </p>
 
         {/* Shown even without a TPM, so a saved copy can still be removed. */}
