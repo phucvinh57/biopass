@@ -1,14 +1,20 @@
 // biopass-keyring: saves or forgets the user's login password for keyring
-// unlock (docs/Keyring.md). Run only as `pkexec biopass-keyring <cmd>` from
-// the Biopass app; the polkit action (com.ticklab.biopass.policy) asks the
-// user to authenticate as themselves.
+// unlock (docs/Keyring.md). seal and forget run only as
+// `pkexec biopass-keyring <cmd>` from the Biopass app; the polkit action
+// (com.ticklab.biopass.policy) asks the user to authenticate as themselves.
+// update runs only from the PAM module, as root without pkexec.
 //
 //   seal [--pcr7]  password on stdin: verify against /etc/shadow, TPM-seal,
 //                  store /var/lib/biopass/keyring/<uid>.sealed, and
 //                  <uid>.mode saying whether it is bound to PCR 7
 //   forget         delete both files
+//   update USER    new password on stdin, from pam_sm_chauthtok (pam.cc)
+//                  right after a password change: if USER has a saved
+//                  password, verify and seal the new one the same way, keeping
+//                  its PCR 7 binding
 //
-// The user is always the one who ran pkexec (PKEXEC_UID), never an argument.
+// For seal and forget the user is always the one who ran pkexec
+// (PKEXEC_UID), never an argument.
 // Exit codes: keyring_exit.h.
 
 #include <errno.h>
@@ -61,6 +67,17 @@ std::optional<std::string> usernameFor(uid_t uid) {
   return std::string(pw.pw_name);
 }
 
+std::optional<uid_t> uidFor(const std::string& username) {
+  std::vector<char> buf(16384);
+  struct passwd pw{};
+  struct passwd* result = nullptr;
+  if (username.empty() || getpwnam_r(username.c_str(), &pw, buf.data(), buf.size(), &result) != 0 ||
+      result == nullptr) {
+    return std::nullopt;
+  }
+  return pw.pw_uid;
+}
+
 // Reads stdin to EOF into `out`. False when it is empty, longer than
 // kMaxSecretLen, holds a NUL, or doesn't end within kStdinTimeout.
 bool readPassword(biopass::SecretBuffer& out) {
@@ -106,17 +123,14 @@ bool readPassword(biopass::SecretBuffer& out) {
   return ok;
 }
 
-int seal(uid_t uid, const std::string& username, bool pcr7) {
-  biopass::SecretBuffer password;
-  if (!readPassword(password)) {
-    return fail(KeyringExit::BadInput, "password must be 1-128 bytes on stdin");
-  }
-
+// Verifies `password` against /etc/shadow, TPM-seals it and stores it for
+// `uid`, replacing any saved one.
+int sealPassword(uid_t uid, const std::string& username, biopass::SecretBuffer& password,
+                 bool pcr7) {
   switch (biopass::verifyLocalPassword(username, password.c_str())) {
     case biopass::PasswordCheck::Match:
       break;
     case biopass::PasswordCheck::Mismatch:
-      std::this_thread::sleep_for(kWrongPasswordDelay);
       return fail(KeyringExit::WrongPassword, "wrong password");
     case biopass::PasswordCheck::NoLocalAccount:
     case biopass::PasswordCheck::Locked:
@@ -160,6 +174,46 @@ int seal(uid_t uid, const std::string& username, bool pcr7) {
   return biopass::keyringExitCode(KeyringExit::Ok);
 }
 
+int seal(uid_t uid, const std::string& username, bool pcr7) {
+  biopass::SecretBuffer password;
+  if (!readPassword(password)) {
+    return fail(KeyringExit::BadInput, "password must be 1-128 bytes on stdin");
+  }
+  const int code = sealPassword(uid, username, password, pcr7);
+  if (code == biopass::keyringExitCode(KeyringExit::WrongPassword)) {
+    std::this_thread::sleep_for(kWrongPasswordDelay);
+  }
+  return code;
+}
+
+// Replaces the saved password of `username`, if any, with the one on stdin.
+// Nothing saved is success: there is nothing to keep in sync.
+int update(const std::string& username) {
+  biopass::SecretBuffer password;
+  if (!readPassword(password)) {
+    return fail(KeyringExit::BadInput, "password must be 1-128 bytes on stdin");
+  }
+  const std::optional<uid_t> uid = uidFor(username);
+  if (!uid) {
+    return fail(KeyringExit::NoLocalAccount, "unknown user");
+  }
+
+  std::vector<uint8_t> data;
+  switch (biopass::readSealed(biopass::SealedStore{}, *uid, data)) {
+    case biopass::StoreResult::Ok:
+      break;
+    case biopass::StoreResult::NotFound:
+      return biopass::keyringExitCode(KeyringExit::Ok);
+    default:
+      return fail(KeyringExit::StorageError, "could not read /var/lib/biopass/keyring");
+  }
+  const std::optional<biopass::SealedBlob> saved = biopass::parseSealed(data.data(), data.size());
+  if (!saved) {
+    return fail(KeyringExit::StorageError, "the saved password is unreadable");
+  }
+  return sealPassword(*uid, username, password, saved->pcr7);
+}
+
 int forget(uid_t uid) {
   const biopass::SealedStore store;
   biopass::removeSealedMode(store, uid);
@@ -183,15 +237,23 @@ int main(int argc, char** argv) {
   // tpm2-tss logs to stderr by default; the app shows only our own line.
   setenv("TSS2_LOG", "all+NONE", 1);
 
+  static constexpr char kUsage[] = "usage: biopass-keyring seal [--pcr7] | forget | update USER";
   if (argc < 2) {
-    return fail(KeyringExit::Usage, "usage: biopass-keyring seal [--pcr7] | forget");
+    return fail(KeyringExit::Usage, kUsage);
   }
   const std::string cmd = argv[1];
   bool pcr7 = false;
   if (cmd == "seal" && argc == 3 && strcmp(argv[2], "--pcr7") == 0) {
     pcr7 = true;
+  } else if (cmd == "update" && argc == 3) {
+    // Root only, and not through pkexec: pkexec always sets PKEXEC_UID, so a
+    // user can't use it to replace someone else's saved password.
+    if (getuid() != 0 || geteuid() != 0 || getenv("PKEXEC_UID") != nullptr) {
+      return fail(KeyringExit::NotAuthorized, "run by the PAM module only");
+    }
+    return update(argv[2]);
   } else if (!((cmd == "seal" || cmd == "forget") && argc == 2)) {
-    return fail(KeyringExit::Usage, "usage: biopass-keyring seal [--pcr7] | forget");
+    return fail(KeyringExit::Usage, kUsage);
   }
 
   // Root through pkexec only: pkexec sets PKEXEC_UID itself, and only a
