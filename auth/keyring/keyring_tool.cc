@@ -5,8 +5,9 @@
 // update runs only from the PAM module, as root without pkexec.
 //
 //   seal [--pcr7]  password on stdin: verify against /etc/shadow, TPM-seal,
-//                  store /var/lib/biopass/keyring/<uid>.sealed
-//   forget         delete that file
+//                  store /var/lib/biopass/keyring/<uid>.sealed, and
+//                  <uid>.mode saying whether it is bound to PCR 7
+//   forget         delete both files
 //   update USER    new password on stdin, from pam_sm_chauthtok (pam.cc)
 //                  right after a password change: if USER has a saved
 //                  password, verify and seal the new one the same way, keeping
@@ -161,9 +162,15 @@ int sealPassword(uid_t uid, const std::string& username, biopass::SecretBuffer& 
   if (data.empty()) {
     return fail(KeyringExit::TpmError, "could not encode the sealed password");
   }
-  if (biopass::writeSealed(biopass::SealedStore{}, uid, data) != biopass::StoreResult::Ok) {
+  const biopass::SealedStore store;
+  // Drop the old mode first: if anything below fails, the app shows the mode
+  // as unknown rather than wrong.
+  biopass::removeSealedMode(store, uid);
+  if (biopass::writeSealed(store, uid, data) != biopass::StoreResult::Ok) {
     return fail(KeyringExit::StorageError, "could not write /var/lib/biopass/keyring");
   }
+  // Only for display; the password is already saved, so this can't fail the save.
+  biopass::writeSealedMode(store, uid, pcr7);
   return biopass::keyringExitCode(KeyringExit::Ok);
 }
 
@@ -208,7 +215,9 @@ int update(const std::string& username) {
 }
 
 int forget(uid_t uid) {
-  switch (biopass::removeSealed(biopass::SealedStore{}, uid)) {
+  const biopass::SealedStore store;
+  biopass::removeSealedMode(store, uid);
+  switch (biopass::removeSealed(store, uid)) {
     case biopass::StoreResult::Ok:
     case biopass::StoreResult::NotFound:
       return biopass::keyringExitCode(KeyringExit::Ok);

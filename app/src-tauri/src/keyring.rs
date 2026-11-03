@@ -1,11 +1,12 @@
 //! Saving the login password so a face or fingerprint login can unlock the
 //! keyring (docs/Keyring.md). The app never stores it: it hands it to
 //! `pkexec biopass-keyring seal`, which checks it against /etc/shadow and
-//! seals it with the TPM under /var/lib/biopass/keyring/<uid>.sealed.
+//! seals it with the TPM under /var/lib/biopass/keyring/<uid>.sealed, with
+//! <uid>.mode beside it saying whether it is locked to Secure Boot (PCR 7).
 
 use crate::blocking::run_blocking;
 use serde::Serialize;
-use std::io::{ErrorKind, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -28,6 +29,9 @@ pub struct KeyringStatus {
     /// When it was saved, in ms since the Unix epoch.
     #[specta(type = Option<specta_typescript::Number>)]
     saved_at_ms: Option<u64>,
+    /// Whether the saved password is locked to Secure Boot settings (PCR 7).
+    /// None when nothing is saved or the mode is unknown.
+    pcr7: Option<bool>,
 }
 
 /// The current process's uid: /proc/self belongs to it.
@@ -39,6 +43,30 @@ fn current_uid() -> Result<u32, String> {
 
 fn sealed_path(uid: u32) -> PathBuf {
     PathBuf::from(STORE_DIR).join(format!("{uid}.sealed"))
+}
+
+/// biopass-keyring writes `<uid>.mode` (0644) next to the sealed file.
+fn mode_path(uid: u32) -> PathBuf {
+    PathBuf::from(STORE_DIR).join(format!("{uid}.mode"))
+}
+
+/// The contents of `<uid>.mode`: "pcr7" or "none". None for anything else.
+fn parse_mode(text: &str) -> Option<bool> {
+    match text {
+        "pcr7\n" => Some(true),
+        "none\n" => Some(false),
+        _ => None,
+    }
+}
+
+fn read_mode(uid: u32) -> Option<bool> {
+    let mut text = String::new();
+    std::fs::File::open(mode_path(uid))
+        .ok()?
+        .take(16)
+        .read_to_string(&mut text)
+        .ok()?;
+    parse_mode(&text)
 }
 
 #[tauri::command]
@@ -61,6 +89,7 @@ pub fn get_keyring_status() -> Result<KeyringStatus, String> {
         tpm_available: std::path::Path::new(TPM_DEVICE).exists(),
         saved,
         saved_at_ms,
+        pcr7: if saved { read_mode(uid) } else { None },
     })
 }
 
@@ -94,7 +123,7 @@ fn exit_message(code: Option<i32>) -> Option<String> {
         Some(6) => "The password must be 1 to 128 bytes.",
         Some(7) => "No TPM was found on this computer.",
         Some(8) => "The TPM owner hierarchy has a password, so Biopass can't use the TPM.",
-        Some(9) => "This TPM has no SHA-256 PCR bank. Turn off \"Bind to Secure Boot state\" and try again.",
+        Some(9) => "This TPM has no SHA-256 PCR bank. Turn off \"Lock to Secure Boot settings\" and try again.",
         Some(10) => "The TPM could not seal the password.",
         Some(11) => "Could not write to /var/lib/biopass/keyring.",
         Some(other) => return Some(format!("biopass-keyring failed (exit code {other}).")),
@@ -179,6 +208,15 @@ pub async fn forget_keyring_password() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mode_file_is_parsed_strictly() {
+        assert_eq!(parse_mode("pcr7\n"), Some(true));
+        assert_eq!(parse_mode("none\n"), Some(false));
+        for bad in ["", "pcr7", "none", "PCR7\n", "pcr7\nnone\n", "yes\n"] {
+            assert_eq!(parse_mode(bad), None, "{bad:?}");
+        }
+    }
 
     #[test]
     fn success_has_no_message() {

@@ -100,22 +100,17 @@ bool writeAll(int fd, const uint8_t* data, size_t len) {
   return true;
 }
 
-}  // namespace
-
-std::string sealedFileName(uid_t uid) { return std::to_string(uid) + ".sealed"; }
-
-StoreResult writeSealed(const SealedStore& store, uid_t uid, const std::vector<uint8_t>& data) {
-  if (data.empty() || data.size() > kMaxSealedFileSize) {
-    return StoreResult::Error;
-  }
+// Atomically replaces `name` in the store with `data` (temp file, fsync,
+// rename, fsync dir), creating the directories as needed.
+StoreResult writeAtomic(const SealedStore& store, const std::string& name,
+                        const std::vector<uint8_t>& data, mode_t mode) {
   StoreResult result = StoreResult::Error;
   Fd dir(openStore(store, /*create=*/true, result));
   if (dir.get() < 0) {
     return result;
   }
 
-  const std::string name = sealedFileName(uid);
-  const std::string tmp = "." + std::to_string(uid) + ".tmp";
+  const std::string tmp = "." + name + ".tmp";
   constexpr int kTmpFlags = O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC;
   int raw = openat(dir.get(), tmp.c_str(), kTmpFlags, 0600);
   if (raw < 0 && errno == EEXIST) {
@@ -128,7 +123,7 @@ StoreResult writeSealed(const SealedStore& store, uid_t uid, const std::vector<u
   }
   {
     Fd file(raw);
-    if (fchmod(file.get(), 0600) != 0 || !writeAll(file.get(), data.data(), data.size()) ||
+    if (fchmod(file.get(), mode) != 0 || !writeAll(file.get(), data.data(), data.size()) ||
         fsync(file.get()) != 0) {
       unlinkat(dir.get(), tmp.c_str(), 0);
       return StoreResult::Error;
@@ -140,6 +135,38 @@ StoreResult writeSealed(const SealedStore& store, uid_t uid, const std::vector<u
   }
   fsync(dir.get());
   return StoreResult::Ok;
+}
+
+StoreResult removeAt(const SealedStore& store, const std::string& name) {
+  StoreResult result = StoreResult::Error;
+  Fd dir(openStore(store, /*create=*/false, result));
+  if (dir.get() < 0) {
+    return result;
+  }
+  if (unlinkat(dir.get(), name.c_str(), 0) != 0) {
+    return errno == ENOENT ? StoreResult::NotFound : StoreResult::Error;
+  }
+  fsync(dir.get());
+  return StoreResult::Ok;
+}
+
+}  // namespace
+
+std::string sealedFileName(uid_t uid) { return std::to_string(uid) + ".sealed"; }
+
+std::string sealedModeFileName(uid_t uid) { return std::to_string(uid) + ".mode"; }
+
+StoreResult writeSealed(const SealedStore& store, uid_t uid, const std::vector<uint8_t>& data) {
+  if (data.empty() || data.size() > kMaxSealedFileSize) {
+    return StoreResult::Error;
+  }
+  return writeAtomic(store, sealedFileName(uid), data, 0600);
+}
+
+StoreResult writeSealedMode(const SealedStore& store, uid_t uid, bool pcr7) {
+  const std::string text = pcr7 ? "pcr7\n" : "none\n";
+  return writeAtomic(store, sealedModeFileName(uid), std::vector<uint8_t>(text.begin(), text.end()),
+                     0644);
 }
 
 StoreResult readSealed(const SealedStore& store, uid_t uid, std::vector<uint8_t>& out) {
@@ -191,17 +218,11 @@ StoreResult readSealed(const SealedStore& store, uid_t uid, std::vector<uint8_t>
 }
 
 StoreResult removeSealed(const SealedStore& store, uid_t uid) {
-  StoreResult result = StoreResult::Error;
-  Fd dir(openStore(store, /*create=*/false, result));
-  if (dir.get() < 0) {
-    return result;
-  }
-  const std::string name = sealedFileName(uid);
-  if (unlinkat(dir.get(), name.c_str(), 0) != 0) {
-    return errno == ENOENT ? StoreResult::NotFound : StoreResult::Error;
-  }
-  fsync(dir.get());
-  return StoreResult::Ok;
+  return removeAt(store, sealedFileName(uid));
+}
+
+StoreResult removeSealedMode(const SealedStore& store, uid_t uid) {
+  return removeAt(store, sealedModeFileName(uid));
 }
 
 }  // namespace biopass
