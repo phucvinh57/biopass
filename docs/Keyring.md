@@ -7,10 +7,10 @@ There are two fixes: save your password in Biopass, or skip Biopass at the login
 ## Fix 1: save your password in Biopass
 
 1. Open **Configuration** → **Keyring Unlock** in the Biopass app.
-2. Type your login password and click **Save password**, then authenticate when asked.
+2. Click **Set up**, type your login password, choose whether to **Lock to Secure Boot settings**, and click **Save password**. Authenticate when asked.
 3. Log out and log back in with your face or fingerprint. The keyring is unlocked.
 
-**Remove** in the same card deletes the saved password.
+The card shows whether a password is saved and whether it is locked to Secure Boot settings. **Replace** saves a new one; **Remove** deletes it.
 
 ### Requirements
 
@@ -30,7 +30,7 @@ Until then, the login screen shows a short message and the keyring asks for its 
 
 ### How it works
 
-- **Saving:** the app runs `biopass-keyring` through `pkexec`. It checks the password against `/etc/shadow`, seals it with the TPM, and stores it in `/var/lib/biopass/keyring/<uid>.sealed` (root-only). The app doesn't keep it.
+- **Saving:** the app runs `biopass-keyring` through `pkexec`. It checks the password against `/etc/shadow`, seals it with the TPM, and stores it in `/var/lib/biopass/keyring/<uid>.sealed` (root-only). The app doesn't keep it. `<uid>.mode` beside it (readable, not secret) says whether the seal is locked to Secure Boot settings, so the app can show it.
 - **Login:** after a biometric match, `biopass-helper` unseals the password, checks it again, and the PAM module sets `PAM_AUTHTOK`. `pam_gnome_keyring` / `pam_kwallet` then use it as if you had typed it.
 - **Lock to Secure Boot settings** binds the seal to TPM PCR 7, which records the Secure Boot configuration.
 
