@@ -66,6 +66,7 @@ Setup guides:
         - [x] With IR camera
     - [x] Fingerprint
 - [x] Local AI model management: download, update, and delete models.
+- [x] GNOME Keyring/KWallet unlock
 
 Bugs and feature requests: open an issue. To contribute, read [CONTRIBUTING.md](CONTRIBUTING.md).
 
