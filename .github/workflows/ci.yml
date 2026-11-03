@@ -13,8 +13,59 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Skipped jobs count as passing for required checks, so gate by job `if:`
+  # instead of `on.paths`.
+  changes:
+    name: Detect changed areas
+    runs-on: ubuntu-24.04
+    outputs:
+      frontend: ${{ steps.filter.outputs.frontend }}
+      shell: ${{ steps.filter.outputs.shell }}
+      cpp: ${{ steps.filter.outputs.cpp }}
+      rust: ${{ steps.filter.outputs.rust }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Filter paths
+        id: filter
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          base="${PR_BASE:-$PUSH_BEFORE}"
+          all=false
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ] \
+            || ! files="$(git diff --name-only "$base" "$HEAD_SHA")"; then
+            all=true
+            files=""
+          fi
+          printf 'Changed files:\n%s\n' "$files"
+          if printf '%s\n' "$files" | grep -qx '\.github/workflows/ci\.yml'; then
+            all=true
+          fi
+
+          # match <output> <include regex> [exclude regex]
+          match() {
+            if [ "$all" = true ] \
+              || printf '%s\n' "$files" | grep -E "$2" | grep -qvE "${3:-^$}"; then
+              echo "$1=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "$1=false" >> "$GITHUB_OUTPUT"
+            fi
+          }
+          match frontend '^app/' '^app/src-tauri/'
+          match shell '^app/src-tauri/scripts/(deb|rpm)/|\.sh$'
+          match cpp '^auth/|^Makefile$'
+          match rust '^app/src-tauri/|^auth/|^Makefile$'
+          cat "$GITHUB_OUTPUT"
+
   frontend:
     name: Frontend (Biome + tsc)
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
@@ -39,6 +90,8 @@ jobs:
 
   shell:
     name: Shell scripts (shellcheck)
+    needs: changes
+    if: needs.changes.outputs.shell == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
@@ -52,6 +105,9 @@ jobs:
 
   native:
     name: Native (auth + Rust)
+    needs: changes
+    # rust covers auth/ too: the Rust crate links the auth fingerprint lib.
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
@@ -64,6 +120,7 @@ jobs:
           sudo apt install -y librsvg2-dev libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev libpam0g-dev libcli11-dev pkg-config libturbojpeg0-dev libtss2-dev libcrypt-dev swtpm meson ninja-build python3-jinja2 python3-yaml python3-ply libudev-dev libdrm-dev libegl-dev libgles-dev
 
       - name: clang-format
+        if: needs.changes.outputs.cpp == 'true'
         run: |
           find auth -path auth/build -prune -o \( -name '*.cc' -o -name '*.h' -o -name '*.cpp' \) -print \
             | xargs pipx run clang-format==22.1.8 --dry-run --Werror
@@ -90,10 +147,17 @@ jobs:
           key: ci-${{ runner.os }}-auth-${{ hashFiles('auth/BundleLibcamera.cmake', 'auth/PatchLibcameraNoCrypto.cmake', 'auth/Dependencies.cmake') }}
 
       - name: Build auth and run C++ unit tests
+        if: needs.changes.outputs.cpp == 'true'
         run: make test-auth BUILD_TYPE=Release
+
+      # Rust-only change: still needs the auth libs to link.
+      - name: Build auth
+        if: needs.changes.outputs.cpp != 'true'
+        run: make build-auth BUILD_TYPE=Release
 
       # ctest skips this as non-root; it checks the helper's root file writes.
       - name: Root-only C++ tests
+        if: needs.changes.outputs.cpp == 'true'
         run: sudo auth/build/test/fs_user/fs_user_test
 
       - uses: oven-sh/setup-bun@v2
