@@ -22,11 +22,11 @@ There are two fixes: save your password in Biopass, or skip Biopass at the login
 
 ### Changing your password
 
-With the Debian/Ubuntu profile, changing your password with `passwd` or in your desktop's settings also replaces the saved one. It keeps its **Lock to Secure Boot settings** choice. If that fails, `passwd` says so; save it again in the app.
+With the Debian/Ubuntu profile, changing your password with `passwd` also replaces the saved one, and the new one keeps its **Lock to Secure Boot settings** choice. GNOME Settings uses `passwd` for your own account. If replacing fails, `passwd` says so (GNOME Settings doesn't show it) and the login screen shows a short message after your next face or fingerprint login; save it again in the app.
 
 ### Save it again when
 
-- your password was changed without `passwd`, e.g. by an admin with `usermod -p` or `chpasswd -e`, or on a manual PAM setup without the `password` line ([PAM.md](PAM.md#module-options));
+- your password was changed without `passwd`: in KDE System Settings, by an admin in GNOME Settings, with `usermod -p` or `chpasswd -e`, or on a manual PAM setup without the `password` line ([PAM.md](PAM.md#module-options));
 - the TPM is cleared or replaced;
 - with **Lock to Secure Boot settings** on (default): Secure Boot is toggled, or a firmware/OS update changes its keys.
 

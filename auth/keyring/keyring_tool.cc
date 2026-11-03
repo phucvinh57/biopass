@@ -1,13 +1,19 @@
 // biopass-keyring: saves or forgets the user's login password for keyring
-// unlock (docs/Keyring.md). Run only as `pkexec biopass-keyring <cmd>` from
-// the Biopass app; the polkit action (com.ticklab.biopass.policy) asks the
-// user to authenticate as themselves.
+// unlock (docs/Keyring.md). seal and forget run only as
+// `pkexec biopass-keyring <cmd>` from the Biopass app; the polkit action
+// (com.ticklab.biopass.policy) asks the user to authenticate as themselves.
+// update runs only from the PAM module, as root without pkexec.
 //
 //   seal [--pcr7]  password on stdin: verify against /etc/shadow, TPM-seal,
 //                  store /var/lib/biopass/keyring/<uid>.sealed
 //   forget         delete that file
+//   update USER    new password on stdin, from pam_sm_chauthtok (pam.cc)
+//                  right after a password change: if USER has a saved
+//                  password, verify and seal the new one the same way, keeping
+//                  its PCR 7 binding
 //
-// The user is always the one who ran pkexec (PKEXEC_UID), never an argument.
+// For seal and forget the user is always the one who ran pkexec
+// (PKEXEC_UID), never an argument.
 // Exit codes: keyring_exit.h.
 
 #include <errno.h>
