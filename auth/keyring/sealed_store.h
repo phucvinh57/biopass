@@ -32,4 +32,15 @@ StoreResult readSealed(const SealedStore& store, uid_t uid, std::vector<uint8_t>
 // Deletes the file for `uid`. NotFound when there was none.
 StoreResult removeSealed(const SealedStore& store, uid_t uid);
 
+// <uid>.mode, 0644: "pcr7\n" or "none\n", how <uid>.sealed is bound. Not
+// secret, so the app can show it without reading the sealed file. Missing
+// means unknown (saved by an older version, or an interrupted save).
+std::string sealedModeFileName(uid_t uid);
+
+// Atomically replaces the mode file for `uid`, like writeSealed().
+StoreResult writeSealedMode(const SealedStore& store, uid_t uid, bool pcr7);
+
+// Deletes the mode file for `uid`. NotFound when there was none.
+StoreResult removeSealedMode(const SealedStore& store, uid_t uid);
+
 }  // namespace biopass

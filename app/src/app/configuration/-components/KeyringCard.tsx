@@ -15,6 +15,14 @@ function byteLength(text: string): number {
   return new TextEncoder().encode(text).length;
 }
 
+// Unknown when the password was saved by an older version.
+function lockNote(pcr7?: boolean | null): string {
+  if (pcr7 == null) return "";
+  return pcr7
+    ? ", locked to Secure Boot settings"
+    : ", not locked to Secure Boot settings";
+}
+
 // Saves the login password, sealed by the TPM, so a face or fingerprint
 // login can unlock the keyring. Separate from the config form: it saves
 // straight away through pkexec, not with the page's Save button.
@@ -26,7 +34,10 @@ export function KeyringCard() {
 
   const refresh = useCallback(async () => {
     try {
-      setStatus(await cmd.keyring.status());
+      const next = await cmd.keyring.status();
+      setStatus(next);
+      // Show how the saved password is locked; keep the choice when unknown.
+      if (next.pcr7 !== null) setBindPcr7(next.pcr7);
     } catch (err) {
       console.error("Failed to read keyring status:", err);
     }
@@ -113,7 +124,7 @@ export function KeyringCard() {
               {status === null
                 ? "Checking…"
                 : status.saved
-                  ? `Password saved${savedAt ? ` on ${savedAt}` : ""}.`
+                  ? `Password saved${savedAt ? ` on ${savedAt}` : ""}${lockNote(status.pcr7)}.`
                   : "No password saved."}
             </p>
           </div>

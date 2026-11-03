@@ -38,6 +38,17 @@ mode_t modeOf(const std::string& path) {
   return lstat(path.c_str(), &st) == 0 ? (st.st_mode & 07777) : 0;
 }
 
+std::string readText(const std::string& path) {
+  std::string text;
+  if (FILE* f = std::fopen(path.c_str(), "r")) {
+    char buf[64];
+    const size_t n = std::fread(buf, 1, sizeof(buf), f);
+    text.assign(buf, n);
+    std::fclose(f);
+  }
+  return text;
+}
+
 int main() {
   char tmpl[] = "/tmp/biopass-store-XXXXXX";
   const char* root = mkdtemp(tmpl);
@@ -68,7 +79,7 @@ int main() {
   expect(biopass::writeSealed(store, 1000, second) == biopass::StoreResult::Ok, "replace");
   expect(biopass::readSealed(store, 1000, out) == biopass::StoreResult::Ok && out == second,
          "read replaced");
-  expect(access((store.dir + "/.1000.tmp").c_str(), F_OK) != 0, "no temp file left");
+  expect(access((store.dir + "/.1000.sealed.tmp").c_str(), F_OK) != 0, "no temp file left");
   expect(biopass::readSealed(store, 1001, out) == biopass::StoreResult::NotFound,
          "other uid has nothing");
   expect(biopass::writeSealed(store, 1000, {}) == biopass::StoreResult::Error,
@@ -98,6 +109,22 @@ int main() {
   expect(symlink(base.c_str(), (std::string(root) + "/link").c_str()) == 0, "plant dir symlink");
   expect(biopass::readSealed(linked, 1000, out) != biopass::StoreResult::Ok,
          "symlinked parent dir refused");
+
+  const std::string mode_file = store.dir + "/1000.mode";
+  expect(biopass::removeSealedMode(store, 1000) == biopass::StoreResult::NotFound,
+         "no mode file yet");
+  expect(biopass::writeSealedMode(store, 1000, true) == biopass::StoreResult::Ok &&
+             modeOf(mode_file) == 0644 && readText(mode_file) == "pcr7\n",
+         "mode file says pcr7, readable by the user");
+  expect(biopass::writeSealedMode(store, 1000, false) == biopass::StoreResult::Ok &&
+             readText(mode_file) == "none\n" &&
+             access((store.dir + "/.1000.mode.tmp").c_str(), F_OK) != 0,
+         "mode file replaced with none");
+  expect(biopass::readSealed(store, 1000, out) == biopass::StoreResult::Ok && out == second,
+         "mode file leaves the sealed file alone");
+  expect(biopass::removeSealedMode(store, 1000) == biopass::StoreResult::Ok &&
+             access(mode_file.c_str(), F_OK) != 0,
+         "mode file removed");
 
   expect(biopass::removeSealed(store, 1000) == biopass::StoreResult::Ok, "forget");
   expect(biopass::readSealed(store, 1000, out) == biopass::StoreResult::NotFound, "gone");

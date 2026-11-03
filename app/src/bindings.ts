@@ -211,6 +211,11 @@ export type KeyringStatus_Deserialize = {
 	saved: boolean,
 	/**  When it was saved, in ms since the Unix epoch. */
 	saved_at_ms?: number | null,
+	/**
+	 *  Whether the saved password is locked to Secure Boot settings (PCR 7).
+	 *  None when nothing is saved or the mode is unknown.
+	 */
+	pcr7?: boolean | null,
 };
 
 export type KeyringStatus_Serialize = {
@@ -220,6 +225,11 @@ export type KeyringStatus_Serialize = {
 	saved: boolean,
 	/**  When it was saved, in ms since the Unix epoch. */
 	saved_at_ms: number | null,
+	/**
+	 *  Whether the saved password is locked to Secure Boot settings (PCR 7).
+	 *  None when nothing is saved or the mode is unknown.
+	 */
+	pcr7: boolean | null,
 };
 
 export type MethodsConfig = MethodsConfig_Serialize | MethodsConfig_Deserialize;
