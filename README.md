@@ -24,7 +24,7 @@
 
 While Windows Hello provides a multi-modal biometric experience (Face, Fingerprint, PIN) on Windows 11, Linux has historically lacked a modern, unified equivalent. The most well-known project in this space, Howdy, focuses exclusively on facial recognition and has not seen significant updates in recent years.
 
-Biopass was developed by @phucvinh57 and @thaitran24 to fill this gap, providing a fast, secure, and modern biometric suite that goes beyond just face ID.
+Biopass is developed by [@phucvinh57](https://github.com/phucvinh57) and [@thaitran24](https://github.com/thaitran24) to fill this gap, providing a fast, secure, and modern biometric suite that goes beyond just face ID.
 
 ## Comparison
 
