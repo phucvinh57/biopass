@@ -1,0 +1,81 @@
+name: PR risk
+
+# Labels each PR risk: low|medium|high from its changed paths and enables
+# auto-merge (squash) for low-risk PRs from collaborators. Medium/high PRs wait
+# for manual review.
+#
+# pull_request_target runs this file and the classifier from the base branch,
+# so a PR can't change its own classification. Never check out or run PR code
+# here: the token can write.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: pr-risk-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  classify:
+    name: Classify risk
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Label and set auto-merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          AUTHOR_ASSOC: ${{ github.event.pull_request.author_association }}
+          DRAFT: ${{ github.event.pull_request.draft }}
+          CHANGED_FILES: ${{ github.event.pull_request.changed_files }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+        run: |
+          set -euo pipefail
+
+          # Fail closed: turn auto-merge off first, so any later error leaves it off.
+          gh pr merge "$PR" --disable-auto >/dev/null 2>&1 || true
+
+          files="$(gh api --paginate "repos/$GH_REPO/pulls/$PR/files" \
+            --jq '.[] | .filename, (.previous_filename // empty)')"
+          # The files API stops at 3000 entries; don't classify a partial list.
+          if [ "$CHANGED_FILES" -ge 3000 ]; then
+            tier=high
+          else
+            tier="$(printf '%s\n' "$files" | bash .github/scripts/pr-risk.sh)"
+          fi
+          echo "PR #$PR risk: $tier ($CHANGED_FILES files)"
+
+          gh label create "risk: low" --color 0e8a16 --description "Auto-merges when CI passes" --force
+          gh label create "risk: medium" --color fbca04 --description "Needs maintainer review" --force
+          gh label create "risk: high" --color b60205 --description "Needs code owner review" --force
+
+          for t in low medium high; do
+            if [ "$t" != "$tier" ]; then
+              gh pr edit "$PR" --remove-label "risk: $t" >/dev/null 2>&1 || true
+            fi
+          done
+          gh pr edit "$PR" --add-label "risk: $tier"
+
+          # Only same-repo branches from collaborators; fork PRs always wait.
+          trusted=false
+          case "$AUTHOR_ASSOC" in
+            OWNER|MEMBER|COLLABORATOR)
+              [ "$HEAD_REPO" = "$BASE_REPO" ] && trusted=true ;;
+          esac
+
+          if [ "$tier" = low ] && [ "$trusted" = true ] && [ "$DRAFT" != true ]; then
+            gh pr merge "$PR" --auto --squash
+            echo "Auto-merge enabled."
+          else
+            echo "Auto-merge off (tier=$tier, author=$AUTHOR_ASSOC, head=$HEAD_REPO, draft=$DRAFT)."
+          fi

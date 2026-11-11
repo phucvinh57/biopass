@@ -178,3 +178,22 @@ jobs:
       - name: cargo test
         working-directory: app/src-tauri
         run: cargo test
+
+  # Single required check for the main ruleset, whichever area jobs ran.
+  ci-ok:
+    name: CI OK
+    needs: [changes, frontend, shell, native]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check job results
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Results: $RESULTS"
+          for r in $RESULTS; do
+            case "$r" in
+              success|skipped) ;;
+              *) exit 1 ;;
+            esac
+          done

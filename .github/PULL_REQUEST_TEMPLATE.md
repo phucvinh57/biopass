@@ -39,9 +39,9 @@ Not tested: <!-- what was not covered and why (no device, needs VM, ...) -->
 
 ## Risk
 
-- [ ] Low: docs, UI copy, styling, tests
-- [ ] Medium: app logic, Rust/Tauri commands, face/fingerprint pipeline
-- [ ] High: PAM module or helper, install/remove scripts, PAM config, packaging, CI/release workflows
+- [ ] Low: README, `docs/IR camera.md`, images, `app/src` styling and frontend tests (auto-merges)
+- [ ] Medium: app logic, Rust/Tauri commands, face/fingerprint pipeline, PAM/Polkit/Keyring docs, Rust/C++ tests
+- [ ] High: PAM module or helper, keyring tool, install/remove scripts, PAM config, packaging, CI/release workflows
 
 What could break, and for whom:
 

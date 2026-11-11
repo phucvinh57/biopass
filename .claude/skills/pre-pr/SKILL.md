@@ -23,7 +23,7 @@ Then check each Important finding yourself by opening the cited line. Drop the o
 
 ## 4. Security review
 
-Run this step if the diff touches `auth/pam`, `auth/core`, `app/src-tauri/scripts`, `app/src-tauri/capabilities`, `tauri.conf.json`, or model download code. Run `/security-review` and apply the focus list in [security-focus.md](security-focus.md).
+Run this step if the diff touches `auth/pam`, `auth/core`, `auth/keyring`, `app/src-tauri/scripts`, `app/src-tauri/capabilities`, `tauri.conf.json`, or model download code. Run `/security-review` and apply the focus list in [security-focus.md](security-focus.md).
 
 ## 5. Converge
 

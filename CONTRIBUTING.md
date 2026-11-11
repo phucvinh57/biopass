@@ -48,9 +48,11 @@ Pick the risk tier from what the change touches:
 
 | Tier | Examples | Review needed |
 | --- | --- | --- |
-| Low | Docs, UI copy, styling, tests | Green CI and one maintainer approval |
+| Low | README, `docs/IR camera.md`, images, `app/src` styling and frontend tests | Green CI (auto-merges for collaborators; fork PRs need one maintainer approval) |
 | Medium | App logic, Tauri commands, face/fingerprint pipeline | Green CI, `/pre-pr` report, one maintainer approval |
-| High | `auth/pam`, `auth/core`, install/remove scripts, PAM config, packaging, `.github/` | Green CI, `/pre-pr` with security review, code owner approval, tested in a VM |
+| High | `auth/pam`, `auth/core`, `auth/keyring`, install/remove scripts, PAM config, packaging, `.github/` | Green CI, `/pre-pr` with security review, code owner approval, tested in a VM |
+
+The [PR risk workflow](.github/workflows/pr-risk.yml) labels every PR `risk: low`, `risk: medium` or `risk: high` from its changed paths ([rules](.github/scripts/pr-risk.sh); the highest tier wins, unknown paths are medium; PAM/Polkit/Keyring guides, CONTRIBUTING and Rust/C++ tests are medium). Low-risk PRs from collaborators auto-merge (squash) once the `CI OK` check passes. Low-risk PRs from forks, and all medium and high PRs, wait for a maintainer. Every push turns auto-merge off first, then re-enables it only for low risk.
 
 High-risk paths are listed in [CODEOWNERS](.github/CODEOWNERS) and always need a human code owner; bot or agent approvals never count. Commits pushed after approval get re-checked. All review threads must be resolved (fixed, or closed with a short reason) before merge.
 
