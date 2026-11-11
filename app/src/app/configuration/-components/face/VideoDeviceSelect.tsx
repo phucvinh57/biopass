@@ -55,12 +55,16 @@ export function VideoDeviceSelect({
       onValueChange={(next) => onChange(next === DISABLED_OPTION ? null : next)}
     >
       <SelectTrigger id={id} className="h-10 w-full min-w-0">
-        {/* The name only; the list shows details to tell devices apart. */}
+        {/* RGB and IR nodes can share the same name. */}
         <SelectValue
           className="min-w-0 flex-1 overflow-hidden text-left"
           placeholder={placeholder ?? offLabel}
         >
-          {selected && <span className="truncate">{selected.label}</span>}
+          {selected && (
+            <span className="truncate" title={selected.path}>
+              {selected.label} — {selected.node}
+            </span>
+          )}
         </SelectValue>
       </SelectTrigger>
       <SelectContent>
@@ -88,11 +92,16 @@ export function VideoDeviceSelect({
   );
 }
 
-/** The device's label, with its details muted below. */
+/** Include the node and saved path so RGB and IR streams are distinguishable. */
 function DeviceLabel({ device }: { device: VideoDeviceInfo }) {
   return (
     <span className="flex min-w-0 flex-col">
-      <span className="truncate">{device.label}</span>
+      <span className="truncate">
+        {device.label} — {device.node}
+      </span>
+      <span className="break-all text-xs text-muted-foreground">
+        {device.path}
+      </span>
       {device.details && (
         <span className="truncate text-xs text-muted-foreground">
           {device.details}

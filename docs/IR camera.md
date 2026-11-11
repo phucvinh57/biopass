@@ -42,6 +42,23 @@ If you only want IR-based anti-spoofing, selecting the `IR Camera` device is eno
 
 To use the IR sensor as the main camera too (enrol and sign in on IR), set both `Camera Device` and `IR Camera` to the same IR node explicitly: an unset camera that defaults to the IR node is not treated as the IR camera, and a main camera that delivers colour frames fails the IR check. That colour check only catches picking an RGB webcam by mistake: an RGB camera filming a greyscale scene can pass it, so only use this setup with a real IR node. If a real IR node is rejected, the debug log shows its `chroma` value; please report it.
 
+### Logitech BRIO (`046d:085e`): separate RGB and IR nodes
+
+Linux exposes separate RGB and IR nodes, but libcamera can represent both as one RGB camera. Its device/format listing can therefore show RGB formats even for the IR path. Check the nodes directly with V4L2 instead:
+
+```bash
+for device in /dev/v4l/by-id/*BRIO*; do
+  echo "=== $device ==="
+  v4l2-ctl --device="$device" --list-formats
+done
+```
+
+Keep the RGB node as the main camera and select the separate node offering native `GREY` as `IR Camera` in the same camera profile. On the tested BRIO, `video-index0` offered `MJPG`/`YUYV` and `video-index2` offered `GREY`; verify the formats rather than assuming these indices on every device.
+
+When both paths resolve to the same libcamera camera, Biopass captures RGB, releases that session, then opens the configured IR node directly through V4L2. This path requires native `GREY`, including after driver negotiation. If opening or format negotiation fails, face authentication fails; it never substitutes the RGB stream. The debug log reports `Using direct V4L2 for IR node` and the negotiated `GREY` format. A passed IR presence check confirms a face is visible, not liveness or identity.
+
+The app lists capture nodes using udev capabilities, hides metadata nodes, and shows each node and its stable path so RGB and IR can be distinguished. If udev capability data is unavailable, it retains the previous index-0 filter; a secondary IR node may then be missing. In that case, set its stable path in the relevant `camera_profiles[].ir_camera` field in `config.yaml` with the app closed.
+
 ### Camera profiles (docked / undocked)
 
 If your cameras change (a dock camera, a closed lid), add `Camera Profiles` under the face settings: ordered camera + IR camera pairs. The first profile you add starts from your current camera and IR camera, when a camera is set. While profiles exist, they override `Camera Device`, and the anti-spoofing IR picker becomes the `Fallback IR Camera`.
