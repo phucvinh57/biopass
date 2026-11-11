@@ -3,6 +3,7 @@
 
 /auth/pam/                    @phucvinh57
 /auth/core/                   @phucvinh57
+/auth/keyring/                @phucvinh57
 /app/src-tauri/scripts/       @phucvinh57
 /app/src-tauri/tauri.conf.json @phucvinh57
 /app/src-tauri/capabilities/  @phucvinh57
@@ -11,3 +12,13 @@
 /.github/                     @phucvinh57
 /CLAUDE.md                    @phucvinh57
 /REVIEW.md                    @phucvinh57
+/.claude/                     @phucvinh57
+/lefthook.yml                 @phucvinh57
+/auth/*.cmake                 @phucvinh57
+/auth/**/CMakeLists.txt       @phucvinh57
+/auth/CMakeLists.txt          @phucvinh57
+/auth/test/
+package.json                  @phucvinh57
+Cargo.toml                    @phucvinh57
+Cargo.lock                    @phucvinh57
+/app/bun.lock                 @phucvinh57
