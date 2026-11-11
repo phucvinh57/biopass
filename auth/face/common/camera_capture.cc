@@ -777,9 +777,27 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
 
 }  // namespace
 
+bool shareLibcameraCamera(const std::optional<std::string>& main_path, const std::string& ir_path) {
+  auto manager = cameraManager();
+  if (!manager) {
+    return false;
+  }
+  auto ir_camera = findCameraByPath(*manager, ir_path);
+  return ir_camera && ir_camera == findCamera(*manager, main_path);
+}
+
 std::unique_ptr<ICameraCaptureSession> openCameraSession(
     const std::optional<std::string>& linux_video_device_path, CameraCaptureFormat format,
     int warmup_frames, int capture_timeout_ms) {
+  if (format == CameraCaptureFormat::DirectV4L2Grey) {
+    if (!linux_video_device_path) {
+      return nullptr;
+    }
+    spdlog::debug("FaceAuth: Using direct V4L2 for IR node '{}'", *linux_video_device_path);
+    return V4l2CaptureSession::open(*linux_video_device_path, format, warmup_frames,
+                                    capture_timeout_ms);
+  }
+
   auto manager = cameraManager();
   if (!manager) {
     return nullptr;

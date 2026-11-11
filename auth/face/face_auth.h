@@ -26,15 +26,15 @@ class FaceAuth : public IAuthMethod {
       const std::optional<std::string>& device_path, CameraCaptureFormat format, int warmup_frames,
       int capture_timeout_ms)>;
 
+  using CameraShareProbe = bool (*)(const std::optional<std::string>& main_path,
+                                    const std::string& ir_path);
+
   // One sqlite connection per auth session, reused for every model_id lookup.
   // open_camera: openCameraSession() unless a test passes a fake.
   // The camera profile is picked once here, for this helper run.
   FaceAuth(const FaceMethodConfig& config, const std::string& username,
-           CameraOpener open_camera = nullptr)
-      : face_config_(withCameraProfile(config)),
-        username_(username),
-        model_registry_(username),
-        open_camera_(open_camera ? std::move(open_camera) : CameraOpener(openCameraSession)) {}
+           CameraOpener open_camera = nullptr,
+           CameraShareProbe share_camera = shareLibcameraCamera);
   ~FaceAuth() override = default;
 
   std::string name() const override { return "Face"; }
@@ -71,6 +71,7 @@ class FaceAuth : public IAuthMethod {
   std::string username_;
   ModelRegistry model_registry_;
   CameraOpener open_camera_;
+  bool sequential_ir_ = false;
   // Opened by isAvailable() (hence mutable) and kept for the auth session.
   mutable std::unique_ptr<ICameraCaptureSession> camera_session_;
   std::unique_ptr<ICameraCaptureSession> ir_camera_session_;

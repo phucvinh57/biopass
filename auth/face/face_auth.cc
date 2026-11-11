@@ -58,6 +58,17 @@ bool sameCameraDevice(const std::string& a, const std::string& b) {
 
 }  // namespace
 
+FaceAuth::FaceAuth(const FaceMethodConfig& config, const std::string& username,
+                   CameraOpener open_camera, CameraShareProbe share_camera)
+    : face_config_(withCameraProfile(config)),
+      username_(username),
+      model_registry_(username),
+      open_camera_(open_camera ? std::move(open_camera) : CameraOpener(openCameraSession)) {
+  const auto& ir_camera = face_config_.anti_spoofing.ir_camera;
+  sequential_ir_ = ir_camera && !ir_camera->empty() && !irIsMainCamera() &&
+                   share_camera(face_config_.camera, *ir_camera);
+}
+
 bool FaceAuth::irIsMainCamera() const {
   const auto& camera = face_config_.camera;
   const auto& ir_camera = face_config_.anti_spoofing.ir_camera;
@@ -92,10 +103,8 @@ bool FaceAuth::isAvailable() const {
   return true;
 }
 
-// A failed IR open leaves ir_camera_session_ null; checkAntiSpoof() then
-// falls back to a one-shot capture per attempt. A main session that is not
-// open is still returned, so the check fails instead of opening the camera a
-// second time.
+// Separate cameras can keep both sessions open. For two nodes of a
+// single camera, release RGB after capturing its frame, before opening IR.
 ICameraCaptureSession* FaceAuth::irPresenceSession() {
   const auto& ir_camera = face_config_.anti_spoofing.ir_camera;
   if (!ir_camera || ir_camera->empty()) {
@@ -107,8 +116,14 @@ ICameraCaptureSession* FaceAuth::irPresenceSession() {
   }
   if (!ir_camera_session_ || !ir_camera_session_->isOpen()) {
     ir_camera_session_.reset();
-    ir_camera_session_ = open_camera_(*ir_camera, CameraCaptureFormat::V4L2Grey,
-                                      kIrCaptureWarmupFrames, kIrCaptureTimeoutMs);
+    if (sequential_ir_) {
+      camera_session_.reset();
+    }
+    // The libcamera object opens the default (RGB) node for both paths.
+    const auto format =
+        sequential_ir_ ? CameraCaptureFormat::DirectV4L2Grey : CameraCaptureFormat::V4L2Grey;
+    ir_camera_session_ =
+        open_camera_(*ir_camera, format, kIrCaptureWarmupFrames, kIrCaptureTimeoutMs);
     if (!ir_camera_session_) {
       spdlog::warn("FaceAuth: Could not open IR camera session on '{}'", *ir_camera);
     }
@@ -269,9 +284,18 @@ AuthResult FaceAuth::attempt(const std::string& username, const AuthConfig& conf
     return AuthResult::Failure;
   }
 
-  if (!checkAntiSpoof(face_config_, username, loginFace, detectedImages[0].box, config,
-                      model_registry_, antispoof_model_, detector_.get(), irPresenceSession(),
-                      cancel_signal, irIsMainCamera())) {
+  auto* ir_session = irPresenceSession();
+  if (sequential_ir_ && !ir_session) {
+    return AuthResult::Failure;
+  }
+  const bool anti_spoof_passed = checkAntiSpoof(
+      face_config_, username, loginFace, detectedImages[0].box, config, model_registry_,
+      antispoof_model_, detector_.get(), ir_session, cancel_signal, irIsMainCamera());
+  if (sequential_ir_) {
+    // The next recognition attempt may need to reopen RGB on the same device.
+    ir_camera_session_.reset();
+  }
+  if (!anti_spoof_passed) {
     spdlog::warn("FaceAuth: Anti-spoofing failed — returning Failure (no retry allowed)");
     // Always tear down the IR session so a subsequent call cannot reuse a
     // partially-warmed camera to bypass the check; when the IR camera is the

@@ -11,8 +11,9 @@
 namespace biopass {
 
 enum class CameraCaptureFormat {
-  Default,   // MJPEG -> YUYV -> NV12/NV21/YUV420 -> packed RGB -> R8
-  V4L2Grey,  // IR: R8 -> NV12/NV21/YUV420 -> YUYV -> MJPEG -> packed RGB (some lack R8)
+  Default,         // MJPEG -> YUYV -> NV12/NV21/YUV420 -> packed RGB -> R8
+  V4L2Grey,        // IR: R8 -> NV12/NV21/YUV420 -> YUYV -> MJPEG -> packed RGB (some lack R8)
+  DirectV4L2Grey,  // Bypass libcamera and require native GREY on the explicit node.
 };
 
 // Colour sessions discard this many frames once, so auto-exposure settles.
@@ -39,6 +40,8 @@ std::unique_ptr<ICameraCaptureSession> openCameraSession(
     const std::optional<std::string>& device_path,
     CameraCaptureFormat format = CameraCaptureFormat::Default,
     int warmup_frames = kColorCaptureWarmupFrames, int capture_timeout_ms = kColorCaptureTimeoutMs);
+// Distinct V4L2 nodes can be represented by the same libcamera camera.
+bool shareLibcameraCamera(const std::optional<std::string>& main_path, const std::string& ir_path);
 ImageRGB captureImageByIRCamera(const std::string& device_path,
                                 int warmup_frames = kIrCaptureWarmupFrames,
                                 int capture_timeout_ms = kIrCaptureTimeoutMs);

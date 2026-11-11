@@ -13,6 +13,8 @@
 
 #include "v4l2_capture.h"
 
+int testNegotiation();
+
 namespace {
 
 using biopass::CameraCaptureFormat;
@@ -55,6 +57,12 @@ void testMapping() {
 void testSelection() {
   const auto colour = CameraCaptureFormat::Default;
   const auto ir = CameraCaptureFormat::V4L2Grey;
+  const auto direct_ir = CameraCaptureFormat::DirectV4L2Grey;
+
+  expect(picks({V4L2_PIX_FMT_YUYV, V4L2_PIX_FMT_GREY}, direct_ir, V4L2_PIX_FMT_GREY),
+         "direct IR: native GREY is selected");
+  expect(!pickV4l2Format({V4L2_PIX_FMT_MJPEG, V4L2_PIX_FMT_YUYV}, direct_ir),
+         "direct IR: reject colour-only formats");
 
   expect(picks({V4L2_PIX_FMT_YUYV, V4L2_PIX_FMT_MJPEG}, colour, V4L2_PIX_FMT_MJPEG),
          "colour: MJPG over YUYV");
@@ -101,5 +109,6 @@ int main() {
   testSelection();
   testBytesPerLine();
   testVideoCharDevice();
+  g_failures += testNegotiation();
   return g_failures == 0 ? 0 : 1;
 }
