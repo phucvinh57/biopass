@@ -97,10 +97,13 @@ fn read_attr(dir: &Path, name: &str) -> Option<String> {
     (!value.is_empty()).then(|| value.to_string())
 }
 
-/// Whether the node at `class_dir` (/sys/class/video4linux/videoN) is a
-/// stream's first node. UVC adds a metadata node (index 1) per stream that
-/// can't capture frames. No `index` attribute counts as first.
-fn is_first_node(class_dir: &Path) -> bool {
+/// Capture capabilities distinguish RGB/IR streams from metadata; the BRIO
+/// uses indices 0 and 2 for capture, so index 0 alone is not enough.
+fn is_capture_node(class_dir: &Path, udev_data: &Path) -> bool {
+    if let Some(caps) = udev_property(udev_data, class_dir, "ID_V4L_CAPABILITIES") {
+        return caps.split(':').any(|cap| cap == "capture");
+    }
+    // shortcut: without udev data, retain index-0 filtering; use QUERYCAP to support secondary nodes there.
     read_attr(class_dir, "index")
         .and_then(|index| index.parse::<u32>().ok())
         .is_none_or(|index| index == 0)
@@ -108,10 +111,8 @@ fn is_first_node(class_dir: &Path) -> bool {
 
 const UDEV_DATA_DIR: &str = "/run/udev/data";
 
-/// A property udev's hwdb set on the USB device at `usb` (e.g.
-/// ID_VENDOR_FROM_DATABASE), read from its udev database entry. Cameras often
-/// report a placeholder maker such as "Generic"; the USB ID database has the
-/// real one.
+/// A udev property of a sysfs device with a `dev` attribute (major:minor).
+/// Used for video capture capabilities and USB vendor/model descriptions.
 fn udev_property(udev_data: &Path, usb: &Path, key: &str) -> Option<String> {
     let dev = read_attr(usb, "dev")?;
     let data = fs::read_to_string(udev_data.join(format!("c{dev}"))).ok()?;
@@ -218,7 +219,7 @@ pub fn list_video_devices() -> Result<Vec<VideoDeviceInfo>, String> {
         }
 
         let class_dir = Path::new(CLASS_DIR).join(&file_name);
-        if !is_first_node(&class_dir) {
+        if !is_capture_node(&class_dir, Path::new(UDEV_DATA_DIR)) {
             continue;
         }
 
@@ -247,7 +248,7 @@ pub fn list_video_devices() -> Result<Vec<VideoDeviceInfo>, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        describe, describe_with, is_first_node, stable_path, usb_group, username_from,
+        describe, describe_with, is_capture_node, stable_path, usb_group, username_from,
         video_device_sort_key,
     };
     use std::fs;
@@ -503,7 +504,46 @@ mod tests {
     }
 
     #[test]
-    fn metadata_nodes_are_skipped() {
+    fn brio_rgb_and_ir_capture_nodes_are_kept_but_metadata_is_skipped() {
+        let root = tempfile::tempdir().unwrap();
+        let udev = root.path().join("udev");
+        for (index, caps, capture) in [
+            (0, ":capture:streaming:", true),
+            (1, ":meta_capture:streaming:", false),
+            (2, ":capture:streaming:", true),
+            (3, ":meta_capture:streaming:", false),
+        ] {
+            let class = root.path().join(format!("video{index}"));
+            let dev = format!("81:{index}");
+            write(&class, &[("dev", &dev), ("index", &index.to_string())]);
+            write(
+                &udev,
+                &[(&format!("c{dev}"), &format!("E:ID_V4L_CAPABILITIES={caps}"))],
+            );
+            assert_eq!(is_capture_node(&class, &udev), capture, "index {index}");
+        }
+    }
+
+    #[test]
+    fn capture_capabilities_override_the_index() {
+        let root = tempfile::tempdir().unwrap();
+        let udev = root.path().join("udev");
+        let class = root.path().join("video0");
+        write(&class, &[("dev", "81:0"), ("index", "0")]);
+        for caps in [":", ":video_output:", ":vbi_capture:", ":meta_capture:"] {
+            write(
+                &udev,
+                &[("c81:0", &format!("E:ID_V4L_CAPABILITIES={caps}"))],
+            );
+            assert!(!is_capture_node(&class, &udev), "{caps}");
+        }
+        write(&class, &[("index", "1")]);
+        write(&udev, &[("c81:0", "E:ID_V4L_CAPABILITIES=:capture:")]);
+        assert!(is_capture_node(&class, &udev));
+    }
+
+    #[test]
+    fn missing_udev_capabilities_keep_the_first_node_fallback() {
         let root = tempfile::tempdir().unwrap();
         for (index, first) in [(None, true), (Some("0"), true), (Some("1"), false)] {
             let class = root.path().join(format!("video-{first}-{index:?}"));
@@ -511,7 +551,11 @@ mod tests {
             if let Some(index) = index {
                 write(&class, &[("index", index)]);
             }
-            assert_eq!(is_first_node(&class), first, "{index:?}");
+            assert_eq!(
+                is_capture_node(&class, &root.path().join("udev")),
+                first,
+                "{index:?}"
+            );
         }
     }
 }

@@ -1,9 +1,13 @@
 set(V4L2_CAPTURE_TEST v4l2_capture_test)
 
-add_executable(${V4L2_CAPTURE_TEST} main.cpp)
+add_executable(${V4L2_CAPTURE_TEST} main.cpp negotiation.cpp)
 
 target_link_libraries(${V4L2_CAPTURE_TEST} PRIVATE
     biopass_face_common
+)
+
+target_link_options(${V4L2_CAPTURE_TEST} PRIVATE
+    -Wl,--wrap=open,--wrap=close,--wrap=fstat,--wrap=ioctl
 )
 
 add_test(NAME v4l2_capture COMMAND ${V4L2_CAPTURE_TEST})

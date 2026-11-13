@@ -1,7 +1,7 @@
 #pragma once
 
-// Direct V4L2 capture for devices libcamera does not list (custom DKMS
-// drivers, v4l2loopback). Used only for an explicit /dev/video* path.
+// Direct V4L2 capture for explicit video nodes that libcamera does not expose
+// individually (for example v4l2loopback or a secondary UVC IR node).
 
 #include <libcamera/pixel_format.h>
 #include <sys/types.h>

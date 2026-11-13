@@ -4,15 +4,18 @@
 // Unavailable vs Retry, and a session it gets is kept for the next attempt.
 // When the IR camera is the main camera, the IR presence check reuses the
 // main session instead of opening the device a second time.
-// Uses a fake camera and an unknown user, so no camera or model is needed.
+// Uses fake cameras and a tiny constant ONNX model; no hardware or user data is needed.
 // Exits non-zero on any failure.
 
+#include <sqlite3.h>
 #include <unistd.h>
 
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <deque>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <string>
@@ -20,10 +23,13 @@
 
 #include "camera_capture.h"
 #include "face_auth.h"
+#include "user_paths.h"
 
 namespace {
 
 int g_failures = 0;
+std::string g_test_home;
+int g_ir_fallback_opens = 0;
 
 void expect(bool cond, const std::string& what) {
   std::printf("[%s] %s\n", cond ? "PASS" : "FAIL", what.c_str());
@@ -39,6 +45,8 @@ enum class Open { Ok, Fail, Dead };
 struct CameraLog {
   int opens = 0;
   int closes = 0;
+  int captures = 0;
+  bool return_frame = false;
   // Sessions alive right now, and the most alive when an open started.
   int live = 0;
   int max_live_at_open = 0;
@@ -60,7 +68,10 @@ class FakeSession : public biopass::ICameraCaptureSession {
     log_.live--;
   }
   bool isOpen() const override { return open_; }
-  ImageRGB capture() override { return {}; }
+  ImageRGB capture() override {
+    ++log_.captures;
+    return log_.return_frame ? ImageRGB(8, 8) : ImageRGB{};
+  }
 
  private:
   CameraLog& log_;
@@ -229,6 +240,87 @@ void checkSeparateIrCamera() {
   expect(log.live == 0, "separate IR camera: session end closes both");
 }
 
+// Two nodes can resolve to one libcamera object, as on the Logitech BRIO.
+void checkSharedCameraClosesRgbBeforeIr(Open ir_result) {
+  CameraLog log;
+  log.results = {Open::Ok, ir_result};
+  const auto shared = [](const std::optional<std::string>& main, const std::string& ir) {
+    return main == "/dev/fake-rgb" && ir == "/dev/fake-ir";
+  };
+  biopass::FaceAuth face(withCameras("/dev/fake-rgb", "/dev/fake-ir"), kUser, fakeOpener(log),
+                         shared);
+  expect(face.isAvailable(), "shared camera: RGB is available");
+  const auto* ir = face.irPresenceSession();
+  expect((ir != nullptr) == (ir_result == Open::Ok), "shared camera: IR open result is preserved");
+  expect(log.opens == 2 && log.paths[1] == "/dev/fake-ir" &&
+             log.formats[1] == biopass::CameraCaptureFormat::DirectV4L2Grey,
+         "shared camera: the IR open directly targets the configured grey node");
+  expect(log.closes == 1 && log.max_live_at_open == 0,
+         "shared camera: RGB is released before the IR open");
+  face.endAuthenticationSession();
+  expect(log.live == 0, "shared camera: session end releases any open IR session");
+}
+
+// Float input [1,3,640,640], constant output [1,5,1]: one confident face box.
+// Both engines can load it; recognition must never run after the IR open fails.
+constexpr char kFaceModel[] =
+    "\x08\x08\x3a\x74\x12\x09\x66\x61\x63\x65\x2d\x74\x65\x73\x74\x2a\x26\x08\x01\x08"
+    "\x05\x08\x01\x10\x01\x42\x06\x6f\x75\x74\x70\x75\x74\x4a\x14\x00\x00\xa0\x43\x00"
+    "\x00\xa0\x43\x00\x00\xa0\x43\x00\x00\xa0\x43\x00\x00\x80\x3f\x5a\x21\x0a\x05\x69"
+    "\x6e\x70\x75\x74\x12\x18\x0a\x16\x08\x01\x12\x12\x0a\x02\x08\x01\x0a\x02\x08\x03"
+    "\x0a\x03\x08\x80\x05\x0a\x03\x08\x80\x05\x62\x1c\x0a\x06\x6f\x75\x74\x70\x75\x74"
+    "\x12\x12\x0a\x10\x08\x01\x12\x0c\x0a\x02\x08\x01\x0a\x02\x08\x05\x0a\x02\x08\x01"
+    "\x42\x02\x10\x0d";
+
+void checkSharedIrOpenFailureAbortsAuthentication() {
+  char dir_template[] = "/tmp/biopass-ir-failure-XXXXXX";
+  const char* dir = mkdtemp(dir_template);
+  expect(dir != nullptr, "IR failure: create isolated user home");
+  if (!dir) {
+    return;
+  }
+  g_test_home = dir;
+  const auto config_dir = g_test_home + "/.config/com.ticklab.biopass";
+  const auto faces_dir = g_test_home + "/.local/share/com.ticklab.biopass/faces";
+  std::filesystem::create_directories(config_dir);
+  std::filesystem::create_directories(faces_dir);
+  const auto model_path = g_test_home + "/face.onnx";
+  std::ofstream(model_path, std::ios::binary).write(kFaceModel, sizeof(kFaceModel) - 1);
+  std::ofstream(faces_dir + "/enrolled.jpg") << "not read before the IR check";
+
+  sqlite3* db = nullptr;
+  const auto sql =
+      "CREATE TABLE models (id TEXT, path TEXT, architecture TEXT);"
+      "INSERT INTO models VALUES ('fixture', '" +
+      model_path + "', NULL);";
+  const bool ready = sqlite3_open((config_dir + "/biopass.db").c_str(), &db) == SQLITE_OK &&
+                     sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr) == SQLITE_OK;
+  sqlite3_close(db);
+  expect(ready, "IR failure: create model registry");
+  if (ready) {
+    CameraLog log;
+    log.results = {Open::Ok, Open::Fail};
+    log.return_frame = true;
+    auto config = withCameras("/dev/fake-rgb", "/dev/fake-ir");
+    config.detection.model_id = config.recognition.model_id = "fixture";
+    config.anti_spoofing.enable = false;
+    config.anti_spoofing.ir_warmup_delay_ms = 0;
+    config.anti_spoofing.ir_presence_timeout_ms = 0;
+    biopass::FaceAuth face(config, kUser, fakeOpener(log),
+                           [](const auto&, const auto&) { return true; });
+    g_ir_fallback_opens = 0;
+    expect(face.authenticate(kUser, biopass::AuthConfig{}) == biopass::AuthResult::Failure,
+           "IR open failure: authentication fails closed");
+    expect(log.captures == 1 && log.opens == 2 &&
+               log.formats.back() == biopass::CameraCaptureFormat::DirectV4L2Grey,
+           "IR open failure: reached the direct IR open after capturing RGB");
+    expect(g_ir_fallback_opens == 0, "IR open failure: no permissive one-shot IR fallback");
+    expect(log.live == 0, "IR open failure: no camera session remains open");
+  }
+  g_test_home.clear();
+  std::filesystem::remove_all(dir);
+}
+
 // A /dev/v4l/by-id style symlink names the same device as its target.
 void checkIrIsMainCameraBySymlink() {
   char dir_template[] = "/tmp/biopass-camera-reuse-XXXXXX";
@@ -250,6 +342,27 @@ void checkIrIsMainCameraBySymlink() {
 
 }  // namespace
 
+// Test doubles: all user files live in the fixture, and a one-shot IR fallback is observable.
+namespace biopass {
+std::optional<UserPaths> resolveUser(const std::string& username) {
+  if (g_test_home.empty() || username != kUser) {
+    return std::nullopt;
+  }
+  UserPaths paths;
+  paths.uid = geteuid();
+  paths.gid = getegid();
+  paths.home = g_test_home;
+  paths.config_dir = g_test_home + "/.config/com.ticklab.biopass";
+  paths.data_dir = g_test_home + "/.local/share/com.ticklab.biopass";
+  return paths;
+}
+
+ImageRGB captureImageByIRCamera(const std::string&, int, int) {
+  ++g_ir_fallback_opens;
+  return {};
+}
+}  // namespace biopass
+
 int main() {
   checkAvailabilitySessionIsReused();
   checkMissingCamera();
@@ -259,6 +372,9 @@ int main() {
   checkNoIrCamera();
   checkIrIsMainCameraReused("/dev/fake-cam", "/dev/fake-cam", "IR camera is the main camera");
   checkSeparateIrCamera();
+  checkSharedCameraClosesRgbBeforeIr(Open::Ok);
+  checkSharedCameraClosesRgbBeforeIr(Open::Fail);
+  checkSharedIrOpenFailureAbortsAuthentication();
   checkIrIsMainCameraBySymlink();
 
   std::printf("%s\n", g_failures == 0 ? "All checks passed" : "Some checks FAILED");

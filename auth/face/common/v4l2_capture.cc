@@ -203,6 +203,11 @@ std::optional<libcamera::PixelFormat> pixelFormatFromV4l2(uint32_t fourcc) {
 
 std::optional<uint32_t> pickV4l2Format(const std::vector<uint32_t>& available,
                                        CameraCaptureFormat format) {
+  if (format == CameraCaptureFormat::DirectV4L2Grey) {
+    return std::find(available.begin(), available.end(), V4L2_PIX_FMT_GREY) != available.end()
+               ? std::optional<uint32_t>{V4L2_PIX_FMT_GREY}
+               : std::nullopt;
+  }
   for (const auto& candidate : pixelFormatPreference(format)) {
     for (const uint32_t fourcc : available) {
       if (pixelFormatFromV4l2(fourcc) == candidate) {
@@ -250,7 +255,7 @@ V4l2CaptureSession::V4l2CaptureSession(std::string device_path,
                                        CameraCaptureFormat requested_format, int warmup_frames,
                                        int capture_timeout_ms)
     : device_path_(std::move(device_path)),
-      is_grey_(requested_format == CameraCaptureFormat::V4L2Grey),
+      is_grey_(requested_format != CameraCaptureFormat::Default),
       warmup_frames_(std::max(0, warmup_frames)),
       capture_timeout_ms_(capture_timeout_ms) {}
 
@@ -303,6 +308,11 @@ bool V4l2CaptureSession::setup(CameraCaptureFormat requested_format) {
   if (xioctl(fd_, VIDIOC_S_FMT, &fmt) < 0) {
     spdlog::error("FaceAuth: Failed to configure camera '{}': {}", device_path_,
                   std::strerror(errno));
+    return false;
+  }
+  if (requested_format == CameraCaptureFormat::DirectV4L2Grey &&
+      fmt.fmt.pix.pixelformat != V4L2_PIX_FMT_GREY) {
+    spdlog::error("FaceAuth: IR camera '{}' did not negotiate native GREY", device_path_);
     return false;
   }
   if (!pixelFormatFromV4l2(fmt.fmt.pix.pixelformat)) {
