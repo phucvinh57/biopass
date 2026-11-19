@@ -35,12 +35,18 @@ Arch uses neither `pam-auth-update` nor `authselect` by default; configure PAM m
     ```bash
     sudoedit /etc/pam.d/system-auth
     ```
-3. Insert Biopass before the existing `pam_unix.so` auth rule:
+3. Add the `libbiopass_pam.so` line below `pam_systemd_home.so`, and raise `pam_systemd_home.so`'s `success=` count from 2 to 3. Arch's stock `auth` block becomes:
     ```pam
-    auth sufficient libbiopass_pam.so
-    auth [success=1 default=ignore] pam_unix.so nullok
-    auth requisite pam_deny.so
+    auth       required                    pam_faillock.so      preauth
+    -auth      [success=3 default=ignore]  pam_systemd_home.so
+    auth       [success=2 default=ignore]  libbiopass_pam.so    authtok
+    auth       [success=1 default=bad]     pam_unix.so          try_first_pass nullok
+    auth       [default=die]               pam_faillock.so      authfail
+    auth       optional                    pam_permit.so
+    auth       required                    pam_env.so
+    auth       required                    pam_faillock.so      authsucc
     ```
+    `success=N` skips the next N rules, so every rule above an inserted line has to count it. Inserting the line without that (for example as `auth sufficient libbiopass_pam.so` above `pam_unix.so`) moves `pam_systemd_home.so`'s jump onto `pam_faillock.so authfail`, which ends the stack. Then `pam_setcred()` fails with `PERM_DENIED` for sessions that don't authenticate first, such as greetd's greeter and autologin, and the display manager doesn't start. A Biopass match skips `pam_unix.so` and the `authfail` rule, and the login screen's keyring lines (`pam_kwallet5.so`, `pam_gnome_keyring.so`) still run, so `authtok` unlocks the keyring.
 4. Test in a new terminal before closing the root terminal:
     ```bash
     sudo -k
