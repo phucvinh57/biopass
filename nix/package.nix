@@ -22,7 +22,7 @@
 , libxcrypt-legacy
 , linux-pam
 , libfprint
-, fprintd
+
 , libyaml
 , gnutls
 , libevent
@@ -92,8 +92,6 @@ stdenv.mkDerivation rec {
   postFixup = ''
     wrapGApp $out/bin/biopass
   '';
-
-  passthru.pamModule = "${placeholder "out"}/lib/security/libbiopass_pam.so";
 
   meta = {
     description = "Multi-modal biometric login (face and fingerprint) for Linux";

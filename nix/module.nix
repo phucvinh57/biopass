@@ -1,4 +1,3 @@
-self:
 { config, lib, pkgs, ... }:
 
 let
@@ -11,15 +10,17 @@ in
 
     package = lib.mkOption {
       type = lib.types.package;
-      default = self.packages.${pkgs.stdenv.hostPlatform.system}.biopass;
-      defaultText = lib.literalExpression "biopass.packages.\${system}.biopass";
+      # Built from the host's nixpkgs: the PAM module is loaded into the
+      # host's sudo and login processes.
+      default = pkgs.callPackage ./package.nix { };
+      defaultText = lib.literalExpression "pkgs.callPackage ./nix/package.nix { }";
       description = "The Biopass package.";
     };
 
     services = lib.mkOption {
       type = lib.types.listOf lib.types.str;
-      default = [ "sudo" "login" "polkit-1" ];
-      example = [ "sudo" "login" "polkit-1" "sddm" "greetd" "gdm-password" ];
+      default = [ "sudo" "login" ];
+      example = [ "sudo" "login" "sddm" "greetd" "gdm-password" ];
       description = ''
         PAM services where a face or fingerprint match replaces the
         password. A failed or cancelled match falls through to the password
@@ -29,15 +30,24 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    # A "sufficient" match ends the auth stack, so it would skip a required
+    # second factor ordered after it.
+    assertions = map (name: {
+      assertion = !(pam.${name}.googleAuthenticator.enable or false)
+        && !(pam.${name}.duoSecurity.enable or false);
+      message = "programs.biopass.services: ${name} uses a second factor (Google Authenticator or Duo) that Biopass would skip. Remove ${name} from the list.";
+    }) cfg.services;
+
     environment.systemPackages = [ cfg.package ];
-    services.fprintd.enable = lib.mkDefault true;
+    # The app saves the keyring password through pkexec.
+    security.polkit.enable = lib.mkDefault true;
 
     # Biopass runs these by absolute /usr paths: the PAM module runs the
     # helper, the app runs biopass-keyring through pkexec, and the bundled
     # libcamera loads its IPA modules from /usr/lib/biopass.
     systemd.tmpfiles.rules = [
       "L+ /usr/bin/biopass-helper - - - - ${cfg.package}/bin/biopass-helper"
-      "L+ /usr/bin/pkexec - - - - /run/wrappers/bin/pkexec"
+      "L /usr/bin/pkexec - - - - /run/wrappers/bin/pkexec"
       "L+ /usr/libexec/biopass - - - - ${cfg.package}/libexec/biopass"
       "L+ /usr/lib/biopass - - - - ${cfg.package}/lib/biopass"
       "L+ /usr/share/biopass - - - - ${cfg.package}/share/biopass"

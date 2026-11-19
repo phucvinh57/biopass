@@ -15,7 +15,7 @@
       };
 
       nixosModules = rec {
-        biopass = import ./nix/module.nix self;
+        biopass = import ./nix/module.nix;
         default = biopass;
       };
 
