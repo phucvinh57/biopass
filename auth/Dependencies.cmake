@@ -1,23 +1,44 @@
 # ONNX Runtime
+# microsoft/onnxruntime (and its GitHub release assets) returned 404 from
+# 2026-11-18. Fetch Microsoft's official NuGet package instead: one archive
+# holds the headers and the linux-x64/linux-arm64 libraries (the x64 library is
+# byte-identical to the old GitHub tarball's).
 set(ONNXRUNTIME_VERSION "1.31.1")
 include(FetchContent)
 
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
-    set(ONNXRUNTIME_ARCH "linux-aarch64")
+    set(ONNXRUNTIME_ARCH "linux-arm64")
 else()
     set(ONNXRUNTIME_ARCH "linux-x64")
 endif()
 
 FetchContent_Declare(
     onnxruntime
-    URL https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-${ONNXRUNTIME_ARCH}-${ONNXRUNTIME_VERSION}.tgz
+    URL https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/${ONNXRUNTIME_VERSION}/microsoft.ml.onnxruntime.${ONNXRUNTIME_VERSION}.nupkg
+    URL_HASH SHA256=6871ccbc97f3d5bdb4095a1dcec33aa78d56f6ed8de5980ef5fa1d9f2e7c679a
+    # .nupkg is a zip; the name tells CMake how to extract it.
+    DOWNLOAD_NAME onnxruntime-${ONNXRUNTIME_VERSION}.zip
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
 FetchContent_MakeAvailable(onnxruntime)
 
 set(ONNXRUNTIME_ROOT "${onnxruntime_SOURCE_DIR}")
-set(ONNXRUNTIME_INCLUDE_DIRS "${ONNXRUNTIME_ROOT}/include")
-set(ONNXRUNTIME_LIB_DIR "${ONNXRUNTIME_ROOT}/lib")
+set(ONNXRUNTIME_INCLUDE_DIRS "${ONNXRUNTIME_ROOT}/build/native/include")
+
+# The package ships an unversioned libonnxruntime.so (SONAME libonnxruntime.so.1).
+# Stage it with the soname layout the old tarball had; tauri.conf.json and
+# test/runpath read libonnxruntime.so.${ONNXRUNTIME_VERSION} from here.
+set(ONNXRUNTIME_LIB_DIR "${CMAKE_BINARY_DIR}/onnxruntime/lib")
+set(_ort_native "${ONNXRUNTIME_ROOT}/runtimes/${ONNXRUNTIME_ARCH}/native")
+file(MAKE_DIRECTORY "${ONNXRUNTIME_LIB_DIR}")
+file(COPY_FILE "${_ort_native}/libonnxruntime.so"
+    "${ONNXRUNTIME_LIB_DIR}/libonnxruntime.so.${ONNXRUNTIME_VERSION}" ONLY_IF_DIFFERENT)
+file(COPY_FILE "${_ort_native}/libonnxruntime_providers_shared.so"
+    "${ONNXRUNTIME_LIB_DIR}/libonnxruntime_providers_shared.so" ONLY_IF_DIFFERENT)
+file(CREATE_LINK "libonnxruntime.so.${ONNXRUNTIME_VERSION}"
+    "${ONNXRUNTIME_LIB_DIR}/libonnxruntime.so.1" SYMBOLIC)
+file(CREATE_LINK "libonnxruntime.so.1"
+    "${ONNXRUNTIME_LIB_DIR}/libonnxruntime.so" SYMBOLIC)
 find_library(ONNXRUNTIME_LIB onnxruntime PATHS ${ONNXRUNTIME_LIB_DIR} NO_DEFAULT_PATH)
 
 # libturbojpeg: system package (stable soname)
