@@ -4,7 +4,7 @@
 # the module only keyring unlock is affected.
 if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled \
     && command -v semodule >/dev/null 2>&1; then
-    semodule -i /usr/share/biopass/selinux/biopass.cil >/dev/null 2>&1 \
+    semodule -i /usr/share/biopass/selinux/biopass.cil \
         || echo "biopass: could not install the SELinux module; keyring unlock may not work" >&2
 fi
 exit 0

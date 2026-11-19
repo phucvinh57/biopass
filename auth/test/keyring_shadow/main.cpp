@@ -2,6 +2,7 @@
 // (keyring/shadow_check.h), with hashes made here for yescrypt and SHA-512.
 
 #include <crypt.h>
+#include <errno.h>
 #include <unistd.h>
 
 #include <cstdio>
@@ -65,7 +66,7 @@ int main() {
          "unknown method is an error");
   // A shadow file that can't be read is not "no account" (not root here, or
   // SELinux at the login screen); with a readable one, the user is unknown.
-  if (access("/etc/shadow", R_OK) == 0) {
+  if (access("/etc/shadow", R_OK) == 0 || (errno != EACCES && errno != EPERM)) {
     expect(biopass::verifyLocalPassword("biopass-no-such-user-xyz", "x") ==
                PasswordCheck::NoLocalAccount,
            "unknown user has no local account");
