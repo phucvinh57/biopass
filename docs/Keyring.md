@@ -18,7 +18,7 @@ The card shows whether a password is saved and whether it is locked to Secure Bo
 - A local account (not LDAP/SSSD).
 - A password of at most 128 bytes.
 - The `authtok` PAM option. The Debian/Ubuntu package sets it; for manual setups see [PAM.md](PAM.md#module-options).
-- A supported login screen: `gdm-password`, `sddm`, `lightdm`, `login`, `greetd`, `lxdm`, `ly`. The GNOME lock screen and light-locker also work. `sudo`, `su`, polkit and lock screens that run as your user (KDE, swaylock, ...) never get the password.
+- A supported login screen: `gdm-password`, `sddm`, `plasmalogin`, `lightdm`, `login`, `greetd`, `lxdm`, `ly`. The GNOME lock screen and light-locker also work. `sudo`, `su`, polkit and lock screens that run as your user (KDE, swaylock, ...) never get the password.
 
 ### Changing your password
 
@@ -59,6 +59,7 @@ Use this without a TPM or with a network account. You type your password at the 
    | :--- | :--- |
    | GDM (GNOME) | `gdm-password` |
    | SDDM (KDE) | `sddm` |
+   | Plasma Login Manager (KDE) | `plasmalogin` |
    | LightDM | `lightdm` |
    | greetd | `greetd` |
    | LXDM | `lxdm` |
