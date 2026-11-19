@@ -11,8 +11,8 @@ namespace biopass {
 // up. sudo, su and polkit never get it. Lock screens that reuse one of these
 // services as root (GNOME's unlocks through gdm-password) do; ones that run
 // PAM as the user can't read the sealed file.
-inline constexpr std::array<std::string_view, 7> kKeyringServices = {
-    "gdm-password", "sddm", "lightdm", "login", "greetd", "lxdm", "ly",
+inline constexpr std::array<std::string_view, 8> kKeyringServices = {
+    "gdm-password", "sddm", "plasmalogin", "lightdm", "login", "greetd", "lxdm", "ly",
 };
 
 inline bool isKeyringService(std::string_view service) {

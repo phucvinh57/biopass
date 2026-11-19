@@ -29,7 +29,8 @@ int finish() {
 }  // namespace
 
 int main() {
-  for (const char* svc : {"gdm-password", "sddm", "lightdm", "login", "greetd", "lxdm", "ly"}) {
+  for (const char* svc :
+       {"gdm-password", "sddm", "plasmalogin", "lightdm", "login", "greetd", "lxdm", "ly"}) {
     expect(biopass::isKeyringService(svc), std::string("login service ") + svc);
   }
   for (const char* svc : {"sudo", "su", "polkit-1", "pkexec", "kde", "gdm-fingerprint", "",
