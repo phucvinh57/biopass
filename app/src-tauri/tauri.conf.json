@@ -75,7 +75,8 @@
           "libglvnd-egl",
           "libglvnd-gles",
           "tpm2-tss",
-          "polkit"
+          "polkit",
+          "libxcrypt-compat"
         ],
         "desktopTemplate": "scripts/biopass.desktop",
         "files": {
