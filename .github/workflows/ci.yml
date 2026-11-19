@@ -10,7 +10,11 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Keep every main run so its caches get saved; only supersede PR runs.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
   # Skipped jobs count as passing for required checks, so gate by job `if:`
@@ -24,9 +28,11 @@ jobs:
       cpp: ${{ steps.filter.outputs.cpp }}
       rust: ${{ steps.filter.outputs.rust }}
     steps:
+      # Full history for the diff, but no file contents: only names are needed.
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          filter: blob:none
 
       - name: Filter paths
         id: filter
@@ -38,7 +44,7 @@ jobs:
           base="${PR_BASE:-$PUSH_BEFORE}"
           all=false
           if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ] \
-            || ! files="$(git diff --name-only "$base" "$HEAD_SHA")"; then
+            || ! files="$(git diff --name-only --no-renames "$base" "$HEAD_SHA")"; then
             all=true
             files=""
           fi
@@ -71,6 +77,13 @@ jobs:
       - uses: actions/checkout@v6
 
       - uses: oven-sh/setup-bun@v2
+
+      - name: Cache Bun
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('app/bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
 
       - name: Install dependencies
         working-directory: app
@@ -110,15 +123,12 @@ jobs:
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
     steps:
+      # LFS models: C++ face tests, and the Rust test pinning their hashes.
       - uses: actions/checkout@v6
         with:
           lfs: true
 
-      - name: Install system dependencies
-        run: |
-          sudo apt update
-          sudo apt install -y librsvg2-dev libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev libpam0g-dev libcli11-dev pkg-config libturbojpeg0-dev libtss2-dev libcrypt-dev swtpm meson ninja-build python3-jinja2 python3-yaml python3-ply libudev-dev libdrm-dev libegl-dev libgles-dev
-
+      # Cheap checks first, so they fail before the long build.
       - name: clang-format
         if: needs.changes.outputs.cpp == 'true'
         run: |
@@ -130,15 +140,27 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: rustfmt
+        working-directory: app/src-tauri
+        run: cargo fmt --all --check
+
+      # swtpm is only for the C++ TPM test.
+      - name: Install system dependencies
+        env:
+          EXTRA: ${{ needs.changes.outputs.cpp == 'true' && 'swtpm' || '' }}
+        run: |
+          sudo apt-get update
+          # shellcheck disable=SC2086
+          sudo apt-get install -y librsvg2-dev libwebkit2gtk-4.1-dev build-essential file libxdo-dev libssl-dev libayatana-appindicator3-dev libpam0g-dev libcli11-dev pkg-config libturbojpeg0-dev libtss2-dev libcrypt-dev meson ninja-build python3-jinja2 python3-yaml python3-ply libudev-dev libdrm-dev libegl-dev libgles-dev $EXTRA
+
+      # Caches deps only (not the workspace crate) and saves from main only,
+      # so PR runs don't evict main's cache.
       - name: Cache Cargo
-        uses: actions/cache@v5
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            app/src-tauri/target
-          key: ci-${{ runner.os }}-cargo-${{ hashFiles('app/src-tauri/Cargo.lock') }}
-          restore-keys: ci-${{ runner.os }}-cargo-
+          workspaces: app/src-tauri
+          prefix-key: ci-v1
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Cache auth build
         uses: actions/cache@v5
@@ -162,14 +184,17 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
+      - name: Cache Bun
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('app/bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
+
       # Tauri's generate_context! needs app/dist to exist at compile time.
       - name: Build frontend
         working-directory: app
         run: bun install --frozen-lockfile && bun run build
-
-      - name: rustfmt
-        working-directory: app/src-tauri
-        run: cargo fmt --all --check
 
       - name: clippy
         working-directory: app/src-tauri
