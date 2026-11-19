@@ -3,6 +3,7 @@
 # 2026-11-18. Fetch Microsoft's official NuGet package instead: one archive
 # holds the headers and the linux-x64/linux-arm64 libraries (the x64 library is
 # byte-identical to the old GitHub tarball's).
+# Bump with libonnxruntime.so.<version> in app/src-tauri/tauri.conf.json.
 set(ONNXRUNTIME_VERSION "1.31.1")
 include(FetchContent)
 
@@ -31,6 +32,12 @@ set(ONNXRUNTIME_INCLUDE_DIRS "${ONNXRUNTIME_ROOT}/build/native/include")
 set(ONNXRUNTIME_LIB_DIR "${CMAKE_BINARY_DIR}/onnxruntime/lib")
 set(_ort_native "${ONNXRUNTIME_ROOT}/runtimes/${ONNXRUNTIME_ARCH}/native")
 file(MAKE_DIRECTORY "${ONNXRUNTIME_LIB_DIR}")
+# Drop libs staged by an older version so install(DIRECTORY) can't ship them.
+file(GLOB _ort_staged "${ONNXRUNTIME_LIB_DIR}/libonnxruntime.so.*.*.*")
+list(REMOVE_ITEM _ort_staged "${ONNXRUNTIME_LIB_DIR}/libonnxruntime.so.${ONNXRUNTIME_VERSION}")
+if(_ort_staged)
+    file(REMOVE ${_ort_staged})
+endif()
 file(COPY_FILE "${_ort_native}/libonnxruntime.so"
     "${ONNXRUNTIME_LIB_DIR}/libonnxruntime.so.${ONNXRUNTIME_VERSION}" ONLY_IF_DIFFERENT)
 file(COPY_FILE "${_ort_native}/libonnxruntime_providers_shared.so"
@@ -39,6 +46,9 @@ file(CREATE_LINK "libonnxruntime.so.${ONNXRUNTIME_VERSION}"
     "${ONNXRUNTIME_LIB_DIR}/libonnxruntime.so.1" SYMBOLIC)
 file(CREATE_LINK "libonnxruntime.so.1"
     "${ONNXRUNTIME_LIB_DIR}/libonnxruntime.so" SYMBOLIC)
+# Search every configure: a build tree from before the NuGet switch caches
+# the old _deps/onnxruntime-src/lib path, which no longer exists.
+unset(ONNXRUNTIME_LIB CACHE)
 find_library(ONNXRUNTIME_LIB onnxruntime PATHS ${ONNXRUNTIME_LIB_DIR} NO_DEFAULT_PATH)
 
 # libturbojpeg: system package (stable soname)
