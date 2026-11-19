@@ -137,6 +137,8 @@ int sealPassword(uid_t uid, const std::string& username, biopass::SecretBuffer& 
       return fail(KeyringExit::NoLocalAccount, "no local password for this account");
     case biopass::PasswordCheck::Error:
       return fail(KeyringExit::NoLocalAccount, "unsupported password hash");
+    case biopass::PasswordCheck::Unreadable:
+      return fail(KeyringExit::NoLocalAccount, "cannot read /etc/shadow");
   }
 
   std::unique_ptr<biopass::TpmContext> tpm = biopass::TpmContext::openDevice();

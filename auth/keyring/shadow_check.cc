@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <shadow.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <cstdint>
 #include <memory>
@@ -66,6 +67,11 @@ PasswordCheck verifyLocalPassword(const std::string& username, const char* passw
     }
     if (rc != 0 || result == nullptr) {
       explicit_bzero(buf.data(), buf.size());
+      // NSS hides a shadow file it can't open (the next source answers "not
+      // found"), so ask directly. access() is checked by SELinux too.
+      if (access("/etc/shadow", R_OK) != 0 && (errno == EACCES || errno == EPERM)) {
+        return PasswordCheck::Unreadable;
+      }
       return PasswordCheck::NoLocalAccount;
     }
     break;

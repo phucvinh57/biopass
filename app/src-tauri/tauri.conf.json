@@ -78,6 +78,8 @@
           "polkit",
           "libxcrypt-compat"
         ],
+        "postInstallScript": "scripts/rpm/postinst",
+        "postRemoveScript": "scripts/rpm/postrm",
         "desktopTemplate": "scripts/biopass.desktop",
         "files": {
           "/lib64/security/libbiopass_pam.so": "../../auth/build/pam/libbiopass_pam.so",
@@ -92,7 +94,8 @@
           "/usr/lib/biopass/libcamera-base.so.0.8": "../../auth/build/libcamera-bundle/libcamera-base.so.0.8",
           "/usr/lib/biopass/libcamera/ipa/ipa_softisp.so": "../../auth/build/libcamera-bundle/libcamera/ipa/ipa_softisp.so",
           "/usr/lib/biopass/libcamera/softisp_ipa_proxy": "../../auth/build/libcamera-bundle/libcamera/softisp_ipa_proxy",
-          "/usr/share/biopass/libcamera/ipa/softisp/uncalibrated.yaml": "../../auth/build/libcamera-bundle/ipa/softisp/uncalibrated.yaml"
+          "/usr/share/biopass/libcamera/ipa/softisp/uncalibrated.yaml": "../../auth/build/libcamera-bundle/ipa/softisp/uncalibrated.yaml",
+          "/usr/share/biopass/selinux/biopass.cil": "scripts/selinux/biopass.cil"
         }
       }
     }
