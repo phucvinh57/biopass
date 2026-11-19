@@ -1,0 +1,6 @@
+#!/bin/sh
+# $1 is 0 on uninstall, 1 or more on upgrade: keep the module on upgrade.
+if [ "$1" = "0" ] && command -v semodule >/dev/null 2>&1; then
+    semodule -r biopass >/dev/null 2>&1 || true
+fi
+exit 0

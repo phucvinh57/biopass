@@ -191,7 +191,13 @@ bool releaseKeyringPassword(const std::string& username, const std::string& serv
     case biopass::TpmStatus::Ok:
       break;
     case biopass::TpmStatus::NoTpm:
-      spdlog::warn("Biopass: no TPM to unlock the keyring");
+      if (access("/dev/tpmrm0", F_OK) == 0) {
+        // Present but not openable: on Fedora, SELinux denies xdm_t access
+        // unless the biopass policy module is installed.
+        spdlog::warn("Biopass: cannot open /dev/tpmrm0 to unlock the keyring (SELinux?)");
+      } else {
+        spdlog::warn("Biopass: no TPM to unlock the keyring");
+      }
       return true;
     case biopass::TpmStatus::PolicyFailed:
       biopass::reportInfo(
@@ -212,6 +218,10 @@ bool releaseKeyringPassword(const std::string& username, const std::string& serv
   if (check == biopass::PasswordCheck::Mismatch) {
     biopass::reportInfo(
         "Your password changed, so your keyring stays locked. Save it again in Biopass.");
+    return true;
+  }
+  if (check == biopass::PasswordCheck::Unreadable) {
+    spdlog::warn("Biopass: cannot read /etc/shadow to check the saved keyring password (SELinux?)");
     return true;
   }
   if (check != biopass::PasswordCheck::Match) {

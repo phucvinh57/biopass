@@ -1,0 +1,10 @@
+#!/bin/sh
+# SELinux (Fedora, RHEL): allow biopass-helper the TPM and /etc/shadow access
+# keyring unlock needs at the login screen. Never fails the install: without
+# the module only keyring unlock is affected.
+if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled \
+    && command -v semodule >/dev/null 2>&1; then
+    semodule -i /usr/share/biopass/selinux/biopass.cil >/dev/null 2>&1 \
+        || echo "biopass: could not install the SELinux module; keyring unlock may not work" >&2
+fi
+exit 0

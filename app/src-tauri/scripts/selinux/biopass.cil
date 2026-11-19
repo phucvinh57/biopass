@@ -1,0 +1,7 @@
+; Lets biopass-helper unlock the keyring at the login screen (issue #252).
+; PAM runs the helper in the display manager's domain, xdm_t. After a face or
+; fingerprint match it unseals the saved password with the TPM, then checks
+; it against /etc/shadow before handing it to PAM. Fedora's policy allows
+; neither for xdm_t. Installed by the RPM (scripts/rpm/postinst).
+(allow xdm_t tpm_device_t (chr_file (getattr ioctl open read write)))
+(allow xdm_t shadow_t (file (getattr open read)))

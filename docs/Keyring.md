@@ -17,6 +17,7 @@ The card shows whether a password is saved and whether it is locked to Secure Bo
 - A TPM 2.0 (`/dev/tpmrm0`). Most computers since ~2016 have one; you may need to enable it in the firmware.
 - A local account (not LDAP/SSSD).
 - A password of at most 128 bytes.
+- With SELinux enforcing (Fedora, RHEL): the `biopass` policy module, which the RPM installs. It lets the login screen's domain (`xdm_t`) open the TPM and read `/etc/shadow`. Without it the Biopass log shows `cannot open /dev/tpmrm0` or `cannot read /etc/shadow`. Check with `sudo semodule -l | grep biopass`; install it by hand with `sudo semodule -i /usr/share/biopass/selinux/biopass.cil`.
 - The `authtok` PAM option. The Debian/Ubuntu package sets it; for manual setups see [PAM.md](PAM.md#module-options).
 - A supported login screen: `gdm-password`, `sddm`, `lightdm`, `login`, `greetd`, `lxdm`, `ly`. The GNOME lock screen and light-locker also work. `sudo`, `su`, polkit and lock screens that run as your user (KDE, swaylock, ...) never get the password.
 
