@@ -63,7 +63,8 @@ Arch uses neither `pam-auth-update` nor `authselect` by default; configure PAM m
 Before adding `authtok` to a manual setup:
 
 - Biopass must be an alternative to the password rules, not run before them. If a rule such as `pam_unix.so try_first_pass` ran after a Biopass success, it would take the saved password as a typed one, so a face match alone would pass a stack meant to need both.
-- The keyring module's `auth` line (`pam_gnome_keyring.so`, `pam_kwallet5.so`, `pam_oo7.so`, ...) must still run after a Biopass success. The Debian/Ubuntu profile does this: `success=end` skips only the rest of `common-auth`, and the login screen's own keyring lines follow it. `sufficient` in an included file such as `system-auth` ends the whole stack at once, so the keyring lines after it never run. `pam_oo7.so` is the exception: its `session` line also reads `PAM_AUTHTOK`, so it can unlock even when its `auth` line was skipped.
+- The keyring module's `auth` line (`pam_gnome_keyring.so`, `pam_kwallet5.so`, `pam_oo7.so`, ...) must still run after a Biopass success. The Debian/Ubuntu profile does this: `success=end` skips only the rest of `common-auth`, and the login screen's own keyring lines follow it. `sufficient` in an included file such as `system-auth` ends the whole stack at once, so the keyring lines after it never run.
+- `pam_oo7.so` also reads `PAM_AUTHTOK` in its `session` line, so with oo7 the keyring can unlock even when its `auth` line was skipped. The `session` stack must list `session optional pam_oo7.so auto_start`.
 
 To keep the saved keyring password in sync when the password changes, add a `password` rule after the one that changes it (`pam_unix.so`). The Debian/Ubuntu profile does this. On Arch, in `/etc/pam.d/system-auth`, after the `password ... pam_unix.so` line:
 
