@@ -46,7 +46,7 @@ Arch uses neither `pam-auth-update` nor `authselect` by default; configure PAM m
     auth       required                    pam_env.so
     auth       required                    pam_faillock.so      authsucc
     ```
-    `success=N` skips the next N rules, so every rule above an inserted line has to count it. Inserting the line without that (for example as `auth sufficient libbiopass_pam.so` above `pam_unix.so`) moves `pam_systemd_home.so`'s jump onto `pam_faillock.so authfail`, which ends the stack. Then `pam_setcred()` fails with `PERM_DENIED` for sessions that don't authenticate first, such as greetd's greeter and autologin, and the display manager doesn't start. A Biopass match skips `pam_unix.so` and the `authfail` rule, and the login screen's keyring lines (`pam_kwallet5.so`, `pam_gnome_keyring.so`) still run, so `authtok` unlocks the keyring.
+    `success=N` skips the next N rules, so every rule above an inserted line has to count it. Inserting the line without that (for example as `auth sufficient libbiopass_pam.so` above `pam_unix.so`) moves `pam_systemd_home.so`'s jump onto `pam_faillock.so authfail`, which ends the stack. Then `pam_setcred()` fails with `PERM_DENIED` for sessions that don't authenticate first, such as greetd's greeter and autologin, and the display manager doesn't start. A Biopass match skips `pam_unix.so` and the `authfail` rule, and the login screen's keyring lines (`pam_kwallet5.so`, `pam_gnome_keyring.so`, `pam_oo7.so`) still run, so `authtok` unlocks the keyring.
 4. Test in a new terminal before closing the root terminal:
     ```bash
     sudo -k
@@ -63,7 +63,7 @@ Arch uses neither `pam-auth-update` nor `authselect` by default; configure PAM m
 Before adding `authtok` to a manual setup:
 
 - Biopass must be an alternative to the password rules, not run before them. If a rule such as `pam_unix.so try_first_pass` ran after a Biopass success, it would take the saved password as a typed one, so a face match alone would pass a stack meant to need both.
-- The keyring module's `auth` line (`pam_gnome_keyring.so`, `pam_kwallet5.so`, ...) must still run after a Biopass success. The Debian/Ubuntu profile does this: `success=end` skips only the rest of `common-auth`, and the login screen's own keyring lines follow it. `sufficient` in an included file such as `system-auth` ends the whole stack at once, so the keyring lines after it never run.
+- The keyring module's `auth` line (`pam_gnome_keyring.so`, `pam_kwallet5.so`, `pam_oo7.so`, ...) must still run after a Biopass success. The Debian/Ubuntu profile does this: `success=end` skips only the rest of `common-auth`, and the login screen's own keyring lines follow it. `sufficient` in an included file such as `system-auth` ends the whole stack at once, so the keyring lines after it never run. `pam_oo7.so` is the exception: its `session` line also reads `PAM_AUTHTOK`, so it can unlock even when its `auth` line was skipped.
 
 To keep the saved keyring password in sync when the password changes, add a `password` rule after the one that changes it (`pam_unix.so`). The Debian/Ubuntu profile does this. On Arch, in `/etc/pam.d/system-auth`, after the `password ... pam_unix.so` line:
 
@@ -75,4 +75,4 @@ It always returns `PAM_IGNORE`, so it can't block a password change. It replaces
 
 ## Login screen and keyring
 
-If Biopass is enabled for your login screen (GDM, SDDM, LightDM, ...), the login keyring / KWallet stays locked because no password is typed, unless you save your password in the app. See [Keyring.md](Keyring.md).
+If Biopass is enabled for your login screen (GDM, SDDM, LightDM, ...), the login keyring (GNOME Keyring or oo7) / KWallet stays locked because no password is typed, unless you save your password in the app. See [Keyring.md](Keyring.md).

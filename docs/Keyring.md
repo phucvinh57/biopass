@@ -1,6 +1,6 @@
 # Keyring / KWallet Unlock After Login
 
-After logging in with your face or fingerprint, you may see *"The login keyring did not get unlocked"* (or a KWallet password prompt). The keyring is encrypted with your password, and a biometric login doesn't type it.
+After logging in with your face or fingerprint, you may see *"The login keyring did not get unlocked"* (or a KWallet password prompt). This applies to GNOME Keyring, KWallet and [oo7](https://github.com/linux-credentials/oo7), the Secret Service that replaces GNOME Keyring on newer Fedora. The keyring is encrypted with your password, and a biometric login doesn't type it.
 
 There are two fixes: save your password in Biopass, or skip Biopass at the login screen.
 
@@ -37,7 +37,7 @@ Until then, the login screen shows a short message and the keyring asks for its 
 
 - **Saving:** the app runs `biopass-keyring` through `pkexec`. It checks the password against `/etc/shadow`, seals it with the TPM, and stores it in `/var/lib/biopass/keyring/<uid>.sealed` (root-only). The app doesn't keep it. `<uid>.mode` beside it (readable, not secret) says whether the seal is locked to Secure Boot settings, so the app can show it.
 - **Password change:** after `pam_unix` sets the new password, the PAM module's `password` rule hands it to `biopass-keyring update`, which checks it against `/etc/shadow` and seals it the same way. Only users who saved a password are affected, and a failure never stops the password change.
-- **Login:** after a biometric match, `biopass-helper` unseals the password, checks it again, and the PAM module sets `PAM_AUTHTOK`. `pam_gnome_keyring` / `pam_kwallet` then use it as if you had typed it.
+- **Login:** after a biometric match, `biopass-helper` unseals the password, checks it again, and the PAM module sets `PAM_AUTHTOK`. `pam_gnome_keyring` / `pam_kwallet` / `pam_oo7` then use it as if you had typed it. Fedora 45's `gdm-password` already lists `pam_oo7.so` after Biopass, so oo7 needs no extra setup there.
 - **Lock to Secure Boot settings** binds the seal to TPM PCR 7, which records the Secure Boot configuration.
 
 ### Security
