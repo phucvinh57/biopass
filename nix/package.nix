@@ -33,11 +33,11 @@
 
 stdenv.mkDerivation rec {
   pname = "biopass";
-  version = "1.5.1";
+  version = "1.6.0";
 
   src = fetchurl {
     url = "https://github.com/phucvinh57/biopass/releases/download/${version}/biopass_${version}_amd64.deb";
-    hash = "sha256-WSUpkzhYNme/W+r/vX9cYyaaqhhg0oOnhGi1a0Irm+w=";
+    hash = "sha256-ODAgPK6TfXVU2N3M9aR6coqfDVpF5XYW188Ttw818Lk=";
   };
 
   nativeBuildInputs = [ dpkg autoPatchelfHook wrapGAppsHook3 ];
